@@ -1,0 +1,31 @@
+[package]
+name = "atlas-core"
+version = "0.1.0"
+edition = "2021"
+description = "The core messages and protocol definitions relating to the BFT SMR protocol. Separated for easier exchanging of consensus!"
+authors = ["Nuno Neto <nuno.martingo@fc.up.pt>"]
+license = "MIT"
+homepage = "https://github.com/nuno1212s/atlas"
+repository = "https://github.com/nuno1212s/atlas"
+documentation = "https://docs.rs/atlas"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+
+serialize_serde = ["serde"]
+serialize_capnp = ["atlas-capnp"]
+
+[dependencies]
+atlas-common = { path = "../atlas-common" }
+atlas-communication = { path = "../atlas-communication" }
+atlas-execution = { path = "../atlas-execution" }
+atlas-capnp = { path = "../atlas-capnp", optional = true }
+atlas-metrics = { path = "../atlas-metrics" }
+serde = { version = "*", optional = true }
+crossbeam = "0.8.2"
+intmap = "2.0.0"
+
+chrono = "0.4.24"
+log = "0.4.17"

@@ -1,0 +1,41 @@
+description = "The Atlas framework"
+authors = ["Nuno Neto <nuno.martingo@fc.up.pt>"]
+license = "MIT"
+homepage = "https://github.com/nuno1212s/atlas"
+repository = "https://github.com/nuno1212s/atlas"
+documentation = "https://docs.rs/atlas"
+readme = "README.md"
+
+[workspace]
+
+members = [
+    "atlas-common",
+    "atlas-core",
+    "atlas-metrics",
+    "atlas-capnp",
+    "atlas-communication",
+    "atlas-execution",
+    "atlas-client",
+    "atlas-replica"
+]
+
+# https://doc.rust-lang.org/cargo/reference/profiles.html
+[profile.release]
+opt-level = 3
+panic = "abort" # disable stack unwinding on panic
+overflow-checks = false # disable integer overflow checks.
+codegen-units = 16
+lto = true # LLVM link time optimizations
+debug = false
+debug-assertions = false
+incremental = false
+
+[profile.dev]
+opt-level = 0
+panic = "unwind"
+overflow-checks = true
+codegen-units = 32
+lto = false
+debug = true
+debug-assertions = true
+incremental = true
