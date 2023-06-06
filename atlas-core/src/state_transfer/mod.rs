@@ -83,8 +83,11 @@ pub type CstM<M: StateTransferMessage> = <M as StateTransferMessage>::StateTrans
 pub trait StateTransferProtocol<D, OP, NT> where
     D: SharedData + 'static,
     OP: StatefulOrderProtocol<D, NT> + 'static {
+
+    /// The type which implements StateTransferMessage, to be implemented by the developer
     type Serialization: StateTransferMessage + 'static;
 
+    /// The configuration type the protocol wants to accept
     type Config;
 
     /// Initialize the state transferring protocol with the given configuration, timeouts and communication layer
@@ -103,7 +106,9 @@ pub trait StateTransferProtocol<D, OP, NT> where
                               -> Result<()>
         where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>;
 
-    /// Process a state transfer protocol message
+    /// Process a state transfer protocol message, received from other replicas
+    /// We also provide a mutable reference to the stateful ordering protocol, so the 
+    /// state can be installed (if that's the case)
     fn process_message(&mut self,
                        order_protocol: &mut OP,
                        message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)

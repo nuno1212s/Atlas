@@ -18,9 +18,13 @@ pub type ProtocolMessage<OP> = <OP as OrderingProtocolMessage>::ProtocolMessage;
 
 pub struct OrderingProtocolArgs<D, NT>(pub ExecutorHandle<D>, pub Timeouts, pub RequestPreProcessor<D::Request>, pub BatchOutput<D::Request>, pub Arc<NT>) where D: SharedData;
 
+/// The trait for an ordering protocol to be implemented in Atlas
 pub trait OrderingProtocol<D, NT>: Orderable where D: SharedData + 'static {
+
+    /// The type which implements OrderingProtocolMessage, to be implemented by the developer
     type Serialization: OrderingProtocolMessage + 'static;
 
+    /// The configuration type the protocol wants to accept
     type Config;
 
     /// Initialize this ordering protocol with the given configuration, executor, timeouts and node
@@ -38,10 +42,12 @@ pub trait OrderingProtocol<D, NT>: Orderable where D: SharedData + 'static {
     fn handle_execution_changed(&mut self, is_executing: bool) -> Result<()>;
 
     /// Poll from the ordering protocol in order to know what we should do next
-    /// We do this to check if there are already
+    /// We do this to check if there are already messages waiting to be executed that were received ahead of time and stored.
+    /// Or whether we should run state tranfer or wait for messages from other replicas
     fn poll(&mut self) -> OrderProtocolPoll<ProtocolMessage<Self::Serialization>>;
 
     /// Process a protocol message that we have received
+    /// This can be a message received from the poll() method or a message received from other replicas.
     fn process_message(&mut self, message: StoredMessage<Protocol<ProtocolMessage<Self::Serialization>>>) -> Result<OrderProtocolExecResult>;
 
     /// Handle a timeout received from the timeouts layer
