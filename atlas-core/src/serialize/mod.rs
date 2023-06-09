@@ -47,10 +47,10 @@ pub trait OrderingProtocolMessage: Send {
     type ViewInfo: NetworkView + for<'a> Deserialize<'a> + Serialize + Send + Clone + Debug;
 
     #[cfg(feature = "serialize_capnp")]
-    type ProtocolMessage: Send + Clone;
+    type ProtocolMessage: Orderable + Send + Clone;
 
     #[cfg(feature = "serialize_serde")]
-    type ProtocolMessage: for<'a> Deserialize<'a> + Serialize + Send + Clone + Debug;
+    type ProtocolMessage: Orderable +  for<'a> Deserialize<'a> + Serialize + Send + Clone + Debug;
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::consensus_messages_capnp::protocol_message::Builder, msg: &Self::ProtocolMessage) -> Result<()>;

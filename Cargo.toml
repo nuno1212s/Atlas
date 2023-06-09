@@ -16,7 +16,8 @@ members = [
     "atlas-communication",
     "atlas-execution",
     "atlas-client",
-    "atlas-replica"
+    "atlas-replica",
+    "atlas-persistent-log"
 ]
 
 # https://doc.rust-lang.org/cargo/reference/profiles.html

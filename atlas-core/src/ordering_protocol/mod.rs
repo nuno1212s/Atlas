@@ -1,13 +1,15 @@
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use atlas_common::crypto::hash::Digest;
 use atlas_communication::message::{Header, NetworkMessage, StoredMessage, System};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
-use atlas_common::ordering::Orderable;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::Node;
+use atlas_execution::app::{Update, UpdateBatch};
 use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::SharedData;
-use crate::messages::{ForwardedRequestsMessage, Protocol, StoredRequestMessage, SystemMessage};
+use crate::messages::{ClientRqInfo, ForwardedRequestsMessage, Protocol, StoredRequestMessage, SystemMessage};
 use crate::request_pre_processing::{BatchOutput, RequestPreProcessor};
 use crate::serialize::{OrderingProtocolMessage, StateTransferMessage, ServiceMsg, NetworkView};
 use crate::timeouts::{RqTimeout, Timeout, Timeouts};
@@ -43,31 +45,72 @@ pub trait OrderingProtocol<D, NT>: Orderable where D: SharedData + 'static {
 
     /// Poll from the ordering protocol in order to know what we should do next
     /// We do this to check if there are already messages waiting to be executed that were received ahead of time and stored.
-    /// Or whether we should run state tranfer or wait for messages from other replicas
-    fn poll(&mut self) -> OrderProtocolPoll<ProtocolMessage<Self::Serialization>>;
+    /// Or whether we should run state transfer or wait for messages from other replicas
+    fn poll(&mut self) -> OrderProtocolPoll<ProtocolMessage<Self::Serialization>, D::Request>;
 
     /// Process a protocol message that we have received
     /// This can be a message received from the poll() method or a message received from other replicas.
-    fn process_message(&mut self, message: StoredMessage<Protocol<ProtocolMessage<Self::Serialization>>>) -> Result<OrderProtocolExecResult>;
+    fn process_message(&mut self, message: StoredMessage<Protocol<ProtocolMessage<Self::Serialization>>>) -> Result<OrderProtocolExecResult<D::Request>>;
 
     /// Handle a timeout received from the timeouts layer
-    fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<OrderProtocolExecResult>;
+    fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<OrderProtocolExecResult<D::Request>>;
 }
 
 /// result from polling the ordering protocol
-pub enum OrderProtocolPoll<P> {
+pub enum OrderProtocolPoll<P, O> {
     RunCst,
     ReceiveFromReplicas,
     Exec(StoredMessage<Protocol<P>>),
+    Decided(Vec<ProtocolConsensusDecision<O>>),
     RePoll,
 }
 
-pub enum OrderProtocolExecResult {
+pub enum OrderProtocolExecResult<O> {
     Success,
+    Decided(Vec<ProtocolConsensusDecision<O>>),
     RunCst,
 }
 
-impl<P> Debug for OrderProtocolPoll<P> where P: Debug {
+/// Information reported after a logging operation.
+pub enum ExecutionResult {
+    /// Nothing to report.
+    Nil,
+    /// The log became full. We are waiting for the execution layer
+    /// to provide the current serialized application state, so we can
+    /// complete the log's garbage collection and eventually its
+    /// checkpoint.
+    BeginCheckpoint,
+}
+
+/// The struct representing a consensus decision
+pub struct ProtocolConsensusDecision<O> {
+    /// The sequence number of the batch
+    seq: SeqNo,
+
+    /// The consensus decision
+    executable_batch: UpdateBatch<O>,
+
+    /// Should this decision be followed by a checkpoint
+    execution_result: ExecutionResult,
+
+    /// Additional information about a batch
+    batch_info: Option<DecisionInformation<O>>
+}
+
+/// Information about the completed batch,
+/// when the batch was completed locally
+pub struct DecisionInformation<O> {
+    // The digest of the batch
+    batch_digest: Digest,
+    // The messages that must be persisted in order for this batch to be considered
+    // persisted and ready to be executed
+    messages_persisted: Vec<Digest>,
+
+    // The information about all contained requests
+    client_requests: Vec<ClientRqInfo>
+}
+
+impl<P, O> Debug for OrderProtocolPoll<P, O> where P: Debug {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             OrderProtocolPoll::RunCst => {
@@ -82,6 +125,34 @@ impl<P> Debug for OrderProtocolPoll<P> where P: Debug {
             OrderProtocolPoll::RePoll => {
                 write!(f, "RePoll")
             }
+            OrderProtocolPoll::Decided(rqs) => {
+                write!(f, "Decided {} decisions", rqs.len())
+            }
+        }
+    }
+}
+
+/// Constructor for the ProtocolConsensusDecision struct
+impl<O> ProtocolConsensusDecision<O> {
+    pub fn new(seq: SeqNo,
+               executable_batch: UpdateBatch<O>,
+               execution_result: ExecutionResult,
+               batch_info: Option<DecisionInformation<O>>) -> Self {
+        ProtocolConsensusDecision {
+            seq,
+            executable_batch,
+            execution_result,
+            batch_info
+        }
+    }
+}
+
+impl<O> DecisionInformation<O> {
+    pub fn new(batch_digest: Digest, messages_persisted: Vec<Digest>, client_requests: Vec<ClientRqInfo>) -> Self {
+        DecisionInformation {
+            batch_digest,
+            messages_persisted,
+            client_requests
         }
     }
 }

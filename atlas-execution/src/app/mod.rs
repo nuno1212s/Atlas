@@ -23,10 +23,6 @@ pub trait Service: Send {
     /// This includes their respective serialization routines.
     type Data: SharedData;
 
-    ///// Routines used by replicas to persist data into permanent
-    ///// storage.
-    //type Durability: ReplicaDurability;
-
     /// Returns the initial state of the application.
     fn initial_state() -> Result<State<Self>>;
 
