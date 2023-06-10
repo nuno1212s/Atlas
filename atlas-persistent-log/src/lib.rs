@@ -12,16 +12,15 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::persistentdb::KVDB;
 use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::ProtocolConsensusDecision;
+use atlas_core::persistent_log::{PersistableOrderProtocol, PSDecLog, PSMessage, PSProof, PSView};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_core::state_transfer::Checkpoint;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
-use crate::serialize::{PersistableStatefulOrderProtocol, PSDecLog, PSMessage, PSProof, PSView};
 use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, write_checkpoint, write_message, write_proof, write_proof_metadata, write_state};
 
 pub mod serialize;
 pub mod backlog;
 mod worker;
-
 
 /// The general type for a callback.
 /// Callbacks are optional and can be used when you want to
@@ -112,7 +111,7 @@ pub enum WriteMode {
 
 ///TODO: Handle sequence numbers that loop the u32 range.
 /// This is the main reference to the persistent log, used to push data to it
-pub struct PersistentLog<D: SharedData, PS: PersistableStatefulOrderProtocol>
+pub struct PersistentLog<D: SharedData, PS: PersistableOrderProtocol>
 {
     persistency_mode: PersistentLogMode<D>,
 
@@ -124,7 +123,7 @@ pub struct PersistentLog<D: SharedData, PS: PersistableStatefulOrderProtocol>
 }
 
 /// The type of the installed state information
-pub type InstallState<D: SharedData, PS: PersistableStatefulOrderProtocol> = (
+pub type InstallState<D: SharedData, PS: PersistableOrderProtocol> = (
     //The view sequence number
     SeqNo,
     // The state that we want to persist
@@ -134,7 +133,7 @@ pub type InstallState<D: SharedData, PS: PersistableStatefulOrderProtocol> = (
 );
 
 /// Work messages for the
-pub(crate) enum PWMessage<D: SharedData, PS: PersistableStatefulOrderProtocol> {
+pub(crate) enum PWMessage<D: SharedData, PS: PersistableOrderProtocol> {
     //Persist a new view into the persistent storage
     View(PSView<PS>),
 
@@ -196,15 +195,15 @@ pub enum ResponseMessage {
 }
 
 /// Messages that are sent to the logging thread to log specific requests
-pub(crate) type ChannelMsg<D: SharedData, PS: PersistableStatefulOrderProtocol> = (PWMessage<D, PS>, Option<CallbackType>);
+pub(crate) type ChannelMsg<D: SharedData, PS: PersistableOrderProtocol> = (PWMessage<D, PS>, Option<CallbackType>);
 
 pub fn initialize_persistent_log<D, K, T, PS>(executor: ExecutorHandle<D>, db_path: K)
                                           -> Result<PersistentLog<D, PS>>
-    where D: SharedData + 'static, K: AsRef<Path>, T: PersistentLogModeTrait, PS: PersistableStatefulOrderProtocol {
+    where D: SharedData + 'static, K: AsRef<Path>, T: PersistentLogModeTrait, PS: PersistableOrderProtocol {
     PersistentLog::init_log::<K, T>(executor, db_path)
 }
 
-impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableStatefulOrderProtocol {
+impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableOrderProtocol {
     fn init_log<K, T>(executor: ExecutorHandle<D>, db_path: K) -> Result<Self>
         where
             K: AsRef<Path>,
@@ -456,7 +455,7 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableStatefulOrd
     }
 }
 
-impl<D: SharedData, PS: PersistableStatefulOrderProtocol> Clone for PersistentLog<D, PS> {
+impl<D: SharedData, PS: PersistableOrderProtocol> Clone for PersistentLog<D, PS> {
     fn clone(&self) -> Self {
         Self {
             persistency_mode: self.persistency_mode.clone(),

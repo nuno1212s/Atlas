@@ -97,16 +97,13 @@ pub struct ProtocolConsensusDecision<O> {
     /// The consensus decision
     executable_batch: UpdateBatch<O>,
 
-    /// Should this decision be followed by a checkpoint
-    execution_result: ExecutionResult,
-
     /// Additional information about a batch
-    batch_info: Option<DecisionInformation<O>>
+    batch_info: Option<DecisionInformation>
 }
 
 /// Information about the completed batch,
 /// when the batch was completed locally
-pub struct DecisionInformation<O> {
+pub struct DecisionInformation {
     // The digest of the batch
     batch_digest: Digest,
     // The messages that must be persisted in order for this batch to be considered
@@ -142,27 +139,25 @@ impl<P, O> Debug for OrderProtocolPoll<P, O> where P: Debug {
 impl<O> ProtocolConsensusDecision<O> {
     pub fn new(seq: SeqNo,
                executable_batch: UpdateBatch<O>,
-               execution_result: ExecutionResult,
-               batch_info: Option<DecisionInformation<O>>) -> Self {
+               batch_info: Option<DecisionInformation>) -> Self {
         ProtocolConsensusDecision {
             seq,
             executable_batch,
-            execution_result,
             batch_info
         }
     }
 
-    pub fn batch_info(&self) -> &Option<DecisionInformation<O>> {
+    pub fn batch_info(&self) -> &Option<DecisionInformation> {
         &self.batch_info
     }
 
-    pub fn into(self) -> (SeqNo, UpdateBatch<O>, ExecutionResult, Option<DecisionInformation<O>>) {
-        (self.seq, self.executable_batch, self.execution_result, self.batch_info)
+    pub fn into(self) -> (SeqNo, UpdateBatch<O>, Option<DecisionInformation>) {
+        (self.seq, self.executable_batch, self.batch_info)
     }
 }
 
 /// Constructor for the DecisionInformation struct
-impl<O> DecisionInformation<O> {
+impl DecisionInformation {
     pub fn new(batch_digest: Digest, messages_persisted: Vec<Digest>, client_requests: Vec<ClientRqInfo>) -> Self {
         DecisionInformation {
             batch_digest,

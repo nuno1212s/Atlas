@@ -10,4 +10,4 @@ pub mod state_transfer;
 pub mod followers;
 pub mod request_pre_processing;
 pub mod metric;
-pub mod persistent_storage;
+pub mod persistent_log;

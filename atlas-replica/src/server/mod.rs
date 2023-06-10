@@ -12,9 +12,9 @@ use atlas_common::async_runtime as rt;
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::node_id::NodeId;
-use atlas_common::ordering::{SeqNo};
+use atlas_common::ordering::SeqNo;
 use atlas_communication::{Node, NodeConnections, NodeIncomingRqHandler};
-use atlas_communication::message::{StoredMessage};
+use atlas_communication::message::StoredMessage;
 use atlas_execution::app::{Request, Service, State};
 use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::{digest_state, SharedData};
@@ -371,9 +371,19 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
             }
 
             if let Some(decision ) = self.persistent_log.wait_for_batch_persistency_and_execute(decision)? {
-                let (seq, batch, result, _) = decision.into();
+                let (seq, batch, _) = decision.into();
 
-                match result {
+
+                let last_seq_no_u32 = u32::from(seq);
+
+                let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
+                    //We check that % == 0 so we don't start multiple checkpoints
+                    self.state_transfer_protocol.handle_app_state_requested(seq)?
+                } else {
+                    ExecutionResult::Nil
+                };
+
+                match checkpoint {
                     ExecutionResult::Nil => {
                         self.executor_handle.queue_update(batch)?
                     }
@@ -525,3 +535,10 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
         Ok(())
     }
 }
+
+/// Checkpoint period.
+///
+/// Every `PERIOD` messages, the message log is cleared,
+/// and a new log checkpoint is initiated.
+/// TODO: Move this to an env variable as it can be highly dependent on the service implemented on top of it
+pub const CHECKPOINT_PERIOD: u32 = 50000;

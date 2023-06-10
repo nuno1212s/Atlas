@@ -217,6 +217,12 @@ pub trait Orderable {
     fn sequence_number(&self) -> SeqNo;
 }
 
+impl Orderable for () {
+    fn sequence_number(&self) -> SeqNo {
+        SeqNo::ZERO
+    }
+}
+
 impl Add for SeqNo {
     type Output = SeqNo;
 
