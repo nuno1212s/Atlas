@@ -65,6 +65,7 @@ pub enum OrderProtocolPoll<P, O> {
     RePoll,
 }
 
+/// Result from executing a message in the ordering protocol
 pub enum OrderProtocolExecResult<O> {
     Success,
     Decided(Vec<ProtocolConsensusDecision<O>>),
@@ -83,6 +84,12 @@ pub enum ExecutionResult {
 }
 
 /// The struct representing a consensus decision
+///
+/// Executable Batch: All of the requests that should be executed, in the correct order
+/// Execution Result: Whether we need to ask the executor for a checkpoint in order to reset the current message log
+/// Batch info: The information collected by the [DecidingLog], if applicable. (We can receive a batch
+/// via a complete proof which means this will be [None] or we can process a batch normally, which means
+/// this will be [Some(CompletedBatch<D>)])
 pub struct ProtocolConsensusDecision<O> {
     /// The sequence number of the batch
     seq: SeqNo,
@@ -105,7 +112,6 @@ pub struct DecisionInformation<O> {
     // The messages that must be persisted in order for this batch to be considered
     // persisted and ready to be executed
     messages_persisted: Vec<Digest>,
-
     // The information about all contained requests
     client_requests: Vec<ClientRqInfo>
 }
@@ -126,7 +132,7 @@ impl<P, O> Debug for OrderProtocolPoll<P, O> where P: Debug {
                 write!(f, "RePoll")
             }
             OrderProtocolPoll::Decided(rqs) => {
-                write!(f, "Decided {} decisions", rqs.len())
+                write!(f, "{} committed decisions", rqs.len())
             }
         }
     }
@@ -147,6 +153,7 @@ impl<O> ProtocolConsensusDecision<O> {
     }
 }
 
+/// Constructor for the DecisionInformation struct
 impl<O> DecisionInformation<O> {
     pub fn new(batch_digest: Digest, messages_persisted: Vec<Digest>, client_requests: Vec<ClientRqInfo>) -> Self {
         DecisionInformation {

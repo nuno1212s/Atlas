@@ -7,6 +7,7 @@ use atlas_common::error::*;
 use atlas_core::ordering_protocol::ProtocolConsensusDecision;
 use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::SharedData;
+use atlas_metrics::MetricLevel::Info;
 use crate::ResponseMessage;
 
 ///This is made to handle the backlog when the consensus is working faster than the persistent storage layer.
@@ -56,11 +57,11 @@ enum PendingRq {
 /// consensus back log thread
 pub struct ConsensusBackLogHandle<O> {
     rq_tx: ChannelSyncTx<BacklogMessage<O>>,
-    logger_tx: ChannelSyncTx<ResponseMsg>,
+    logger_tx: ChannelSyncTx<ResponseMessage>,
 }
 
 impl<O> ConsensusBackLogHandle<O> {
-    pub fn logger_tx(&self) -> ChannelSyncTx<ResponseMsg> {
+    pub fn logger_tx(&self) -> ChannelSyncTx<ResponseMessage> {
         self.logger_tx.clone()
     }
 
@@ -206,7 +207,7 @@ impl<D: SharedData + 'static> ConsensusBacklog<D> {
         }
     }
 
-    fn dispatch_batch(&self, batch: BatchExecutionInfo<D::Request>) {
+    fn dispatch_batch(&self, batch: ProtocolConsensusDecision<D::Request>) {
         let (info, requests, batch) = batch.into();
 
         let checkpoint = match info {
@@ -288,7 +289,7 @@ impl<O> Into<ProtocolConsensusDecision<O>> for BacklogMsg<O> {
 }
 
 impl<O> AwaitingPersistence<O> {
-    pub fn info(&self) -> &BatchExecutionInfo<O> {
+    pub fn info(&self) -> &ProtocolConsensusDecision<O> {
         &self.info
     }
 

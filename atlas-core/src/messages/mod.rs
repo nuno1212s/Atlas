@@ -30,7 +30,7 @@ pub enum Message<D> where D: SharedData {
     /// We received a timeout from the timeouts layer.
     Timeout(TimedOut),
     /// Timeouts that have already been processed by the request pre processing layer.
-    ProcessedTimeout(TimedOut, TimedOut)
+    ProcessedTimeout(TimedOut, TimedOut),
 }
 
 impl<D> Debug for Message<D> where D: SharedData {
@@ -404,6 +404,18 @@ impl ClientRqInfo {
             seq_no: seqno,
             session,
         }
+    }
+
+    pub fn digest(&self) -> Digest {
+        self.digest
+    }
+
+    pub fn sender(&self) -> NodeId {
+        self.sender
+    }
+
+    pub fn session(&self) -> SeqNo {
+        self.session
     }
 }
 
