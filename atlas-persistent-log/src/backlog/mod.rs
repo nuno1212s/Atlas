@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use log::{error, warn};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::hash::Digest;
@@ -208,14 +209,10 @@ impl<D: SharedData + 'static> ConsensusBacklog<D> {
     }
 
     fn dispatch_batch(&self, batch: ProtocolConsensusDecision<D::Request>) {
-        let (info, requests, batch) = batch.into();
+        let (seq, requests, batch) = batch.into();
 
-        let checkpoint = match info {
-            Info::Nil => self.executor_handle.queue_update(requests),
-            Info::BeginCheckpoint => self
-                .executor_handle
-                .queue_update_and_get_appstate(requests),
-        };
+        //TODO: Request checkpointing from the executor
+        self.executor_handle.queue_update(requests).expect("Failed to queue update");
 
         if let Err(err) = checkpoint {
             error!("Failed to enqueue consensus {:?}", err);

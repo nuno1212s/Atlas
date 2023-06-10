@@ -16,7 +16,7 @@ use atlas_core::persistent_log::{PersistableOrderProtocol, PSDecLog, PSMessage, 
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_core::state_transfer::Checkpoint;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
-use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, write_checkpoint, write_message, write_proof, write_proof_metadata, write_state};
+use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, write_checkpoint, write_latest_seq_no, write_latest_view_seq_no, write_message, write_proof, write_proof_metadata, write_state};
 
 pub mod serialize;
 pub mod backlog;
@@ -126,8 +126,6 @@ pub struct PersistentLog<D: SharedData, PS: PersistableOrderProtocol>
 pub type InstallState<D: SharedData, PS: PersistableOrderProtocol> = (
     //The view sequence number
     SeqNo,
-    // The state that we want to persist
-    Arc<ReadOnly<Checkpoint<D::State>>>,
     //The decision log that comes after that state
     PSDecLog<PS>,
 );
@@ -274,7 +272,7 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableOrderProtoc
                     WriteMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_committed(seq, callback)
                     }
-                    WriteMode::BlockingSync => write_latest_seq(&self.db, seq),
+                    WriteMode::BlockingSync => write_latest_seq_no(&self.db, seq),
                 }
             }
             PersistentLogMode::None => {
@@ -290,7 +288,7 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableOrderProtoc
                     WriteMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_view_number(view_seq, callback)
                     }
-                    WriteMode::BlockingSync => write_latest_view_seq(&self.db, view_seq.sequence_number()),
+                    WriteMode::BlockingSync => write_latest_view_seq_no(&self.db, view_seq.sequence_number()),
                 }
             }
             PersistentLogMode::None => {

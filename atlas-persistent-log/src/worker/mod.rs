@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use log::error;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::persistentdb::KVDB;
@@ -9,7 +10,8 @@ use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::state_transfer::Checkpoint;
 use atlas_execution::serialize::SharedData;
 use crate::{ChannelMsg, InstallState, PWMessage, ResponseMessage, serialize};
-use crate::serialize::{PersistableStatefulOrderProtocol, PSDecLog, PSMessage, PSProof};
+use atlas_core::persistent_log::{PersistableOrderProtocol, PSDecLog, PSMessage, PSProof, PSView};
+
 
 ///Latest checkpoint made by the execution
 const LATEST_STATE: &str = "latest_state";
@@ -29,14 +31,14 @@ pub(super) const COLUMN_FAMILY_PROOFS: &str = "proof_metadata";
 /// A handle for all of the persistent workers.
 /// Handles task distribution and load balancing across the
 /// workers
-pub struct PersistentLogWorkerHandle<D: SharedData, PS: PersistableStatefulOrderProtocol> {
+pub struct PersistentLogWorkerHandle<D: SharedData, PS: PersistableOrderProtocol> {
     round_robin_counter: AtomicUsize,
     tx: Vec<PersistentLogWriteStub<D, PS>>,
 }
 
 ///A stub that is only useful for writing to the persistent log
 #[derive(Clone)]
-pub(super) struct PersistentLogWriteStub<D: SharedData, PS: PersistableStatefulOrderProtocol> {
+pub(super) struct PersistentLogWriteStub<D: SharedData, PS: PersistableOrderProtocol> {
     pub(crate) tx: ChannelSyncTx<ChannelMsg<D, PS>>,
 }
 
@@ -48,7 +50,7 @@ impl<D, PS> PersistentLogWorkerHandle<D, PS> {
 
 
 ///A worker for the persistent logging
-pub struct PersistentLogWorker<D: SharedData, PS: PersistableStatefulOrderProtocol> {
+pub struct PersistentLogWorker<D: SharedData, PS: PersistableOrderProtocol> {
     request_rx: ChannelSyncRx<ChannelMsg<D, PS>>,
 
     response_txs: Vec<ChannelSyncTx<ResponseMessage>>,
@@ -56,7 +58,7 @@ pub struct PersistentLogWorker<D: SharedData, PS: PersistableStatefulOrderProtoc
     db: KVDB,
 }
 
-impl<D: SharedData, PS: PersistableStatefulOrderProtocol> PersistentLogWorker<D, PS> {
+impl<D: SharedData, PS: PersistableOrderProtocol> PersistentLogWorker<D, PS> {
 
     pub fn new(request_rx: ChannelSyncRx<ChannelMsg<D, PS>>,
                response_txs: Vec<ChannelSyncTx<ResponseMessage>>,
@@ -159,7 +161,7 @@ impl<D: SharedData, PS: PersistableStatefulOrderProtocol> PersistentLogWorker<D,
 
 
 /// Writes a given state to the persistent log
-pub(super) fn write_state<D: SharedData, PS: PersistableStatefulOrderProtocol>(
+pub(super) fn write_state<D: SharedData, PS: PersistableOrderProtocol>(
     db: &KVDB, (view_seq, state, dec_log): InstallState<D, PS>,
 ) -> Result<()> {
     write_latest_view_seq_no(db, view_seq)?;
@@ -185,7 +187,7 @@ pub(super) fn write_latest_seq_no(db: &KVDB, seq_no: SeqNo) -> Result<()> {
     db.set(COLUMN_FAMILY_OTHER, LATEST_SEQ, &f_seq_no[..])
 }
 
-pub(super) fn write_checkpoint<D: SharedData, PS: PersistableStatefulOrderProtocol>(db: &KVDB, checkpoint: Arc<ReadOnly<Checkpoint<D::State>>>) -> Result<()> {
+pub(super) fn write_checkpoint<D: SharedData, PS: PersistableOrderProtocol>(db: &KVDB, checkpoint: Arc<ReadOnly<Checkpoint<D::State>>>) -> Result<()> {
     let mut state = Vec::new();
 
     D::serialize_state(&mut state, checkpoint.state())?;
@@ -209,7 +211,7 @@ pub(super) fn write_checkpoint<D: SharedData, PS: PersistableStatefulOrderProtoc
     Ok(())
 }
 
-pub(super) fn write_dec_log<D: SharedData, PS: PersistableStatefulOrderProtocol>(db: &KVDB, dec_log: &PSDecLog<PS>) -> Result<()> {
+pub(super) fn write_dec_log<D: SharedData, PS: PersistableOrderProtocol>(db: &KVDB, dec_log: &PSDecLog<PS>) -> Result<()> {
     write_latest_seq_no(db, dec_log.sequence_number())?;
 
     for proof_ref in PS::decompose_dec_log(dec_log) {
@@ -219,7 +221,7 @@ pub(super) fn write_dec_log<D: SharedData, PS: PersistableStatefulOrderProtocol>
     Ok(())
 }
 
-pub(super) fn write_proof<D: SharedData, PS: PersistableStatefulOrderProtocol>(db: &KVDB, proof: &PSProof<PS>) -> Result<()> {
+pub(super) fn write_proof<D: SharedData, PS: PersistableOrderProtocol>(db: &KVDB, proof: &PSProof<PS>) -> Result<()> {
     let (proof_metadata, messages) = PS::decompose_proof(proof);
 
     write_proof_metadata(db, proof_metadata)?;
@@ -231,7 +233,7 @@ pub(super) fn write_proof<D: SharedData, PS: PersistableStatefulOrderProtocol>(d
     Ok(())
 }
 
-pub(super) fn write_message<D: SharedData, PS: PersistableStatefulOrderProtocol>(db: &KVDB, message: &StoredMessage<PSMessage<PS>>) -> Result<()> {
+pub(super) fn write_message<D: SharedData, PS: PersistableOrderProtocol>(db: &KVDB, message: &StoredMessage<PSMessage<PS>>) -> Result<()> {
     let mut buf = Vec::with_capacity(Header::LENGTH + message.header().payload_length());
 
     message.header().serialize_into(&mut buf[..Header::LENGTH]).unwrap();
@@ -247,7 +249,7 @@ pub(super) fn write_message<D: SharedData, PS: PersistableStatefulOrderProtocol>
     db.set(column_family, key, buf)
 }
 
-pub(super) fn write_proof_metadata<D: SharedData, PS: PersistableStatefulOrderProtocol>(db: &KVDB, proof_metadata: &PS::ProofMetadata) -> Result<()> {
+pub(super) fn write_proof_metadata<D: SharedData, PS: PersistableOrderProtocol>(db: &KVDB, proof_metadata: &PS::ProofMetadata) -> Result<()> {
     let seq_no = serialize::make_seq(proof_metadata.sequence_number())?;
 
     let mut proof_vec = Vec::new();
@@ -257,7 +259,7 @@ pub(super) fn write_proof_metadata<D: SharedData, PS: PersistableStatefulOrderPr
     db.set(COLUMN_FAMILY_PROOFS, seq_no, &proof_vec[..])
 }
 
-fn delete_proofs_between<PS: PersistableStatefulOrderProtocol>(db: &KVDB, start: SeqNo, end: SeqNo) -> Result<()> {
+fn delete_proofs_between<PS: PersistableOrderProtocol>(db: &KVDB, start: SeqNo, end: SeqNo) -> Result<()> {
     let start = serialize::make_seq(start)?;
     let end = serialize::make_seq(end)?;
 
@@ -280,7 +282,7 @@ pub(super) fn invalidate_seq(db: &KVDB, seq: SeqNo) -> Result<()> {
 }
 
 ///Delete all msgs relating to a given sequence number
-fn delete_all_msgs_for_seq<PS: PersistableStatefulOrderProtocol>(db: &KVDB, msg_seq: SeqNo) -> Result<()> {
+fn delete_all_msgs_for_seq<PS: PersistableOrderProtocol>(db: &KVDB, msg_seq: SeqNo) -> Result<()> {
     let mut start_key =
         serialize::make_message_key(msg_seq, None)?;
     let mut end_key =

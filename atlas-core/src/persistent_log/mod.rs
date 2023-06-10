@@ -109,6 +109,8 @@ pub trait OrderingProtocolPersistentLog<PS> where PS: PersistableOrderProtocol {
 
     fn write_proof(&self, write_mode: WriteMode, proof: PSProof<PS>) -> Result<()>;
 
+    fn write_install_state(&self, write_mode: WriteMode, view: PSView<PS>, dec_log: PSDecLog<PS>) -> Result<()>;
+
     fn write_invalidate(&self, write_mode: WriteMode, seq: SeqNo) -> Result<()>;
 }
 
