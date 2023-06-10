@@ -16,7 +16,7 @@ use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessag
 use atlas_core::state_transfer::Checkpoint;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
 use crate::serialize::{PersistableStatefulOrderProtocol, PSDecLog, PSMessage, PSProof, PSView};
-use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorkerHandle, PersistentLogWriteStub, write_checkpoint, write_message, write_proof, write_proof_metadata, write_state};
+use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, write_checkpoint, write_message, write_proof, write_proof_metadata, write_state};
 
 pub mod serialize;
 pub mod backlog;
@@ -198,8 +198,14 @@ pub enum ResponseMessage {
 /// Messages that are sent to the logging thread to log specific requests
 pub(crate) type ChannelMsg<D: SharedData, PS: PersistableStatefulOrderProtocol> = (PWMessage<D, PS>, Option<CallbackType>);
 
+pub fn initialize_persistent_log<D, K, T, PS>(executor: ExecutorHandle<D>, db_path: K)
+                                          -> Result<PersistentLog<D, PS>>
+    where D: SharedData + 'static, K: AsRef<Path>, T: PersistentLogModeTrait, PS: PersistableStatefulOrderProtocol {
+    PersistentLog::init_log::<K, T>(executor, db_path)
+}
+
 impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableStatefulOrderProtocol {
-    pub fn init_log<K, T>(executor: ExecutorHandle<D>, db_path: K) -> Result<Self>
+    fn init_log<K, T>(executor: ExecutorHandle<D>, db_path: K) -> Result<Self>
         where
             K: AsRef<Path>,
             T: PersistentLogModeTrait
@@ -223,11 +229,7 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableStatefulOrd
 
         let (tx, rx) = channel::new_bounded_sync(1024);
 
-        let worker = PersistentLogWorker {
-            request_rx: rx,
-            response_txs,
-            db: kvdb.clone(),
-        };
+        let worker = PersistentLogWorker::new(rx, response_txs, kvdb.clone());
 
         match &log_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {

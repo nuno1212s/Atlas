@@ -48,7 +48,7 @@ impl<D, PS> PersistentLogWorkerHandle<D, PS> {
 
 
 ///A worker for the persistent logging
-struct PersistentLogWorker<D: SharedData, PS: PersistableStatefulOrderProtocol> {
+pub struct PersistentLogWorker<D: SharedData, PS: PersistableStatefulOrderProtocol> {
     request_rx: ChannelSyncRx<ChannelMsg<D, PS>>,
 
     response_txs: Vec<ChannelSyncTx<ResponseMessage>>,
@@ -57,7 +57,14 @@ struct PersistentLogWorker<D: SharedData, PS: PersistableStatefulOrderProtocol> 
 }
 
 impl<D: SharedData, PS: PersistableStatefulOrderProtocol> PersistentLogWorker<D, PS> {
-    fn work(mut self) {
+
+    pub fn new(request_rx: ChannelSyncRx<ChannelMsg<D, PS>>,
+               response_txs: Vec<ChannelSyncTx<ResponseMessage>>,
+               db: KVDB) -> Self {
+        Self { request_rx, response_txs, db }
+    }
+
+    pub(super) fn work(mut self) {
         loop {
             let (request, callback) = match self.request_rx.recv() {
                 Ok((request, callback)) => (request, callback),

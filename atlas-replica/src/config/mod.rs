@@ -31,6 +31,9 @@ pub struct ReplicaConfig<S, OP, ST, NT> where
     /// the consensus layer.
     pub next_consensus_seq: SeqNo,
 
+    /// The path to the database
+    pub db_path: String,
+
     /// The configuration for the ordering protocol
     pub op_config: OP::Config,
     /// The configuration for the State transfer protocol

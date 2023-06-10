@@ -6,13 +6,12 @@ mod capnp;
 
 use std::io::{Read, Write};
 use std::mem::size_of;
-use ::serde::{Deserialize, Serialize};
+#[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use atlas_capnp::objects_capnp;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::serialize::capnp;
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 
 pub(crate) type PSView<PS: PersistableStatefulOrderProtocol> = <PS::OrderProtocolMessage as OrderingProtocolMessage>::ViewInfo;

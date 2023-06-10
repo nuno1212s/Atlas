@@ -18,10 +18,10 @@ pub type View<OP> = <OP as OrderingProtocolMessage>::ViewInfo;
 
 pub type ProtocolMessage<OP> = <OP as OrderingProtocolMessage>::ProtocolMessage;
 
-pub struct OrderingProtocolArgs<D, NT>(pub ExecutorHandle<D>, pub Timeouts, pub RequestPreProcessor<D::Request>, pub BatchOutput<D::Request>, pub Arc<NT>) where D: SharedData;
+pub struct OrderingProtocolArgs<D, NT, PL>(pub ExecutorHandle<D>, pub Timeouts, pub RequestPreProcessor<D::Request>, pub BatchOutput<D::Request>, pub Arc<NT>, pub PL) where D: SharedData;
 
 /// The trait for an ordering protocol to be implemented in Atlas
-pub trait OrderingProtocol<D, NT>: Orderable where D: SharedData + 'static {
+pub trait OrderingProtocol<D, NT, PL>: Orderable where D: SharedData + 'static {
 
     /// The type which implements OrderingProtocolMessage, to be implemented by the developer
     type Serialization: OrderingProtocolMessage + 'static;
@@ -30,7 +30,7 @@ pub trait OrderingProtocol<D, NT>: Orderable where D: SharedData + 'static {
     type Config;
 
     /// Initialize this ordering protocol with the given configuration, executor, timeouts and node
-    fn initialize(config: Self::Config, args: OrderingProtocolArgs<D, NT>) -> Result<Self> where
+    fn initialize(config: Self::Config, args: OrderingProtocolArgs<D, NT, PL>) -> Result<Self> where
         Self: Sized;
 
     /// Get the current view of the ordering protocol
@@ -150,6 +150,10 @@ impl<O> ProtocolConsensusDecision<O> {
             execution_result,
             batch_info
         }
+    }
+    
+    pub fn into(self) -> (SeqNo, UpdateBatch<O>, ExecutionResult, Option<DecisionInformation<O>>) {
+        (self.seq, self.executable_batch, self.execution_result, self.batch_info)
     }
 }
 

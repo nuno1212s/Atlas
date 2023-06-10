@@ -28,4 +28,5 @@ atlas-execution = { path = "../atlas-execution" }
 atlas-common = { path = "../atlas-common" }
 atlas-core = { path = "../atlas-core" }
 atlas-metrics = {path = "../atlas-metrics" }
+atlas-persistent-log = { path = "../atlas-persistent-log" }
 futures-timer = "3.0.2"

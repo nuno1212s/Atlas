@@ -17,18 +17,20 @@ use atlas_communication::{Node, NodeConnections, NodeIncomingRqHandler};
 use atlas_communication::message::{StoredMessage};
 use atlas_execution::app::{Request, Service, State};
 use atlas_execution::ExecutorHandle;
-use atlas_execution::serialize::digest_state;
+use atlas_execution::serialize::{digest_state, SharedData};
 use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
-use atlas_core::ordering_protocol::{OrderingProtocol, OrderingProtocolArgs};
+use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
 use atlas_core::ordering_protocol::OrderProtocolExecResult;
 use atlas_core::ordering_protocol::OrderProtocolPoll;
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
-use atlas_core::serialize::ServiceMsg;
+use atlas_core::serialize::{OrderingProtocolMessage, ServiceMsg};
 use atlas_core::state_transfer::{Checkpoint, StatefulOrderProtocol, StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, Timeout, TimeoutKind, Timeouts};
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
+use atlas_persistent_log::PersistentLog;
+use atlas_persistent_log::serialize::PersistableStatefulOrderProtocol;
 use crate::config::ReplicaConfig;
 use crate::executable::{Executor, ReplicaReplier};
 use crate::metric::{ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_RQ_QUEUE_SIZE_ID, REPLICA_TAKE_FROM_NETWORK_ID, RUN_LATENCY_TIME_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
@@ -51,7 +53,8 @@ pub(crate) enum ReplicaPhase {
     StateTransferProtocol,
 }
 
-pub struct Replica<S, OP, ST, NT> where S: Service {
+pub struct Replica<S, OP, ST, NT> where S: Service,
+                                        OP: PersistableStatefulOrderProtocol {
     replica_phase: ReplicaPhase,
     // The ordering protocol
     ordering_protocol: OP,
@@ -66,10 +69,11 @@ pub struct Replica<S, OP, ST, NT> where S: Service {
     execution_tx: ChannelSyncTx<Message<S::Data>>,
     // THe handle for processed timeouts
     processed_timeout: (ChannelSyncTx<(Vec<RqTimeout>, Vec<RqTimeout>)>, ChannelSyncRx<(Vec<RqTimeout>, Vec<RqTimeout>)>),
+    persistent_log: PersistentLog<S::Data, OP>,
 }
 
 impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
-                                                 OP: StatefulOrderProtocol<S::Data, NT> + 'static,
+                                                 OP: StatefulOrderProtocol<S::Data, NT> + 'static + PersistableStatefulOrderProtocol,
                                                  ST: StateTransferProtocol<S::Data, OP, NT> + 'static,
                                                  NT: Node<ServiceMsg<S::Data, OP::Serialization, ST::Serialization>> + 'static {
     pub async fn bootstrap(cfg: ReplicaConfig<S, OP, ST, NT>) -> Result<Self> {
@@ -80,7 +84,7 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
             f,
             view,
             next_consensus_seq,
-            op_config,
+            db_path, op_config,
             st_config,
             node: node_config
         } = cfg;
@@ -113,9 +117,11 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
 
         let initial_state = Checkpoint::new(SeqNo::ZERO, init_ex_state, digest);
 
+        let persistent_log = atlas_persistent_log::initialize_persistent_log(executor.clone(), db_path)?;
+
         let op_args = OrderingProtocolArgs(executor.clone(), timeouts.clone(),
                                            rq_pre_processor.clone(),
-                                           batch_input, node.clone());
+                                           batch_input, node.clone(), persistent_log.clone());
 
         // Initialize the ordering protocol
         let ordering_protocol = OP::initialize_with_initial_state(op_config, op_args, initial_state)?;
@@ -188,6 +194,7 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
             execution_rx: exec_rx,
             execution_tx: exec_tx,
             processed_timeout: timeout_channel,
+            persistent_log,
         };
 
         info!("{:?} // Requesting state", log_node_id);
@@ -242,6 +249,9 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
                                             OrderProtocolExecResult::RunCst => {
                                                 self.run_state_transfer_protocol()?;
                                             }
+                                            OrderProtocolExecResult::Decided(decisions) => {
+                                                self.execute_decisions(decisions)?;
+                                            }
                                         }
                                     }
                                     SystemMessage::StateTransferMessage(state_transfer) => {
@@ -259,6 +269,9 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
                                             }
                                             OrderProtocolExecResult::RunCst => {
                                                 self.run_state_transfer_protocol()?;
+                                            }
+                                            OrderProtocolExecResult::Decided(decisions) => {
+                                                self.execute_decisions(decisions)?;
                                             }
                                         }
                                     }
@@ -284,6 +297,9 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
                                 OrderProtocolExecResult::RunCst => {
                                     self.run_state_transfer_protocol()?;
                                 }
+                                OrderProtocolExecResult::Decided(decided) => {
+                                    self.execute_decisions(decided)?;
+                                }
                             }
 
                             metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
@@ -291,6 +307,9 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
                         }
                         OrderProtocolPoll::RunCst => {
                             self.run_state_transfer_protocol()?;
+                        }
+                        OrderProtocolPoll::Decided(decisions) => {
+                            for decision in decisions {}
                         }
                     }
                 }
@@ -339,6 +358,27 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
             metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());
 
             last_loop = Instant::now();
+        }
+
+        Ok(())
+    }
+
+    fn execute_decisions(&mut self, decisions: Vec<ProtocolConsensusDecision<Request<S>>>) -> Result<()> {
+        for decision in decisions {
+
+            if let Some(decision ) = self.persistent_log.wait_for_batch_persistency_and_execute(decision)? {
+                let (seq, batch, result, _) = decision.into();
+
+                match result {
+                    ExecutionResult::Nil => {
+                        self.executor_handle.queue_update(batch)?
+                    }
+                    ExecutionResult::BeginCheckpoint => {
+                        self.executor_handle.queue_update_and_get_appstate(batch)?
+                    }
+                }
+
+            }
         }
 
         Ok(())
