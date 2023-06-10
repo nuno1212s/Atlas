@@ -366,6 +366,10 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
     fn execute_decisions(&mut self, decisions: Vec<ProtocolConsensusDecision<Request<S>>>) -> Result<()> {
         for decision in decisions {
 
+            if let Some(decided) = decision.batch_info() {
+                self.rq_pre_processor.send(PreProcessorMessage::Decided(decided.client_requests().clone()))?;
+            }
+
             if let Some(decision ) = self.persistent_log.wait_for_batch_persistency_and_execute(decision)? {
                 let (seq, batch, result, _) = decision.into();
 

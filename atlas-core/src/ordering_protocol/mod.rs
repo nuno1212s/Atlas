@@ -151,7 +151,11 @@ impl<O> ProtocolConsensusDecision<O> {
             batch_info
         }
     }
-    
+
+    pub fn batch_info(&self) -> &Option<DecisionInformation<O>> {
+        &self.batch_info
+    }
+
     pub fn into(self) -> (SeqNo, UpdateBatch<O>, ExecutionResult, Option<DecisionInformation<O>>) {
         (self.seq, self.executable_batch, self.execution_result, self.batch_info)
     }
@@ -166,4 +170,17 @@ impl<O> DecisionInformation<O> {
             client_requests
         }
     }
+
+    pub fn batch_digest(&self) -> &Digest {
+        &self.batch_digest
+    }
+
+    pub fn messages_persisted(&self) -> &Vec<Digest> {
+        &self.messages_persisted
+    }
+
+    pub fn client_requests(&self) -> &Vec<ClientRqInfo> {
+        &self.client_requests
+    }
+
 }
