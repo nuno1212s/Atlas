@@ -39,7 +39,7 @@ pub struct PersistentLogWorkerHandle<D: SharedData, PS: PersistableOrderProtocol
 
 ///A stub that is only useful for writing to the persistent log
 #[derive(Clone)]
-pub(super) struct PersistentLogWriteStub<D: SharedData, PS: PersistableOrderProtocol> {
+pub struct PersistentLogWriteStub<D: SharedData, PS: PersistableOrderProtocol> {
     pub(crate) tx: ChannelSyncTx<ChannelMsg<D, PS>>,
 }
 
@@ -182,9 +182,11 @@ impl<D: SharedData, PS: PersistableOrderProtocol> PersistentLogWorker<D, PS> {
                 ResponseMessage::WroteMessage(seq, msg.header().digest().clone())
             }
             PWMessage::Checkpoint(checkpoint) => {
+                let seq = checkpoint.sequence_number();
+
                 write_checkpoint::<D, PS>(&self.db, checkpoint)?;
 
-                ResponseMessage::Checkpointed(checkpoint.sequence_number())
+                ResponseMessage::Checkpointed(seq)
             }
             PWMessage::Invalidate(seq) => {
                 invalidate_seq::<PS>(&self.db, seq)?;
@@ -264,7 +266,7 @@ fn read_decision_log<PS: PersistableOrderProtocol>(db: &KVDB) -> Result<Option<P
 
         let seq = serialize::read_seq(&*key)?;
 
-        let proof_metadata = serialize::deserialize_proof_metadata::<&[u8], PS>(&*value)?;
+        let proof_metadata = serialize::deserialize_proof_metadata::<&[u8], PS>(&mut &*value)?;
 
         let messages = read_messages_for_seq::<PS>(db, seq)?;
 
@@ -276,7 +278,7 @@ fn read_decision_log<PS: PersistableOrderProtocol>(db: &KVDB) -> Result<Option<P
     Ok(Some(PS::init_dec_log(proofs)))
 }
 
-fn read_messages_for_seq<PS: PersistableOrderProtocol>(db: &KVDB, seq: SeqNo) -> Result<Vec<PSMessage<PS>>> {
+fn read_messages_for_seq<PS: PersistableOrderProtocol>(db: &KVDB, seq: SeqNo) -> Result<Vec<StoredMessage<PSMessage<PS>>>> {
     let start_seq = serialize::make_message_key(seq, None)?;
     let end_seq = serialize::make_message_key(seq.next(), None)?;
 
@@ -286,9 +288,11 @@ fn read_messages_for_seq<PS: PersistableOrderProtocol>(db: &KVDB, seq: SeqNo) ->
         for result in db.iter_range(column_family, Some(start_seq.as_slice()), Some(end_seq.as_slice()))? {
             let (key, value) = result?;
 
-            let message = serialize::deserialize_message::<&[u8], PS>(&*value).unwrap();
+            let header = Header::deserialize_from(&mut &(*value)[..Header::LENGTH])?;
 
-            messages.push(message);
+            let message = serialize::deserialize_message::<&[u8], PS>(&mut &(*value)[Header::LENGTH..]).unwrap();
+
+            messages.push(StoredMessage::new(header, message));
         }
     }
 

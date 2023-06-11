@@ -133,7 +133,7 @@ pub type InstallState<PS: PersistableOrderProtocol> = (
 );
 
 /// Work messages for the
-pub(crate) enum PWMessage<D: SharedData, PS: PersistableOrderProtocol> {
+pub enum PWMessage<D: SharedData, PS: PersistableOrderProtocol> {
     //Persist a new view into the persistent storage
     View(PSView<PS>),
 
@@ -199,11 +199,11 @@ pub(crate) type ChannelMsg<D: SharedData, PS: PersistableOrderProtocol> = (PWMes
 
 pub fn initialize_persistent_log<D, K, T, PS>(executor: ExecutorHandle<D>, db_path: K)
                                           -> Result<PersistentLog<D, PS>>
-    where D: SharedData + 'static, K: AsRef<Path>, T: PersistentLogModeTrait, PS: PersistableOrderProtocol {
+    where D: SharedData + 'static, K: AsRef<Path>, T: PersistentLogModeTrait, PS: PersistableOrderProtocol + 'static {
     PersistentLog::init_log::<K, T>(executor, db_path)
 }
 
-impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableOrderProtocol {
+impl<D, PS> PersistentLog<D, PS> where D: SharedData + 'static, PS: PersistableOrderProtocol + 'static {
     fn init_log<K, T>(executor: ExecutorHandle<D>, db_path: K) -> Result<Self>
         where
             K: AsRef<Path>,

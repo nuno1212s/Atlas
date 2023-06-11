@@ -103,6 +103,7 @@ pub struct ProtocolConsensusDecision<O> {
 
 /// Information about the completed batch,
 /// when the batch was completed locally
+#[derive(Debug)]
 pub struct DecisionInformation {
     // The digest of the batch
     batch_digest: Digest,
@@ -182,4 +183,10 @@ impl DecisionInformation {
         &self.client_requests
     }
 
+}
+
+impl<O> Debug for ProtocolConsensusDecision<O> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ProtocolConsensusDecision {{ seq: {:?}, executable_batch: {:?}, batch_info: {:?} }}", self.seq, self.executable_batch.len(), self.batch_info)
+    }
 }

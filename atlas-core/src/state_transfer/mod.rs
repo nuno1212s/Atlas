@@ -162,7 +162,7 @@ pub trait StatefulOrderProtocol<D: SharedData + 'static, NT, PL>: OrderingProtoc
     /// then should return the state and a list of all requests that should
     /// then be executed by the application.
     fn install_state(&mut self, view_info: View<Self::Serialization>,
-                     dec_log: DecLog<Self::StateSerialization>) -> Result<(D::State, Vec<D::Request>)>;
+                     dec_log: DecLog<Self::StateSerialization>) -> Result<Vec<D::Request>>;
 
     /// Install a given sequence number
     fn install_seq_no(&mut self, seq_no: SeqNo) -> Result<()>;

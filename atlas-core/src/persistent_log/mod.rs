@@ -61,10 +61,10 @@ pub trait PersistableOrderProtocol {
 
     /// Get the message type for a given message, must correspond to a string returned by
     /// [PersistableOrderProtocol::message_types]
-    fn get_type_for_message(msg: &PSMessage<Self>) -> Result<&str>;
+    fn get_type_for_message(msg: &PSMessage<Self>) -> Result<&'static str>;
 
     /// Initialize a proof from the metadata and messages stored in persistent storage
-    fn init_proof_from(metadata: Self::ProofMetadata, messages: Vec<PSMessage<Self>>) -> PSProof<Self>;
+    fn init_proof_from(metadata: Self::ProofMetadata, messages: Vec<StoredMessage<PSMessage<Self>>>) -> PSProof<Self>;
 
     /// Initialize a decision log from the messages stored in persistent storage
     fn init_dec_log(proofs: Vec<PSProof<Self>>) -> PSDecLog<Self>;

@@ -81,7 +81,7 @@ pub(super) fn read_seq<R>(r: R) -> Result<SeqNo> where R: Read {
 
 pub(super) fn serialize_message<W, PS>(w: &mut W, msg: &PSMessage<PS>) -> Result<usize> where W: Write, PS: PersistableOrderProtocol {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::serialize_message(w, msg);
+        let res = serde::serialize_message::<W, PS>(w, msg);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -91,7 +91,7 @@ pub(super) fn serialize_message<W, PS>(w: &mut W, msg: &PSMessage<PS>) -> Result
 
 pub(super) fn serialize_proof_metadata<W, PS>(w: &mut W, metadata: &PS::ProofMetadata) -> Result<usize> where W: Write, PS: PersistableOrderProtocol {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::serialize_proof_metadata(w, metadata);
+        let res = serde::serialize_proof_metadata::<W, PS>(w, metadata);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -99,9 +99,9 @@ pub(super) fn serialize_proof_metadata<W, PS>(w: &mut W, metadata: &PS::ProofMet
     res
 }
 
-pub(super) fn deserialize_message<R, PS>(r: R) -> Result<PSMessage<PS>> where R: Read, PS: PersistableOrderProtocol {
+pub(super) fn deserialize_message<R, PS>(r: &mut R) -> Result<PSMessage<PS>> where R: Read, PS: PersistableOrderProtocol {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::deserialize_message(r);
+        let res = serde::deserialize_message::<R, PS>(r);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -109,9 +109,9 @@ pub(super) fn deserialize_message<R, PS>(r: R) -> Result<PSMessage<PS>> where R:
     res
 }
 
-pub(super) fn deserialize_proof_metadata<R, PS>(r: R) -> Result<PS::ProofMetadata> where R: Read, PS: PersistableOrderProtocol {
+pub(super) fn deserialize_proof_metadata<R, PS>(r: &mut R) -> Result<PS::ProofMetadata> where R: Read, PS: PersistableOrderProtocol {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::deserialize_proof_metadata(r);
+        let res = serde::deserialize_proof_metadata::<R, PS>(r);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
