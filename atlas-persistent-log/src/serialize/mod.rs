@@ -80,23 +80,41 @@ pub(super) fn read_seq<R>(r: R) -> Result<SeqNo> where R: Read {
 }
 
 pub(super) fn serialize_message<W, PS>(w: &mut W, msg: &PSMessage<PS>) -> Result<usize> where W: Write, PS: PersistableOrderProtocol {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::serialize_message(w, msg);
 
-    #[cfg(feature="serialize_serde")]
-    let res = serde::serialize_message(w, msg);
-
-    #[cfg(feature="serialize_capnp")]
-    todo!();
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
 
     res
 }
 
 pub(super) fn serialize_proof_metadata<W, PS>(w: &mut W, metadata: &PS::ProofMetadata) -> Result<usize> where W: Write, PS: PersistableOrderProtocol {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::serialize_proof_metadata(w, metadata);
 
-    #[cfg(feature="serialize_serde")]
-    let res = serde::serialize_proof_metadata(w, metadata);
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
 
-    #[cfg(feature="serialize_capnp")]
-    todo!();
+    res
+}
+
+pub(super) fn deserialize_message<R, PS>(r: R) -> Result<PSMessage<PS>> where R: Read, PS: PersistableOrderProtocol {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::deserialize_message(r);
+
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
+
+    res
+}
+
+pub(super) fn deserialize_proof_metadata<R, PS>(r: R) -> Result<PS::ProofMetadata> where R: Read, PS: PersistableOrderProtocol {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::deserialize_proof_metadata(r);
+
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
 
     res
 }

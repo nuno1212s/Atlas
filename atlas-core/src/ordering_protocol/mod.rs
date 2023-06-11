@@ -154,6 +154,10 @@ impl<O> ProtocolConsensusDecision<O> {
     pub fn into(self) -> (SeqNo, UpdateBatch<O>, Option<DecisionInformation>) {
         (self.seq, self.executable_batch, self.batch_info)
     }
+
+    pub fn update_batch(&self) -> &UpdateBatch<O> {
+        &self.executable_batch
+    }
 }
 
 /// Constructor for the DecisionInformation struct

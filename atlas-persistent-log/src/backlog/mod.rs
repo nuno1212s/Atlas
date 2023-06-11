@@ -3,7 +3,7 @@ use log::{error, warn};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::hash::Digest;
-use atlas_common::ordering::SeqNo;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::error::*;
 use atlas_core::ordering_protocol::ProtocolConsensusDecision;
 use atlas_execution::ExecutorHandle;
@@ -214,9 +214,6 @@ impl<D: SharedData + 'static> ConsensusBacklog<D> {
         //TODO: Request checkpointing from the executor
         self.executor_handle.queue_update(requests).expect("Failed to queue update");
 
-        if let Err(err) = checkpoint {
-            error!("Failed to enqueue consensus {:?}", err);
-        }
     }
 
     fn process_ahead_message(&mut self, seq: SeqNo, notification: ResponseMessage) {
@@ -249,9 +246,9 @@ impl<O> From<BacklogMessage<O>> for AwaitingPersistence<O>
         let pending_rq = match &value {
             BacklogMsg::Batch(info) => {
                 // We can unwrap the completed batch as this was received here
-                let completed_batch_info = info.completed_batch().as_ref().unwrap();
+                let completed_batch_info = info.batch_info().as_ref().unwrap();
 
-                PendingRq::Batch(completed_batch_info.messages_to_persist().clone(),
+                PendingRq::Batch(completed_batch_info.messages_persisted().clone(),
                                  Some(info.update_batch().sequence_number()))
             }
             BacklogMsg::Proof(info) => {

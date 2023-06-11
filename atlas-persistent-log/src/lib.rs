@@ -1,3 +1,5 @@
+extern crate core;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -16,7 +18,7 @@ use atlas_core::persistent_log::{PersistableOrderProtocol, PSDecLog, PSMessage, 
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_core::state_transfer::Checkpoint;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
-use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, write_checkpoint, write_latest_seq_no, write_latest_view_seq_no, write_message, write_proof, write_proof_metadata, write_state};
+use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, read_latest_state, write_checkpoint, write_latest_seq_no, write_latest_view_seq_no, write_message, write_proof, write_proof_metadata, write_state};
 
 pub mod serialize;
 pub mod backlog;
@@ -123,7 +125,7 @@ pub struct PersistentLog<D: SharedData, PS: PersistableOrderProtocol>
 }
 
 /// The type of the installed state information
-pub type InstallState<D: SharedData, PS: PersistableOrderProtocol> = (
+pub type InstallState<PS: PersistableOrderProtocol> = (
     //The view sequence number
     SeqNo,
     //The decision log that comes after that state
@@ -154,7 +156,7 @@ pub(crate) enum PWMessage<D: SharedData, PS: PersistableOrderProtocol> {
     Proof(PSProof<PS>),
 
     //Install a recovery state received from CST or produced by us
-    InstallState(InstallState<D, PS>),
+    InstallState(InstallState<PS>),
 
     /// Register a new receiver for messages sent by the persistency workers
     RegisterCallbackReceiver(ChannelSyncTx<ResponseMessage>),
@@ -250,10 +252,10 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableOrderProtoc
     }
 
     /// TODO: Maybe make this async? We need it to start execution anyways...
-    pub fn read_state(&self) -> Result<Option<InstallState<D, PS>>> {
+    pub fn read_state(&self) -> Result<Option<InstallState<PS>>> {
         match self.kind() {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
-                read_latest_state::<D>(&self.db)
+                read_latest_state::<PS>(&self.db)
             }
             PersistentLogMode::None => {
                 Ok(None)
@@ -307,7 +309,7 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableOrderProtoc
                         self.worker_handle.queue_proof_metadata(metadata, callback)
                     }
                     WriteMode::BlockingSync => {
-                        write_proof_metadata(&self.db, metadata)
+                        write_proof_metadata::<PS>(&self.db, &metadata)
                     }
                 }
             }
@@ -328,7 +330,7 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableOrderProtoc
                     WriteMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_message(msg, callback)
                     }
-                    WriteMode::BlockingSync => write_message::<D, PS>(&self.db, &msg),
+                    WriteMode::BlockingSync => write_message::<PS>(&self.db, &msg),
                 }
             }
             PersistentLogMode::None => {
@@ -368,7 +370,7 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableOrderProtoc
                         self.worker_handle.queue_invalidate(seq, callback)
                     }
                     WriteMode::BlockingSync => {
-                        invalidate_seq(&self.db, seq)?;
+                        invalidate_seq::<PS>(&self.db, seq)?;
 
                         Ok(())
                     }
@@ -381,7 +383,7 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableOrderProtoc
     }
 
     /// Attempt to install the state into persistent storage
-    pub fn write_install_state(&self, write_mode: WriteMode, state: InstallState<D, PS>) -> Result<()> {
+    pub fn write_install_state(&self, write_mode: WriteMode, state: InstallState<PS>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
@@ -408,7 +410,7 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData, PS: PersistableOrderProtoc
                         self.worker_handle.queue_proof(proof, callback)
                     }
                     WriteMode::BlockingSync => {
-                        write_proof::<D, PS>(&self.db, proof)
+                        write_proof::<PS>(&self.db, &proof)
                     }
                 }
             }

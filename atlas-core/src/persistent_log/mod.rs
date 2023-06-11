@@ -70,7 +70,7 @@ pub trait PersistableOrderProtocol {
     fn init_dec_log(proofs: Vec<PSProof<Self>>) -> PSDecLog<Self>;
 
     /// Decompose a given proof into it's metadata and messages, ready to be persisted
-    fn decompose_proof(proof: &PSProof<Self>) -> (&Self::ProofMetadata, Vec<&PSMessage<Self>>);
+    fn decompose_proof(proof: &PSProof<Self>) -> (&Self::ProofMetadata, Vec<&StoredMessage<PSMessage<Self>>>);
 
     /// Decompose a decision log into its separate proofs, so they can then be further decomposed
     /// into metadata and messages
