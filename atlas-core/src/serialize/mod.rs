@@ -52,6 +52,24 @@ pub trait OrderingProtocolMessage: Send {
     #[cfg(feature = "serialize_serde")]
     type ProtocolMessage: Orderable +  for<'a> Deserialize<'a> + Serialize + Send + Clone + Debug;
 
+    /// A proof of a given Sequence number in the consensus protocol
+    /// This is used when requesting the latest consensus id in the state transfer protocol,
+    /// in order to verify that a given consensus id is valid
+    #[cfg(feature = "serialize_capnp")]
+    type Proof: OrderProtocolProof + Send + Clone;
+
+    #[cfg(feature = "serialize_serde")]
+    type Proof: OrderProtocolProof + for<'a> Deserialize<'a> + Serialize + Send + Clone;
+
+    /// The metadata type for storing the proof in the persistent storage
+    /// Since the message will be stored in the persistent storage, it needs to be serializable
+    /// This should provide all the necessary final information to assemble the proof from the messages
+    #[cfg(feature = "serialize_serde")]
+    type ProofMetadata: Orderable + for<'a> Deserialize<'a> + Serialize + Send + Clone;
+
+    #[cfg(feature = "serialize_capnp")]
+    type ProofMetadata: Orderable + Send + Clone;
+
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::consensus_messages_capnp::protocol_message::Builder, msg: &Self::ProtocolMessage) -> Result<()>;
 
@@ -63,6 +81,13 @@ pub trait OrderingProtocolMessage: Send {
 
     #[cfg(feature = "serialize_capnp")]
     fn deserialize_view_capnp(reader: febft_capnp::cst_messages_capnp::view_info::Reader) -> Result<Self::ViewInfo>;
+
+
+    #[cfg(feature = "serialize_capnp")]
+    fn serialize_proof_capnp(builder: febft_capnp::cst_messages_capnp::proof::Builder, msg: &Self::Proof) -> Result<()>;
+
+    #[cfg(feature = "serialize_capnp")]
+    fn deserialize_proof_capnp(reader: febft_capnp::cst_messages_capnp::proof::Reader) -> Result<Self::Proof>;
 }
 
 /// The abstraction for state transfer protocol messages.
@@ -83,20 +108,14 @@ pub trait StateTransferMessage: Send {
 
 /// The messages for the stateful ordering protocol
 pub trait StatefulOrderProtocolMessage: Send {
+
+    /// A type that defines the log of decisions made since the last garbage collection
+    /// (In the case of BFT SMR the log is GCed after a checkpoint of the application)
     #[cfg(feature = "serialize_capnp")]
     type DecLog: OrderProtocolLog + Send + Clone;
 
     #[cfg(feature = "serialize_serde")]
     type DecLog: OrderProtocolLog + for<'a> Deserialize<'a> + Serialize + Send + Clone;
-
-    /// A proof of a given Sequence number in the consensus protocol
-    /// This is used when requesting the latest consensus id in the state transfer protocol,
-    /// in order to verify that a given consensus id is valid
-    #[cfg(feature = "serialize_capnp")]
-    type Proof: OrderProtocolProof + Send + Clone;
-
-    #[cfg(feature = "serialize_serde")]
-    type Proof: OrderProtocolProof + for<'a> Deserialize<'a> + Serialize + Send + Clone;
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_declog_capnp(builder: febft_capnp::cst_messages_capnp::dec_log::Builder, msg: &Self::DecLog) -> Result<()>;
@@ -104,11 +123,6 @@ pub trait StatefulOrderProtocolMessage: Send {
     #[cfg(feature = "serialize_capnp")]
     fn deserialize_declog_capnp(reader: febft_capnp::cst_messages_capnp::dec_log::Reader) -> Result<Self::DecLog>;
 
-    #[cfg(feature = "serialize_capnp")]
-    fn serialize_proof_capnp(builder: febft_capnp::cst_messages_capnp::proof::Builder, msg: &Self::Proof) -> Result<()>;
-
-    #[cfg(feature = "serialize_capnp")]
-    fn deserialize_proof_capnp(reader: febft_capnp::cst_messages_capnp::proof::Reader) -> Result<Self::Proof>;
 }
 
 /// The type that encapsulates all the serializing, so we don't have to constantly use SystemMessage
@@ -171,6 +185,10 @@ impl OrderingProtocolMessage for NoProtocol {
 
     type ProtocolMessage = ();
 
+    type Proof = ();
+
+    type ProofMetadata = ();
+
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(_: febft_capnp::consensus_messages_capnp::protocol_message::Builder, _: &Self::ProtocolMessage) -> Result<()> {
         unimplemented!()
@@ -205,3 +223,5 @@ impl StateTransferMessage for NoProtocol {
         unimplemented!()
     }
 }
+
+impl OrderProtocolProof for () {}

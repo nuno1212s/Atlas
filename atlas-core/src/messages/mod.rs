@@ -430,7 +430,7 @@ impl<O> From<&StoredRequestMessage<O>> for ClientRqInfo {
         Self {
             digest,
             sender,
-            seq_no: seq_no,
+            seq_no,
             session,
         }
     }

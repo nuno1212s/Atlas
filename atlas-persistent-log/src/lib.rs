@@ -14,7 +14,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::persistentdb::KVDB;
 use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::ProtocolConsensusDecision;
-use atlas_core::persistent_log::{PersistableOrderProtocol, PSDecLog, PSMessage, PSProof, PSView};
+use atlas_core::persistent_log::{PersistableOrderProtocol, PSDecLog, PSMessage, PSProof, PSProofMetadata, PSView, WriteMode};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_core::state_transfer::Checkpoint;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
@@ -27,7 +27,8 @@ mod worker;
 /// The general type for a callback.
 /// Callbacks are optional and can be used when you want to
 /// execute a function when the logger stops finishes the computation
-pub type CallbackType = Box<dyn FnOnce(Result<ResponseMessage>) + Send>;
+// pub type CallbackType = Box<dyn FnOnce(Result<ResponseMessage>) + Send>;
+pub type CallbackType = ();
 
 pub enum PersistentLogMode<D: SharedData> {
     /// The strict log mode is meant to indicate that the consensus can only be finalized and the
@@ -98,19 +99,6 @@ impl PersistentLogModeTrait for NoPersistentLog {
     }
 }
 
-///How should the data be written and response delivered?
-/// If Sync is chosen the function will block on the call and return the result of the operation
-/// If Async is chosen the function will not block and will return the response as a message to a channel
-pub enum WriteMode {
-    //When writing in async mode, you have the option of having the response delivered on a function
-    //Of your choice
-    //Note that this function will be executed on the persistent logging thread, so keep it short and
-    //Be careful with race conditions.
-    NonBlockingSync(Option<CallbackType>),
-    BlockingSync,
-}
-
-
 ///TODO: Handle sequence numbers that loop the u32 range.
 /// This is the main reference to the persistent log, used to push data to it
 pub struct PersistentLog<D: SharedData, PS: PersistableOrderProtocol>
@@ -141,7 +129,7 @@ pub enum PWMessage<D: SharedData, PS: PersistableOrderProtocol> {
     Committed(SeqNo),
 
     // Persist the metadata for a given decision
-    ProofMetadata(PS::ProofMetadata),
+    ProofMetadata(PSProofMetadata<PS>),
 
     //Persist a given message into storage
     Message(Arc<ReadOnly<StoredMessage<PSMessage<PS>>>>),
@@ -301,7 +289,7 @@ impl<D, PS> PersistentLog<D, PS> where D: SharedData + 'static, PS: PersistableO
 
     /// Write the metadata of the proof
     pub fn write_proof_metadata(&self, write_mode: WriteMode,
-                                metadata: PS::ProofMetadata) -> Result<()> {
+                                metadata: PSProofMetadata<PS>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {

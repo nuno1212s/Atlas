@@ -14,7 +14,7 @@ readme = "README.md"
 [features]
 
 serialize_serde = ["atlas-core/serialize_serde", "atlas-communication/serialize_serde",
-    "atlas-execution/serialize_serde", "atlas-common/serialize_serde", "atlas-persistent-log/serde"]
+    "atlas-execution/serialize_serde", "atlas-common/serialize_serde", "atlas-persistent-log/serialize_serde"]
 serialize_capnp = ["atlas-core/serialize_capnp", "atlas-execution/serialize_capnp",
     "atlas-communication/serialize_capnp", "atlas-persistent-log/serialize_capnp"]
 

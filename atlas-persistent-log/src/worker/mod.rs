@@ -11,7 +11,7 @@ use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::state_transfer::Checkpoint;
 use atlas_execution::serialize::SharedData;
 use crate::{CallbackType, ChannelMsg, InstallState, PWMessage, ResponseMessage, serialize};
-use atlas_core::persistent_log::{PersistableOrderProtocol, PSDecLog, PSMessage, PSProof, PSView};
+use atlas_core::persistent_log::{PersistableOrderProtocol, PSDecLog, PSMessage, PSProof, PSProofMetadata, PSView};
 
 
 ///Latest checkpoint made by the execution
@@ -95,7 +95,7 @@ impl<D: SharedData, PS: PersistableOrderProtocol> PersistentLogWorkerHandle<D, P
         Self::translate_error(self.next_worker().send((PWMessage::Committed(seq_no), callback)))
     }
 
-    pub(super) fn queue_proof_metadata(&self, metadata: PS::ProofMetadata, callback: Option<CallbackType>) -> Result<()> {
+    pub(super) fn queue_proof_metadata(&self, metadata: PSProofMetadata<PS>, callback: Option<CallbackType>) -> Result<()> {
         Self::translate_error(self.next_worker().send((PWMessage::ProofMetadata(metadata), callback)))
     }
 
@@ -143,7 +143,7 @@ impl<D: SharedData, PS: PersistableOrderProtocol> PersistentLogWorker<D, PS> {
 
             if let Some(callback) = callback {
                 //If we have a callback to call with the response, then call it
-                (callback)(response);
+                // (callback)(response);
             } else {
                 //If not, then deliver it down the response_txs
                 match response {
@@ -399,7 +399,7 @@ pub(super) fn write_message<PS: PersistableOrderProtocol>(db: &KVDB, message: &S
     db.set(column_family, key, buf)
 }
 
-pub(super) fn write_proof_metadata<PS: PersistableOrderProtocol>(db: &KVDB, proof_metadata: &PS::ProofMetadata) -> Result<()> {
+pub(super) fn write_proof_metadata<PS: PersistableOrderProtocol>(db: &KVDB, proof_metadata: &PSProofMetadata<PS>) -> Result<()> {
     let seq_no = serialize::make_seq(proof_metadata.sequence_number())?;
 
     let mut proof_vec = Vec::new();

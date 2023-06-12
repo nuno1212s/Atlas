@@ -12,7 +12,7 @@ use atlas_capnp::objects_capnp;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_core::persistent_log::{PersistableOrderProtocol, PSMessage};
+use atlas_core::persistent_log::{PersistableOrderProtocol, PSMessage, PSProofMetadata};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 
 pub(super) fn make_seq(seq: SeqNo) -> Result<Vec<u8>> {
@@ -89,7 +89,7 @@ pub(super) fn serialize_message<W, PS>(w: &mut W, msg: &PSMessage<PS>) -> Result
     res
 }
 
-pub(super) fn serialize_proof_metadata<W, PS>(w: &mut W, metadata: &PS::ProofMetadata) -> Result<usize> where W: Write, PS: PersistableOrderProtocol {
+pub(super) fn serialize_proof_metadata<W, PS>(w: &mut W, metadata: &PSProofMetadata<PS>) -> Result<usize> where W: Write, PS: PersistableOrderProtocol {
     #[cfg(feature = "serialize_serde")]
         let res = serde::serialize_proof_metadata::<W, PS>(w, metadata);
 
@@ -109,7 +109,7 @@ pub(super) fn deserialize_message<R, PS>(r: &mut R) -> Result<PSMessage<PS>> whe
     res
 }
 
-pub(super) fn deserialize_proof_metadata<R, PS>(r: &mut R) -> Result<PS::ProofMetadata> where R: Read, PS: PersistableOrderProtocol {
+pub(super) fn deserialize_proof_metadata<R, PS>(r: &mut R) -> Result<PSProofMetadata<PS>> where R: Read, PS: PersistableOrderProtocol {
     #[cfg(feature = "serialize_serde")]
         let res = serde::deserialize_proof_metadata::<R, PS>(r);
 

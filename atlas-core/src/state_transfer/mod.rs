@@ -13,7 +13,7 @@ use crate::timeouts::{RqTimeout, Timeouts};
 use serde::{Serialize, Deserialize};
 use atlas_common::crypto::hash::Digest;
 use atlas_execution::ExecutorHandle;
-use crate::persistent_log::StateTransferPersistentLog;
+use crate::persistent_log::{StatefulOrderingProtocolLog, StateTransferPersistentLog};
 use crate::request_pre_processing::BatchOutput;
 
 
@@ -84,7 +84,6 @@ pub type CstM<M: StateTransferMessage> = <M as StateTransferMessage>::StateTrans
 pub trait StateTransferProtocol<D, OP, NT, PL> where
     D: SharedData + 'static,
     OP: StatefulOrderProtocol<D, NT, PL> + 'static {
-
     /// The type which implements StateTransferMessage, to be implemented by the developer
     type Serialization: StateTransferMessage + 'static;
 
@@ -137,11 +136,9 @@ pub trait StateTransferProtocol<D, OP, NT, PL> where
 }
 
 pub type DecLog<OP> = <OP as StatefulOrderProtocolMessage>::DecLog;
-pub type SerProof<OP> = <OP as StatefulOrderProtocolMessage>::Proof;
 
 /// An order protocol that uses the state transfer protocol to manage its state.
 pub trait StatefulOrderProtocol<D: SharedData + 'static, NT, PL>: OrderingProtocol<D, NT, PL> {
-
     /// The serialization abstraction for
     type StateSerialization: StatefulOrderProtocolMessage + 'static;
 
@@ -149,28 +146,20 @@ pub trait StatefulOrderProtocol<D: SharedData + 'static, NT, PL>: OrderingProtoc
                                      dec_log: DecLog<Self::StateSerialization>) -> Result<Self> where
         Self: Sized;
 
-    /// Get the current sequence number of the protocol, combined with a proof of it so we can send it to other replicas
-    fn sequence_number_with_proof(&self) -> Result<Option<(SeqNo, SerProof<Self::StateSerialization>)>>;
-
-    /// Verify the sequence number sent by another replica. This doesn't pass a mutable reference since we don't want to
-    /// make any changes to the state of the protocol here (or allow the implementer to do so). Instead, we want to
-    /// just verify this sequence number
-    fn verify_sequence_number(&self, seq_no: SeqNo, proof: &SerProof<Self::StateSerialization>) -> Result<bool>;
-
     /// Install a state received from other replicas in the system
     /// Should only alter the necessary things within its own state and
     /// then should return the state and a list of all requests that should
     /// then be executed by the application.
     fn install_state(&mut self, view_info: View<Self::Serialization>,
-                     dec_log: DecLog<Self::StateSerialization>) -> Result<Vec<D::Request>>;
-
-    /// Install a given sequence number
-    fn install_seq_no(&mut self, seq_no: SeqNo) -> Result<()>;
+                     dec_log: DecLog<Self::StateSerialization>) -> Result<Vec<D::Request>>
+        where PL: StatefulOrderingProtocolLog<Self::Serialization, Self::StateSerialization>;
 
     /// Snapshot the current log of the replica
-    fn snapshot_log(&mut self) -> Result<(View<Self::Serialization>, DecLog<Self::StateSerialization>)>;
+    fn snapshot_log(&mut self) -> Result<(View<Self::Serialization>, DecLog<Self::StateSerialization>)>
+        where PL: StatefulOrderingProtocolLog<Self::Serialization, Self::StateSerialization>;
 
     /// Notify the consensus protocol that we have a checkpoint at a given sequence number,
     /// meaning it can now be garbage collected
-    fn checkpointed(&mut self, seq: SeqNo) -> Result<()>;
+    fn checkpointed(&mut self, seq: SeqNo) -> Result<()>
+        where PL: StatefulOrderingProtocolLog<Self::Serialization, Self::StateSerialization>;
 }
