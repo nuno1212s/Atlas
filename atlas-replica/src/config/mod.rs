@@ -4,14 +4,16 @@ use atlas_communication::config::NodeConfig;
 use atlas_communication::Node;
 use atlas_execution::app::Service;
 use atlas_core::ordering_protocol::OrderingProtocol;
+use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::serialize::ServiceMsg;
 use atlas_core::state_transfer::{StatefulOrderProtocol, StateTransferProtocol};
+use atlas_persistent_log::PersistentLog;
 
 /// Represents a configuration used to bootstrap a `Replica`.
 pub struct ReplicaConfig<S, OP, ST, NT> where
     S: Service + 'static,
-    OP: StatefulOrderProtocol<S::Data, NT> + 'static,
-    ST: StateTransferProtocol<S::Data, OP, NT> + 'static,
+    OP: StatefulOrderProtocol<S::Data, NT, PersistentLog<S::Data, OP, ST>> + 'static + PersistableOrderProtocol,
+    ST: StateTransferProtocol<S::Data, OP, NT, PersistentLog<S::Data, OP, ST>> + 'static + PersistableStateTransferProtocol,
     NT: Node<ServiceMsg<S::Data, OP::Serialization, ST::Serialization>> {
     /// The application logic.
     pub service: S,

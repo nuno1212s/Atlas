@@ -23,6 +23,7 @@ use atlas_core::messages::SystemMessage;
 use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
 use atlas_core::ordering_protocol::OrderProtocolExecResult;
 use atlas_core::ordering_protocol::OrderProtocolPoll;
+use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::serialize::{OrderingProtocolMessage, ServiceMsg};
@@ -30,7 +31,6 @@ use atlas_core::state_transfer::{Checkpoint, StatefulOrderProtocol, StateTransfe
 use atlas_core::timeouts::{RqTimeout, TimedOut, Timeout, TimeoutKind, Timeouts};
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
 use atlas_persistent_log::PersistentLog;
-use atlas_persistent_log::serialize::PersistableStatefulOrderProtocol;
 use crate::config::ReplicaConfig;
 use crate::executable::{Executor, ReplicaReplier};
 use crate::metric::{ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_RQ_QUEUE_SIZE_ID, REPLICA_TAKE_FROM_NETWORK_ID, RUN_LATENCY_TIME_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
@@ -54,7 +54,8 @@ pub(crate) enum ReplicaPhase {
 }
 
 pub struct Replica<S, OP, ST, NT> where S: Service,
-                                        OP: PersistableStatefulOrderProtocol {
+                                        OP: PersistableOrderProtocol,
+                                        ST: PersistableStateTransferProtocol {
     replica_phase: ReplicaPhase,
     // The ordering protocol
     ordering_protocol: OP,
@@ -69,12 +70,12 @@ pub struct Replica<S, OP, ST, NT> where S: Service,
     execution_tx: ChannelSyncTx<Message<S::Data>>,
     // THe handle for processed timeouts
     processed_timeout: (ChannelSyncTx<(Vec<RqTimeout>, Vec<RqTimeout>)>, ChannelSyncRx<(Vec<RqTimeout>, Vec<RqTimeout>)>),
-    persistent_log: PersistentLog<S::Data, OP>,
+    persistent_log: PersistentLog<S::Data, OP, ST>,
 }
 
 impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
-                                                 OP: StatefulOrderProtocol<S::Data, NT> + 'static + PersistableStatefulOrderProtocol,
-                                                 ST: StateTransferProtocol<S::Data, OP, NT> + 'static,
+                                                 OP: StatefulOrderProtocol<S::Data, NT, PersistentLog<S::Data, OP, ST>> + 'static + PersistableOrderProtocol,
+                                                 ST: StateTransferProtocol<S::Data, OP, NT, PersistentLog<S::Data, OP, ST>> + 'static + PersistableStateTransferProtocol,
                                                  NT: Node<ServiceMsg<S::Data, OP::Serialization, ST::Serialization>> + 'static {
     pub async fn bootstrap(cfg: ReplicaConfig<S, OP, ST, NT>) -> Result<Self> {
         let ReplicaConfig {
@@ -126,7 +127,7 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
         // Initialize the ordering protocol
         let ordering_protocol = OP::initialize_with_initial_state(op_config, op_args, initial_state)?;
 
-        let state_transfer_protocol = ST::initialize(st_config, timeouts.clone(), node.clone())?;
+        let state_transfer_protocol = ST::initialize(st_config, timeouts.clone(), node.clone(), persistent_log.clone())?;
 
         // Check with the order protocol to see if there were no stored states
         let state = None;
@@ -365,12 +366,11 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
 
     fn execute_decisions(&mut self, decisions: Vec<ProtocolConsensusDecision<Request<S>>>) -> Result<()> {
         for decision in decisions {
-
             if let Some(decided) = decision.batch_info() {
                 self.rq_pre_processor.send(PreProcessorMessage::Decided(decided.client_requests().clone()))?;
             }
 
-            if let Some(decision ) = self.persistent_log.wait_for_batch_persistency_and_execute(decision)? {
+            if let Some(decision) = self.persistent_log.wait_for_batch_persistency_and_execute(decision)? {
                 let (seq, batch, _) = decision.into();
 
 
@@ -391,7 +391,6 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
                         self.executor_handle.queue_update_and_get_appstate(batch)?
                     }
                 }
-
             }
         }
 

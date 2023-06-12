@@ -9,8 +9,8 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
 use atlas_execution::serialize::SharedData;
 use crate::ordering_protocol::{OrderingProtocol, ProtocolConsensusDecision, ProtocolMessage, SerProof, SerProofMetadata, View};
-use crate::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
-use crate::state_transfer::{Checkpoint, DecLog, StatefulOrderProtocol};
+use crate::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
+use crate::state_transfer::{Checkpoint, DecLog, StatefulOrderProtocol, StateTransferProtocol};
 
 
 ///How should the data be written and response delivered?
@@ -38,7 +38,7 @@ pub type PSDecLog<PS: PersistableOrderProtocol> = <PS::StatefulOrderProtocolMess
 /// We need this because of the way the messages are stored. Since we want to store the messages at the same
 /// time we are receiving them, we divide the messages into various instances of KV-DB (which also parallelizes the
 /// writing into them).
-pub trait PersistableOrderProtocol {
+pub trait PersistableOrderProtocol: Send {
     /// The type for the basic ordering protocol message
     type OrderProtocolMessage: OrderingProtocolMessage;
 
@@ -67,7 +67,7 @@ pub trait PersistableOrderProtocol {
     fn decompose_dec_log(proofs: &PSDecLog<Self>) -> Vec<&PSProof<Self>>;
 }
 
-pub trait PersistableStateTransferProtocol {
+pub trait PersistableStateTransferProtocol: Send {
     /// The metadata type for storing the proof in the persistent storage
     /// Since the message will be stored in the persistent storage, it needs to be serializable
     /// This should provide all the necessary final information to assemble the proof from the messages
@@ -81,7 +81,6 @@ pub trait PersistableStateTransferProtocol {
 /// The trait necessary for a logging protocol capable of simple (stateless) ordering.
 /// Does not have any methods for proofs or decided logs since in theory there is no need for them
 pub trait OrderingProtocolLog<OP>: Clone where OP: OrderingProtocolMessage {
-
     /// Write to the persistent log the latest committed sequence number
     fn write_committed_seq_no(&self, write_mode: WriteMode, seq: SeqNo) -> Result<()>;
 
@@ -89,16 +88,11 @@ pub trait OrderingProtocolLog<OP>: Clone where OP: OrderingProtocolMessage {
     fn write_view_info(&self, write_mode: WriteMode, view_seq: View<OP>) -> Result<()>;
 
     /// Write a given message to the persistent log
-    fn write_message(
-        &self,
-        write_mode: WriteMode,
-        msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<OP>>>>,
-    ) -> Result<()>;
+    fn write_message(&self, write_mode: WriteMode, msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<OP>>>>) -> Result<()>;
 
     /// Write the metadata for a given proof to the persistent log
     /// This in combination with the messages for that sequence number should form a valid proof
-    fn write_proof_metadata(&self, write_mode: WriteMode,
-                            metadata: SerProofMetadata<OP>) -> Result<()>;
+    fn write_proof_metadata(&self, write_mode: WriteMode, metadata: SerProofMetadata<OP>) -> Result<()>;
 
     /// Write a given proof to the persistent log
     fn write_proof(&self, write_mode: WriteMode, proof: SerProof<OP>) -> Result<()>;
@@ -108,19 +102,22 @@ pub trait OrderingProtocolLog<OP>: Clone where OP: OrderingProtocolMessage {
 }
 
 /// Complements the default [`OrderingProtocolLog`] with methods for proofs and decided logs
-pub trait StatefulOrderingProtocolLog<OP, SOP>: OrderingProtocolLog<OP>
-    where OP: OrderingProtocolMessage, SOP: StatefulOrderProtocolMessage {
+pub trait StatefulOrderingProtocolLog<OPM, SOPM>: OrderingProtocolLog<OPM>
+    where OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage {
 
-    fn read_state(&self, write_mode: WriteMode) -> Result<Option<(View<OP>, DecLog<SOP>)>>;
+    fn read_state(&self, write_mode: WriteMode) -> Result<Option<(View<OPM>, DecLog<SOPM>)>>;
 
     /// Write a given decision log to the persistent log
-    fn write_install_state(&self, write_mode: WriteMode, view: View<OP>, dec_log: DecLog<SOP>) -> Result<()>;
+    fn write_install_state(&self, write_mode: WriteMode, view: View<OPM>, dec_log: DecLog<SOPM>) -> Result<()>;
 }
 
-pub trait StateTransferPersistentLog<PS>: Clone where PS: PersistableStateTransferProtocol {
+pub trait StateTransferProtocolLog<OPM, SOPM, D>: StatefulOrderingProtocolLog<OPM, SOPM>
+    where OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, D: SharedData {
+
+    /// Write a checkpoint to the persistent log
     fn write_checkpoint(
         &self,
         write_mode: WriteMode,
-        checkpoint: Arc<ReadOnly<Checkpoint<PS::State>>>,
+        checkpoint: Arc<ReadOnly<Checkpoint<D::State>>>,
     ) -> Result<()>;
 }

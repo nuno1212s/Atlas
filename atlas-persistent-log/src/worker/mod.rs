@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,7 +12,7 @@ use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::state_transfer::Checkpoint;
 use atlas_execution::serialize::SharedData;
 use crate::{CallbackType, ChannelMsg, InstallState, PWMessage, ResponseMessage, serialize};
-use atlas_core::persistent_log::{PersistableOrderProtocol, PSDecLog, PSMessage, PSProof, PSProofMetadata, PSView};
+use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol, PSDecLog, PSMessage, PSProof, PSProofMetadata, PSView};
 
 
 ///Latest checkpoint made by the execution
@@ -32,9 +33,10 @@ pub(super) const COLUMN_FAMILY_PROOFS: &str = "proof_metadata";
 /// A handle for all of the persistent workers.
 /// Handles task distribution and load balancing across the
 /// workers
-pub struct PersistentLogWorkerHandle<D: SharedData, PS: PersistableOrderProtocol> {
+pub struct PersistentLogWorkerHandle<D: SharedData, POS: PersistableOrderProtocol, PSP: PersistableStateTransferProtocol> {
     round_robin_counter: AtomicUsize,
-    tx: Vec<PersistentLogWriteStub<D, PS>>,
+    tx: Vec<PersistentLogWriteStub<D, POS>>,
+    phantom: PhantomData<PSP>
 }
 
 ///A stub that is only useful for writing to the persistent log
@@ -43,24 +45,26 @@ pub struct PersistentLogWriteStub<D: SharedData, PS: PersistableOrderProtocol> {
     pub(crate) tx: ChannelSyncTx<ChannelMsg<D, PS>>,
 }
 
-impl<D, PS> PersistentLogWorkerHandle<D, PS> where D: SharedData, PS: PersistableOrderProtocol {
-    pub fn new(tx: Vec<PersistentLogWriteStub<D, PS>>) -> Self {
-        Self { round_robin_counter: AtomicUsize::new(0), tx }
+impl<D, POS, PSP> PersistentLogWorkerHandle<D, POS, PSP> where D: SharedData, POS: PersistableOrderProtocol, PSP: PersistableStateTransferProtocol {
+    pub fn new(tx: Vec<PersistentLogWriteStub<D, POS>>) -> Self {
+        Self { round_robin_counter: AtomicUsize::new(0), tx, phantom: Default::default() }
     }
 }
 
 
 ///A worker for the persistent logging
-pub struct PersistentLogWorker<D: SharedData, PS: PersistableOrderProtocol> {
+pub struct PersistentLogWorker<D: SharedData, PS: PersistableOrderProtocol, PSP: PersistableStateTransferProtocol> {
     request_rx: ChannelSyncRx<ChannelMsg<D, PS>>,
 
     response_txs: Vec<ChannelSyncTx<ResponseMessage>>,
 
     db: KVDB,
+
+    phantom: PhantomData<PSP>
 }
 
 
-impl<D: SharedData, PS: PersistableOrderProtocol> PersistentLogWorkerHandle<D, PS> {
+impl<D: SharedData, PS: PersistableOrderProtocol, PSP: PersistableStateTransferProtocol> PersistentLogWorkerHandle<D, PS, PSP> {
     /// Employ a simple round robin load distribution
     fn next_worker(&self) -> &PersistentLogWriteStub<D, PS> {
         let counter = self.round_robin_counter.fetch_add(1, Ordering::Relaxed);
@@ -122,11 +126,11 @@ impl<D: SharedData, PS: PersistableOrderProtocol> PersistentLogWorkerHandle<D, P
 }
 
 
-impl<D: SharedData, PS: PersistableOrderProtocol> PersistentLogWorker<D, PS> {
+impl<D: SharedData, PS: PersistableOrderProtocol, PSP: PersistableStateTransferProtocol> PersistentLogWorker<D, PS, PSP> {
     pub fn new(request_rx: ChannelSyncRx<ChannelMsg<D, PS>>,
                response_txs: Vec<ChannelSyncTx<ResponseMessage>>,
                db: KVDB) -> Self {
-        Self { request_rx, response_txs, db }
+        Self { request_rx, response_txs, db, phantom: Default::default() }
     }
 
     pub(super) fn work(mut self) {
@@ -371,10 +375,10 @@ pub(super) fn write_dec_log<PS: PersistableOrderProtocol>(db: &KVDB, dec_log: &P
     Ok(())
 }
 
-pub(super) fn write_proof< PS: PersistableOrderProtocol>(db: &KVDB, proof: &PSProof<PS>) -> Result<()> {
+pub(super) fn write_proof<PS: PersistableOrderProtocol>(db: &KVDB, proof: &PSProof<PS>) -> Result<()> {
     let (proof_metadata, messages) = PS::decompose_proof(proof);
 
-    write_proof_metadata::< PS>(db, proof_metadata)?;
+    write_proof_metadata::<PS>(db, proof_metadata)?;
 
     for message in messages {
         write_message::<PS>(db, message)?;

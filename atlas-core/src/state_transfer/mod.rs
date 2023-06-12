@@ -13,7 +13,7 @@ use crate::timeouts::{RqTimeout, Timeouts};
 use serde::{Serialize, Deserialize};
 use atlas_common::crypto::hash::Digest;
 use atlas_execution::ExecutorHandle;
-use crate::persistent_log::{StatefulOrderingProtocolLog, StateTransferPersistentLog};
+use crate::persistent_log::{StatefulOrderingProtocolLog, StateTransferProtocolLog};
 use crate::request_pre_processing::BatchOutput;
 
 
@@ -97,14 +97,16 @@ pub trait StateTransferProtocol<D, OP, NT, PL> where
     /// Request the latest state from the rest of replicas
     fn request_latest_state(&mut self,
                             order_protocol: &mut OP) -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>;
+        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>,
+              PL: StateTransferProtocolLog<OP::Serialization, OP::StateSerialization, D>;
 
     /// Handle a state transfer protocol message that was received while executing the ordering protocol
     fn handle_off_ctx_message(&mut self,
                               order_protocol: &mut OP,
                               message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
                               -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>;
+        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>,
+              PL: StateTransferProtocolLog<OP::Serialization, OP::StateSerialization, D>;
 
     /// Process a state transfer protocol message, received from other replicas
     /// We also provide a mutable reference to the stateful ordering protocol, so the 
@@ -113,14 +115,16 @@ pub trait StateTransferProtocol<D, OP, NT, PL> where
                        order_protocol: &mut OP,
                        message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
                        -> Result<STResult<D>>
-        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>;
+        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>,
+              PL: StateTransferProtocolLog<OP::Serialization, OP::StateSerialization, D>;
 
     /// Handle the replica wanting to request a state from the application
     /// The state transfer protocol then sees if the conditions are met to receive it
     /// (We could still be waiting for a previous checkpoint, for example)
     fn handle_app_state_requested(&mut self,
                                   seq: SeqNo) -> Result<ExecutionResult>
-        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>;
+        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>,
+              PL: StateTransferProtocolLog<OP::Serialization, OP::StateSerialization, D>;
 
     /// Handle having received a state from the application
     /// you should also notify the ordering protocol that the state has been received
@@ -128,11 +132,13 @@ pub trait StateTransferProtocol<D, OP, NT, PL> where
     fn handle_state_received_from_app(&mut self,
                                       order_protocol: &mut OP,
                                       state: Arc<ReadOnly<Checkpoint<D::State>>>) -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>;
+        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>,
+              PL: StateTransferProtocolLog<OP::Serialization, OP::StateSerialization, D>;
 
     /// Handle a timeout being received from the timeout layer
     fn handle_timeout(&mut self, order_protocol: &mut OP, timeout: Vec<RqTimeout>) -> Result<STTimeoutResult>
-        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>;
+        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>,
+              PL: StateTransferProtocolLog<OP::Serialization, OP::StateSerialization, D>;
 }
 
 pub type DecLog<OP> = <OP as StatefulOrderProtocolMessage>::DecLog;
