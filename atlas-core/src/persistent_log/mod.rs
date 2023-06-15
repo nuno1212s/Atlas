@@ -26,24 +26,11 @@ pub enum WriteMode {
 }
 
 /// Shortcuts for the types used in the protocol
-pub type PSView<PS: PersistableOrderProtocol> = <PS::OrderProtocolMessage as OrderingProtocolMessage>::ViewInfo;
-pub type PSMessage<PS: PersistableOrderProtocol> = <PS::OrderProtocolMessage as OrderingProtocolMessage>::ProtocolMessage;
-
-pub type PSProof<PS: PersistableOrderProtocol> = <PS::OrderProtocolMessage as OrderingProtocolMessage>::Proof;
-pub type PSProofMetadata<PS: PersistableOrderProtocol> = <PS::OrderProtocolMessage as OrderingProtocolMessage>::ProofMetadata;
-
-pub type PSDecLog<PS: PersistableOrderProtocol> = <PS::StatefulOrderProtocolMessage as StatefulOrderProtocolMessage>::DecLog;
-
 /// The trait with all the necessary types for the protocol to be used with our persistent storage system
 /// We need this because of the way the messages are stored. Since we want to store the messages at the same
 /// time we are receiving them, we divide the messages into various instances of KV-DB (which also parallelizes the
 /// writing into them).
-pub trait PersistableOrderProtocol: Send {
-    /// The type for the basic ordering protocol message
-    type OrderProtocolMessage: OrderingProtocolMessage;
-
-    /// The type of the stateful order protocol
-    type StatefulOrderProtocolMessage: StatefulOrderProtocolMessage;
+pub trait PersistableOrderProtocol<OPM, SOPM>: Send where OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage {
 
     /// The types of messages to be stored. This is used due to the parallelization described above.
     /// Each of the names provided here will be a different KV-DB instance (in the case of RocksDB, a column family)
@@ -51,31 +38,26 @@ pub trait PersistableOrderProtocol: Send {
 
     /// Get the message type for a given message, must correspond to a string returned by
     /// [PersistableOrderProtocol::message_types]
-    fn get_type_for_message(msg: &PSMessage<Self>) -> Result<&'static str>;
+    fn get_type_for_message(msg: &ProtocolMessage<OPM>) -> Result<&'static str>;
 
     /// Initialize a proof from the metadata and messages stored in persistent storage
-    fn init_proof_from(metadata: PSProofMetadata<Self>, messages: Vec<StoredMessage<PSMessage<Self>>>) -> PSProof<Self>;
+    fn init_proof_from(metadata: SerProofMetadata<OPM>, messages: Vec<StoredMessage<ProtocolMessage<OPM>>>) -> SerProof<OPM>;
 
     /// Initialize a decision log from the messages stored in persistent storage
-    fn init_dec_log(proofs: Vec<PSProof<Self>>) -> PSDecLog<Self>;
+    fn init_dec_log(proofs: Vec<SerProof<OPM>>) -> DecLog<SOPM>;
 
     /// Decompose a given proof into it's metadata and messages, ready to be persisted
-    fn decompose_proof(proof: &PSProof<Self>) -> (&PSProofMetadata<Self>, Vec<&StoredMessage<PSMessage<Self>>>);
+    fn decompose_proof(proof: &SerProof<OPM>) -> (&SerProofMetadata<OPM>, Vec<&StoredMessage<ProtocolMessage<OPM>>>);
 
     /// Decompose a decision log into its separate proofs, so they can then be further decomposed
     /// into metadata and messages
-    fn decompose_dec_log(proofs: &PSDecLog<Self>) -> Vec<&PSProof<Self>>;
+    fn decompose_dec_log(proofs: &DecLog<SOPM>) -> Vec<&SerProof<OPM>>;
 }
 
 pub trait PersistableStateTransferProtocol: Send {
-    /// The metadata type for storing the proof in the persistent storage
-    /// Since the message will be stored in the persistent storage, it needs to be serializable
-    /// This should provide all the necessary final information to assemble the proof from the messages
-    #[cfg(feature = "serialize_serde")]
-    type State: Orderable + for<'a> Deserialize<'a> + Serialize + Send + Clone;
 
-    #[cfg(feature = "serialize_capnp")]
-    type State: Orderable + Send + Clone;
+
+
 }
 
 /// The trait necessary for a logging protocol capable of simple (stateless) ordering.
@@ -104,7 +86,6 @@ pub trait OrderingProtocolLog<OP>: Clone where OP: OrderingProtocolMessage {
 /// Complements the default [`OrderingProtocolLog`] with methods for proofs and decided logs
 pub trait StatefulOrderingProtocolLog<OPM, SOPM>: OrderingProtocolLog<OPM>
     where OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage {
-
     fn read_state(&self, write_mode: WriteMode) -> Result<Option<(View<OPM>, DecLog<SOPM>)>>;
 
     /// Write a given decision log to the persistent log
@@ -113,7 +94,6 @@ pub trait StatefulOrderingProtocolLog<OPM, SOPM>: OrderingProtocolLog<OPM>
 
 pub trait StateTransferProtocolLog<OPM, SOPM, D>: StatefulOrderingProtocolLog<OPM, SOPM>
     where OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, D: SharedData {
-
     /// Write a checkpoint to the persistent log
     fn write_checkpoint(
         &self,

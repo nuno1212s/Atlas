@@ -1,5 +1,6 @@
 extern crate core;
 
+use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -14,11 +15,11 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::persistentdb::KVDB;
 use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::{ProtocolConsensusDecision, ProtocolMessage, SerProof, SerProofMetadata, View};
-use atlas_core::persistent_log::{OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, PSDecLog, PSMessage, PSProof, PSProofMetadata, PSView, StatefulOrderingProtocolLog, StateTransferProtocolLog, WriteMode};
-use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use atlas_core::persistent_log::{OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, StateTransferProtocolLog, WriteMode};
+use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
 use atlas_core::state_transfer::{Checkpoint, DecLog};
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
-use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, read_latest_state, write_checkpoint, write_latest_seq_no, write_latest_view_seq_no, write_message, write_proof, write_proof_metadata, write_state};
+use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, read_latest_state, write_checkpoint, write_latest_seq_no, write_latest_view, write_message, write_proof, write_proof_metadata, write_state};
 
 pub mod serialize;
 pub mod backlog;
@@ -101,38 +102,42 @@ impl PersistentLogModeTrait for NoPersistentLog {
 
 ///TODO: Handle sequence numbers that loop the u32 range.
 /// This is the main reference to the persistent log, used to push data to it
-pub struct PersistentLog<D: SharedData, POP: PersistableOrderProtocol, PSP: PersistableStateTransferProtocol>
+pub struct PersistentLog<D: SharedData,
+    OPM: OrderingProtocolMessage,
+    SOPM: StatefulOrderProtocolMessage,
+    STM: StateTransferMessage>
 {
     persistency_mode: PersistentLogMode<D>,
 
     // A handle for the persistent log workers (each with his own thread)
-    worker_handle: Arc<PersistentLogWorkerHandle<D, POP, PSP>>,
+    worker_handle: Arc<PersistentLogWorkerHandle<D, OPM, SOPM>>,
 
+    p: PhantomData<STM>,
     ///The persistent KV-DB to be used
     db: KVDB,
 }
 
 /// The type of the installed state information
-pub type InstallState<PS: PersistableOrderProtocol> = (
+pub type InstallState<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> = (
     //The view sequence number
-    PSView<PS>,
+    View<OPM>,
     //The decision log that comes after that state
-    PSDecLog<PS>,
+    DecLog<SOPM>,
 );
 
-/// Work messages for the
-pub enum PWMessage<D: SharedData, PS: PersistableOrderProtocol> {
+/// Work messages for the persistent log workers
+pub enum PWMessage<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
     //Persist a new view into the persistent storage
-    View(PSView<PS>),
+    View(View<OPM>),
 
     //Persist a new sequence number as the consensus instance has been committed and is therefore ready to be persisted
     Committed(SeqNo),
 
     // Persist the metadata for a given decision
-    ProofMetadata(PSProofMetadata<PS>),
+    ProofMetadata(SerProofMetadata<OPM>),
 
     //Persist a given message into storage
-    Message(Arc<ReadOnly<StoredMessage<PSMessage<PS>>>>),
+    Message(Arc<ReadOnly<StoredMessage<ProtocolMessage<OPM>>>>),
 
     //Persist a given state into storage.
     Checkpoint(Arc<ReadOnly<Checkpoint<D::State>>>),
@@ -141,10 +146,10 @@ pub enum PWMessage<D: SharedData, PS: PersistableOrderProtocol> {
     Invalidate(SeqNo),
 
     // Register a proof of the decision log
-    Proof(PSProof<PS>),
+    Proof(SerProof<OPM>),
 
     //Install a recovery state received from CST or produced by us
-    InstallState(InstallState<PS>),
+    InstallState(InstallState<OPM, SOPM>),
 
     /// Register a new receiver for messages sent by the persistency workers
     RegisterCallbackReceiver(ChannelSyncTx<ResponseMessage>),
@@ -183,23 +188,33 @@ pub enum ResponseMessage {
 }
 
 /// Messages that are sent to the logging thread to log specific requests
-pub(crate) type ChannelMsg<D: SharedData, PS: PersistableOrderProtocol> = (PWMessage<D, PS>, Option<CallbackType>);
+pub(crate) type ChannelMsg<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> = (PWMessage<D, OPM, SOPM>, Option<CallbackType>);
 
-pub fn initialize_persistent_log<D, K, T, POS, PSP>(executor: ExecutorHandle<D>, db_path: K)
-                                                    -> Result<PersistentLog<D, POS, PSP>>
+pub fn initialize_persistent_log<D, K, T, OPM, SOPM, STM, POP, PSP>(executor: ExecutorHandle<D>, db_path: K)
+                                                                    -> Result<PersistentLog<D, OPM, SOPM, STM>>
     where D: SharedData + 'static, K: AsRef<Path>, T: PersistentLogModeTrait,
-          POS: PersistableOrderProtocol + 'static,
-          PSP: PersistableStateTransferProtocol + 'static {
-    PersistentLog::init_log::<K, T>(executor, db_path)
+          OPM: OrderingProtocolMessage + 'static,
+          SOPM: StatefulOrderProtocolMessage + 'static,
+          STM: StateTransferMessage + 'static,
+          POP: PersistableOrderProtocol<OPM, SOPM> + 'static,
+          PSP: PersistableStateTransferProtocol + 'static
+{
+    PersistentLog::init_log::<K, T, POP, PSP>(executor, db_path)
 }
 
-impl<D, POS, PSP> PersistentLog<D, POS, PSP> where D: SharedData + 'static,
-                                                   POS: PersistableOrderProtocol + 'static,
-                                                   PSP: PersistableStateTransferProtocol + 'static {
-    fn init_log<K, T>(executor: ExecutorHandle<D>, db_path: K) -> Result<Self>
+impl<D, OPM, SOPM, STM> PersistentLog<D, OPM, SOPM, STM>
+    where D: SharedData + 'static,
+          OPM: OrderingProtocolMessage + 'static,
+          SOPM: StatefulOrderProtocolMessage + 'static,
+          STM: StateTransferMessage + 'static,
+          SOPM: StatefulOrderProtocolMessage + 'static,
+{
+    fn init_log<K, T, POS, PSP>(executor: ExecutorHandle<D>, db_path: K) -> Result<Self>
         where
             K: AsRef<Path>,
-            T: PersistentLogModeTrait
+            T: PersistentLogModeTrait,
+            POS: PersistableOrderProtocol<OPM, SOPM> + 'static,
+            PSP: PersistableStateTransferProtocol + 'static
     {
         let mut message_types = POS::message_types();
 
@@ -220,7 +235,7 @@ impl<D, POS, PSP> PersistentLog<D, POS, PSP> where D: SharedData + 'static,
 
         let (tx, rx) = channel::new_bounded_sync(1024);
 
-        let worker = PersistentLogWorker::<D, POS, PSP>::new(rx, response_txs, kvdb.clone());
+        let worker = PersistentLogWorker::<D, OPM, SOPM, POS, PSP>::new(rx, response_txs, kvdb.clone());
 
         match &log_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
@@ -239,6 +254,7 @@ impl<D, POS, PSP> PersistentLog<D, POS, PSP> where D: SharedData + 'static,
         Ok(Self {
             persistency_mode: log_mode,
             worker_handle,
+            p: Default::default(),
             db: kvdb,
         })
     }
@@ -282,7 +298,11 @@ impl<D, POS, PSP> PersistentLog<D, POS, PSP> where D: SharedData + 'static,
     }
 }
 
-impl<D, POS, PSP> OrderingProtocolLog<POS::OrderProtocolMessage> for PersistentLog<D, POS, PSP> where D: SharedData, POS: PersistableOrderProtocol, PSP: PersistableStateTransferProtocol {
+impl<D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for PersistentLog<D, OPM, SOPM, STM>
+    where D: SharedData + 'static,
+          OPM: OrderingProtocolMessage + 'static,
+          SOPM: StatefulOrderProtocolMessage + 'static,
+          STM: StateTransferMessage + 'static {
     fn write_committed_seq_no(&self, write_mode: WriteMode, seq: SeqNo) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
@@ -299,14 +319,16 @@ impl<D, POS, PSP> OrderingProtocolLog<POS::OrderProtocolMessage> for PersistentL
         }
     }
 
-    fn write_view_info(&self, write_mode: WriteMode, view_seq: View<POS::OrderProtocolMessage>) -> Result<()> {
+    fn write_view_info(&self, write_mode: WriteMode, view_seq: View<OPM>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
                     WriteMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_view_number(view_seq, callback)
                     }
-                    WriteMode::BlockingSync => write_latest_view_seq_no(&self.db, view_seq.sequence_number()),
+                    WriteMode::BlockingSync => {
+                        todo!()
+                    }
                 }
             }
             PersistentLogMode::None => {
@@ -315,14 +337,16 @@ impl<D, POS, PSP> OrderingProtocolLog<POS::OrderProtocolMessage> for PersistentL
         }
     }
 
-    fn write_message(&self, write_mode: WriteMode, msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<POS::OrderProtocolMessage>>>>) -> Result<()> {
+    fn write_message(&self, write_mode: WriteMode, msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<OPM>>>>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
                     WriteMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_message(msg, callback)
                     }
-                    WriteMode::BlockingSync => write_message::<POS>(&self.db, &msg),
+                    WriteMode::BlockingSync => {
+                        todo!()
+                    }
                 }
             }
             PersistentLogMode::None => {
@@ -331,7 +355,7 @@ impl<D, POS, PSP> OrderingProtocolLog<POS::OrderProtocolMessage> for PersistentL
         }
     }
 
-    fn write_proof_metadata(&self, write_mode: WriteMode, metadata: SerProofMetadata<POS::OrderProtocolMessage>) -> Result<()> {
+    fn write_proof_metadata(&self, write_mode: WriteMode, metadata: SerProofMetadata<OPM>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
@@ -339,7 +363,7 @@ impl<D, POS, PSP> OrderingProtocolLog<POS::OrderProtocolMessage> for PersistentL
                         self.worker_handle.queue_proof_metadata(metadata, callback)
                     }
                     WriteMode::BlockingSync => {
-                        write_proof_metadata::<POS>(&self.db, &metadata)
+                        todo!()
                     }
                 }
             }
@@ -349,7 +373,7 @@ impl<D, POS, PSP> OrderingProtocolLog<POS::OrderProtocolMessage> for PersistentL
         }
     }
 
-    fn write_proof(&self, write_mode: WriteMode, proof: SerProof<POS::OrderProtocolMessage>) -> Result<()> {
+    fn write_proof(&self, write_mode: WriteMode, proof: SerProof<OPM>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
@@ -357,7 +381,7 @@ impl<D, POS, PSP> OrderingProtocolLog<POS::OrderProtocolMessage> for PersistentL
                         self.worker_handle.queue_proof(proof, callback)
                     }
                     WriteMode::BlockingSync => {
-                        write_proof::<POS>(&self.db, &proof)
+                        todo!()
                     }
                 }
             }
@@ -375,9 +399,7 @@ impl<D, POS, PSP> OrderingProtocolLog<POS::OrderProtocolMessage> for PersistentL
                         self.worker_handle.queue_invalidate(seq, callback)
                     }
                     WriteMode::BlockingSync => {
-                        invalidate_seq::<POS>(&self.db, seq)?;
-
-                        Ok(())
+                        todo!()
                     }
                 }
             }
@@ -388,20 +410,22 @@ impl<D, POS, PSP> OrderingProtocolLog<POS::OrderProtocolMessage> for PersistentL
     }
 }
 
-impl<D, POP, PSP> StatefulOrderingProtocolLog<POP::OrderProtocolMessage, POP::StatefulOrderProtocolMessage> for PersistentLog<D, POP, PSP>
-    where D: SharedData,
-          POP: PersistableOrderProtocol,
-          PSP: PersistableStateTransferProtocol {
-    fn read_state(&self, write_mode: WriteMode) -> Result<Option<(View<POP::OrderProtocolMessage>, DecLog<POP::StatefulOrderProtocolMessage>)>> {
+impl<D, OPM, SOPM, STM> StatefulOrderingProtocolLog<OPM, SOPM> for PersistentLog<D, OPM, SOPM, STM>
+    where D: SharedData + 'static,
+          OPM: OrderingProtocolMessage + 'static,
+          SOPM: StatefulOrderProtocolMessage + 'static,
+          STM: StateTransferMessage + 'static {
+    fn read_state(&self, write_mode: WriteMode) -> Result<Option<(View<OPM>, DecLog<SOPM>)>> {
         match self.kind() {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
-                let option = read_latest_state::<POP>(&self.db)?;
-
-                return if let Some((view, dec_log)) = option {
-                    Ok(Some((view, dec_log)))
-                } else {
-                    Ok(None)
-                }
+                todo!();
+                // let option = read_latest_state::<OPM, SOPM, PS>(&self.db)?;
+                //
+                // return if let Some((view, dec_log)) = option {
+                //     Ok(Some((view, dec_log)))
+                // } else {
+                //     Ok(None)
+                // };
             }
             PersistentLogMode::None => {
                 Ok(None)
@@ -409,7 +433,7 @@ impl<D, POP, PSP> StatefulOrderingProtocolLog<POP::OrderProtocolMessage, POP::St
         }
     }
 
-    fn write_install_state(&self, write_mode: WriteMode, view: View<POP::OrderProtocolMessage>, dec_log: DecLog<POP::StatefulOrderProtocolMessage>) -> Result<()> {
+    fn write_install_state(&self, write_mode: WriteMode, view: View<OPM>, dec_log: DecLog<SOPM>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
@@ -417,7 +441,7 @@ impl<D, POP, PSP> StatefulOrderingProtocolLog<POP::OrderProtocolMessage, POP::St
                         self.worker_handle.queue_install_state((view, dec_log), callback)
                     }
                     WriteMode::BlockingSync => {
-                        write_state::<D, POP>(&self.db, (view, dec_log))
+                        todo!()
                     }
                 }
             }
@@ -428,10 +452,11 @@ impl<D, POP, PSP> StatefulOrderingProtocolLog<POP::OrderProtocolMessage, POP::St
     }
 }
 
-impl<D, POS, PSP> StateTransferProtocolLog<POS::OrderProtocolMessage, POS::StatefulOrderProtocolMessage, D> for PersistentLog<D, POS, PSP>
-    where D: SharedData,
-          POS: PersistableOrderProtocol,
-          PSP: PersistableStateTransferProtocol {
+impl<D, OPM, SOPM, STM> StateTransferProtocolLog<OPM, SOPM, D> for PersistentLog<D, OPM, SOPM, STM>
+    where D: SharedData + 'static,
+          OPM: OrderingProtocolMessage + 'static,
+          SOPM: StatefulOrderProtocolMessage + 'static,
+          STM: StateTransferMessage + 'static {
     fn write_checkpoint(&self, write_mode: WriteMode, checkpoint: Arc<ReadOnly<Checkpoint<D::State>>>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
@@ -440,7 +465,7 @@ impl<D, POS, PSP> StateTransferProtocolLog<POS::OrderProtocolMessage, POS::State
                         self.worker_handle.queue_state(checkpoint, callback)
                     }
                     WriteMode::BlockingSync => {
-                        write_checkpoint::<D, POS>(&self.db, checkpoint)
+                        todo!()
                     }
                 }
             }
@@ -451,11 +476,12 @@ impl<D, POS, PSP> StateTransferProtocolLog<POS::OrderProtocolMessage, POS::State
     }
 }
 
-impl<D: SharedData, POS: PersistableOrderProtocol, PSP: PersistableStateTransferProtocol> Clone for PersistentLog<D, POS, PSP> {
+impl<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, STM: StateTransferMessage> Clone for PersistentLog<D, OPM, SOPM, STM> {
     fn clone(&self) -> Self {
         Self {
             persistency_mode: self.persistency_mode.clone(),
             worker_handle: self.worker_handle.clone(),
+            p: Default::default(),
             db: self.db.clone(),
         }
     }

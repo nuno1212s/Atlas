@@ -23,7 +23,7 @@ use atlas_core::messages::SystemMessage;
 use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
 use atlas_core::ordering_protocol::OrderProtocolExecResult;
 use atlas_core::ordering_protocol::OrderProtocolPoll;
-use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
+use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, WriteMode};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::serialize::{OrderingProtocolMessage, ServiceMsg};
@@ -34,6 +34,7 @@ use atlas_persistent_log::PersistentLog;
 use crate::config::ReplicaConfig;
 use crate::executable::{Executor, ReplicaReplier};
 use crate::metric::{ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_RQ_QUEUE_SIZE_ID, REPLICA_TAKE_FROM_NETWORK_ID, RUN_LATENCY_TIME_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
+use crate::persistent_log::SMRPersistentLog;
 use crate::server::client_replier::Replier;
 
 //pub mod observer;
@@ -53,9 +54,11 @@ pub(crate) enum ReplicaPhase {
     StateTransferProtocol,
 }
 
-pub struct Replica<S, OP, ST, NT> where S: Service,
-                                        OP: PersistableOrderProtocol,
-                                        ST: PersistableStateTransferProtocol {
+pub struct Replica<S, OP, ST, NT, PL> where S: Service,
+                                            OP: StatefulOrderProtocol<S::Data, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
+                                            ST: StateTransferProtocol<S::Data, OP, NT, PL> + PersistableStateTransferProtocol + 'static,
+                                            ST: PersistableStateTransferProtocol,
+                                            PL: SMRPersistentLog<S::Data, OP::Serialization, OP::StateSerialization> + 'static, {
     replica_phase: ReplicaPhase,
     // The ordering protocol
     ordering_protocol: OP,
@@ -70,13 +73,14 @@ pub struct Replica<S, OP, ST, NT> where S: Service,
     execution_tx: ChannelSyncTx<Message<S::Data>>,
     // THe handle for processed timeouts
     processed_timeout: (ChannelSyncTx<(Vec<RqTimeout>, Vec<RqTimeout>)>, ChannelSyncRx<(Vec<RqTimeout>, Vec<RqTimeout>)>),
-    persistent_log: PersistentLog<S::Data, OP, ST>,
+    persistent_log: PL,
 }
 
-impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
-                                                 OP: StatefulOrderProtocol<S::Data, NT, PersistentLog<S::Data, OP, ST>> + 'static + PersistableOrderProtocol,
-                                                 ST: StateTransferProtocol<S::Data, OP, NT, PersistentLog<S::Data, OP, ST>> + 'static + PersistableStateTransferProtocol,
-                                                 NT: Node<ServiceMsg<S::Data, OP::Serialization, ST::Serialization>> + 'static {
+impl<S, OP, ST, NT, PL> Replica<S, OP, ST, NT, PL> where S: Service + 'static,
+                                                         OP: StatefulOrderProtocol<S::Data, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization>,
+                                                         ST: StateTransferProtocol<S::Data, OP, NT, PL> + 'static + PersistableStateTransferProtocol,
+                                                         NT: Node<ServiceMsg<S::Data, OP::Serialization, ST::Serialization>> + 'static,
+                                                         PL: SMRPersistentLog<S::Data, OP::Serialization, OP::StateSerialization> + 'static, {
     pub async fn bootstrap(cfg: ReplicaConfig<S, OP, ST, NT>) -> Result<Self> {
         let ReplicaConfig {
             service,
@@ -118,14 +122,20 @@ impl<S, OP, ST, NT> Replica<S, OP, ST, NT> where S: Service + 'static,
 
         let initial_state = Checkpoint::new(SeqNo::ZERO, init_ex_state, digest);
 
-        let persistent_log = atlas_persistent_log::initialize_persistent_log(executor.clone(), db_path)?;
+        let persistent_log = PL::init_log(executor.clone(), db_path)?;
+
+        let log = persistent_log.read_state(WriteMode::BlockingSync)?;
 
         let op_args = OrderingProtocolArgs(executor.clone(), timeouts.clone(),
                                            rq_pre_processor.clone(),
                                            batch_input, node.clone(), persistent_log.clone());
 
-        // Initialize the ordering protocol
-        let ordering_protocol = OP::initialize_with_initial_state(op_config, op_args, initial_state)?;
+        let ordering_protocol = if let Some((view, log)) = log {
+            // Initialize the ordering protocol
+            OP::initialize_with_initial_state(op_config, op_args, log)?
+        } else {
+            OP::initialize(op_config, op_args)?
+        };
 
         let state_transfer_protocol = ST::initialize(st_config, timeouts.clone(), node.clone(), persistent_log.clone())?;
 
