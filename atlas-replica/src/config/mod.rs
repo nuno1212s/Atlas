@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::config::NodeConfig;
@@ -8,13 +9,15 @@ use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTrans
 use atlas_core::serialize::ServiceMsg;
 use atlas_core::state_transfer::{StatefulOrderProtocol, StateTransferProtocol};
 use atlas_persistent_log::PersistentLog;
+use crate::persistent_log::SMRPersistentLog;
 
 /// Represents a configuration used to bootstrap a `Replica`.
-pub struct ReplicaConfig<S, OP, ST, NT> where
+pub struct ReplicaConfig<S, OP, ST, NT, PL> where
     S: Service + 'static,
-    OP: StatefulOrderProtocol<S::Data, NT, PersistentLog<S::Data, OP, ST>> + 'static + PersistableOrderProtocol,
-    ST: StateTransferProtocol<S::Data, OP, NT, PersistentLog<S::Data, OP, ST>> + 'static + PersistableStateTransferProtocol,
-    NT: Node<ServiceMsg<S::Data, OP::Serialization, ST::Serialization>> {
+    OP: StatefulOrderProtocol<S::Data, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization>,
+    ST: StateTransferProtocol<S::Data, OP, NT, PL> + 'static + PersistableStateTransferProtocol,
+    NT: Node<ServiceMsg<S::Data, OP::Serialization, ST::Serialization>>,
+    PL: SMRPersistentLog<S::Data, OP::Serialization, OP::StateSerialization> {
     /// The application logic.
     pub service: S,
 
@@ -43,4 +46,6 @@ pub struct ReplicaConfig<S, OP, ST, NT> where
 
     /// Check out the docs on `NodeConfig`.
     pub node: NT::Config,
+
+    pub phantom: PhantomData<PL>
 }

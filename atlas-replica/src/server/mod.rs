@@ -30,7 +30,7 @@ use atlas_core::serialize::{OrderingProtocolMessage, ServiceMsg};
 use atlas_core::state_transfer::{Checkpoint, StatefulOrderProtocol, StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, Timeout, TimeoutKind, Timeouts};
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
-use atlas_persistent_log::PersistentLog;
+use atlas_persistent_log::{NoPersistentLog, PersistentLog};
 use crate::config::ReplicaConfig;
 use crate::executable::{Executor, ReplicaReplier};
 use crate::metric::{ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_RQ_QUEUE_SIZE_ID, REPLICA_TAKE_FROM_NETWORK_ID, RUN_LATENCY_TIME_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
@@ -54,7 +54,7 @@ pub(crate) enum ReplicaPhase {
     StateTransferProtocol,
 }
 
-pub struct Replica<S, OP, ST, NT, PL> where S: Service,
+pub struct Replica<S, OP, ST, NT, PL> where S: Service + 'static,
                                             OP: StatefulOrderProtocol<S::Data, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
                                             ST: StateTransferProtocol<S::Data, OP, NT, PL> + PersistableStateTransferProtocol + 'static,
                                             ST: PersistableStateTransferProtocol,
@@ -77,11 +77,11 @@ pub struct Replica<S, OP, ST, NT, PL> where S: Service,
 }
 
 impl<S, OP, ST, NT, PL> Replica<S, OP, ST, NT, PL> where S: Service + 'static,
-                                                         OP: StatefulOrderProtocol<S::Data, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization>,
-                                                         ST: StateTransferProtocol<S::Data, OP, NT, PL> + 'static + PersistableStateTransferProtocol,
+                                                         OP: StatefulOrderProtocol<S::Data, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send,
+                                                         ST: StateTransferProtocol<S::Data, OP, NT, PL> + 'static + PersistableStateTransferProtocol + Send,
                                                          NT: Node<ServiceMsg<S::Data, OP::Serialization, ST::Serialization>> + 'static,
                                                          PL: SMRPersistentLog<S::Data, OP::Serialization, OP::StateSerialization> + 'static, {
-    pub async fn bootstrap(cfg: ReplicaConfig<S, OP, ST, NT>) -> Result<Self> {
+    pub async fn bootstrap(cfg: ReplicaConfig<S, OP, ST, NT, PL>) -> Result<Self> {
         let ReplicaConfig {
             service,
             id: log_node_id,
@@ -91,7 +91,7 @@ impl<S, OP, ST, NT, PL> Replica<S, OP, ST, NT, PL> where S: Service + 'static,
             next_consensus_seq,
             db_path, op_config,
             st_config,
-            node: node_config
+            node: node_config, ..
         } = cfg;
 
         debug!("{:?} // Bootstrapping replica, starting with networking", log_node_id);
@@ -122,7 +122,7 @@ impl<S, OP, ST, NT, PL> Replica<S, OP, ST, NT, PL> where S: Service + 'static,
 
         let initial_state = Checkpoint::new(SeqNo::ZERO, init_ex_state, digest);
 
-        let persistent_log = PL::init_log(executor.clone(), db_path)?;
+        let persistent_log = PL::init_log::<String, NoPersistentLog, OP, ST>(executor.clone(), db_path)?;
 
         let log = persistent_log.read_state(WriteMode::BlockingSync)?;
 
@@ -377,12 +377,13 @@ impl<S, OP, ST, NT, PL> Replica<S, OP, ST, NT, PL> where S: Service + 'static,
     fn execute_decisions(&mut self, decisions: Vec<ProtocolConsensusDecision<Request<S>>>) -> Result<()> {
         for decision in decisions {
             if let Some(decided) = decision.batch_info() {
-                self.rq_pre_processor.send(PreProcessorMessage::Decided(decided.client_requests().clone()))?;
+                if let Err(err) = self.rq_pre_processor.send(PreProcessorMessage::DecidedBatch(decided.client_requests().clone())) {
+                    error!("Error sending decided batch to pre processor: {:?}", err);
+                }
             }
 
             if let Some(decision) = self.persistent_log.wait_for_batch_persistency_and_execute(decision)? {
                 let (seq, batch, _) = decision.into();
-
 
                 let last_seq_no_u32 = u32::from(seq);
 

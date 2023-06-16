@@ -196,8 +196,8 @@ pub fn initialize_persistent_log<D, K, T, OPM, SOPM, STM, POP, PSP>(executor: Ex
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static,
-          POP: PersistableOrderProtocol<OPM, SOPM> + 'static,
-          PSP: PersistableStateTransferProtocol + 'static
+          POP: PersistableOrderProtocol<OPM, SOPM> + Send + 'static,
+          PSP: PersistableStateTransferProtocol + Send + 'static
 {
     PersistentLog::init_log::<K, T, POP, PSP>(executor, db_path)
 }
@@ -213,8 +213,8 @@ impl<D, OPM, SOPM, STM> PersistentLog<D, OPM, SOPM, STM>
         where
             K: AsRef<Path>,
             T: PersistentLogModeTrait,
-            POS: PersistableOrderProtocol<OPM, SOPM> + 'static,
-            PSP: PersistableStateTransferProtocol + 'static
+            POS: PersistableOrderProtocol<OPM, SOPM> + Send + 'static,
+            PSP: PersistableStateTransferProtocol + Send + 'static
     {
         let mut message_types = POS::message_types();
 

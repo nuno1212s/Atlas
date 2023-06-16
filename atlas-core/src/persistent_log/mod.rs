@@ -30,7 +30,7 @@ pub enum WriteMode {
 /// We need this because of the way the messages are stored. Since we want to store the messages at the same
 /// time we are receiving them, we divide the messages into various instances of KV-DB (which also parallelizes the
 /// writing into them).
-pub trait PersistableOrderProtocol<OPM, SOPM>: Send where OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage {
+pub trait PersistableOrderProtocol<OPM, SOPM> where OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage {
 
     /// The types of messages to be stored. This is used due to the parallelization described above.
     /// Each of the names provided here will be a different KV-DB instance (in the case of RocksDB, a column family)
@@ -54,7 +54,7 @@ pub trait PersistableOrderProtocol<OPM, SOPM>: Send where OPM: OrderingProtocolM
     fn decompose_dec_log(proofs: &DecLog<SOPM>) -> Vec<&SerProof<OPM>>;
 }
 
-pub trait PersistableStateTransferProtocol: Send {
+pub trait PersistableStateTransferProtocol {
 
 
 
