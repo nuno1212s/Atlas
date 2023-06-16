@@ -8,6 +8,8 @@ use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
 use atlas_execution::serialize::SharedData;
+use atlas_execution::state::divisible_state::DivisibleState;
+use atlas_execution::state::monolithic_state::MonolithicState;
 use crate::ordering_protocol::{OrderingProtocol, ProtocolConsensusDecision, ProtocolMessage, SerProof, SerProofMetadata, View};
 use crate::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
 use crate::state_transfer::{Checkpoint, DecLog, StatefulOrderProtocol, StateTransferProtocol};
@@ -31,7 +33,6 @@ pub enum WriteMode {
 /// time we are receiving them, we divide the messages into various instances of KV-DB (which also parallelizes the
 /// writing into them).
 pub trait PersistableOrderProtocol<OPM, SOPM> where OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage {
-
     /// The types of messages to be stored. This is used due to the parallelization described above.
     /// Each of the names provided here will be a different KV-DB instance (in the case of RocksDB, a column family)
     fn message_types() -> Vec<&'static str>;
@@ -54,11 +55,7 @@ pub trait PersistableOrderProtocol<OPM, SOPM> where OPM: OrderingProtocolMessage
     fn decompose_dec_log(proofs: &DecLog<SOPM>) -> Vec<&SerProof<OPM>>;
 }
 
-pub trait PersistableStateTransferProtocol {
-
-
-
-}
+pub trait PersistableStateTransferProtocol {}
 
 /// The trait necessary for a logging protocol capable of simple (stateless) ordering.
 /// Does not have any methods for proofs or decided logs since in theory there is no need for them
@@ -90,6 +87,35 @@ pub trait StatefulOrderingProtocolLog<OPM, SOPM>: OrderingProtocolLog<OPM>
 
     /// Write a given decision log to the persistent log
     fn write_install_state(&self, write_mode: WriteMode, view: View<OPM>, dec_log: DecLog<SOPM>) -> Result<()>;
+}
+
+///
+/// The trait necessary for a logging protocol capable of handling monolithic states.
+/// 
+pub trait MonolithicStateLog<S> where S: MonolithicState {
+    /// Write a checkpoint to the persistent log
+    fn write_checkpoint(
+        &self,
+        write_mode: WriteMode,
+        checkpoint: Arc<ReadOnly<Checkpoint<S>>>,
+    ) -> Result<()>;
+}
+
+///
+/// The trait necessary for a logging protocol capable of handling divisible states.
+/// 
+pub trait DivisibleStateLog<S> where S: DivisibleState {
+
+    fn write_descriptor(&self,
+                        write_mode: WriteMode,
+                        checkpoint: Arc<ReadOnly<S::StateDescriptor>>,) -> Result<()>;
+    
+    fn write_part(&self,
+                  write_mode: WriteMode,
+                  checkpoint: Arc<ReadOnly<S::StatePart>>,) -> Result<()>;
+    
+    fn delete_part(&self, write_mode: WriteMode, part: S::StateDescriptor) -> Result<()>;
+    
 }
 
 pub trait StateTransferProtocolLog<OPM, SOPM, D>: StatefulOrderingProtocolLog<OPM, SOPM>

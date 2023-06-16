@@ -8,6 +8,7 @@ use std::time::Instant;
 pub mod serialize;
 pub mod app;
 pub mod system_params;
+pub mod state;
 
 pub enum ExecutionRequest<S, O> {
     // install state from state transfer protocol

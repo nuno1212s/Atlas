@@ -54,29 +54,29 @@ pub(crate) enum ReplicaPhase {
     StateTransferProtocol,
 }
 
-pub struct Replica<S, OP, ST, NT, PL> where S: Service + 'static,
-                                            OP: StatefulOrderProtocol<S::Data, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
-                                            ST: StateTransferProtocol<S::Data, OP, NT, PL> + PersistableStateTransferProtocol + 'static,
+pub struct Replica<D, OP, ST, NT, PL> where D: SharedData + 'static,
+                                            OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
+                                            ST: StateTransferProtocol<D, OP, NT, PL> + PersistableStateTransferProtocol + 'static,
                                             ST: PersistableStateTransferProtocol,
-                                            PL: SMRPersistentLog<S::Data, OP::Serialization, OP::StateSerialization> + 'static, {
+                                            PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static, {
     replica_phase: ReplicaPhase,
     // The ordering protocol
     ordering_protocol: OP,
     state_transfer_protocol: ST,
-    rq_pre_processor: RequestPreProcessor<Request<S>>,
+    rq_pre_processor: RequestPreProcessor<D::Request>,
     timeouts: Timeouts,
-    executor_handle: ExecutorHandle<S::Data>,
+    executor_handle: ExecutorHandle<D>,
     // The networking layer for a Node in the network (either Client or Replica)
     node: Arc<NT>,
     // THe handle to the execution and timeouts handler
-    execution_rx: ChannelSyncRx<Message<S::Data>>,
-    execution_tx: ChannelSyncTx<Message<S::Data>>,
+    execution_rx: ChannelSyncRx<Message<D>>,
+    execution_tx: ChannelSyncTx<Message<D>>,
     // THe handle for processed timeouts
     processed_timeout: (ChannelSyncTx<(Vec<RqTimeout>, Vec<RqTimeout>)>, ChannelSyncRx<(Vec<RqTimeout>, Vec<RqTimeout>)>),
     persistent_log: PL,
 }
 
-impl<S, OP, ST, NT, PL> Replica<S, OP, ST, NT, PL> where S: Service + 'static,
+impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'static,
                                                          OP: StatefulOrderProtocol<S::Data, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send,
                                                          ST: StateTransferProtocol<S::Data, OP, NT, PL> + 'static + PersistableStateTransferProtocol + Send,
                                                          NT: Node<ServiceMsg<S::Data, OP::Serialization, ST::Serialization>> + 'static,
@@ -115,12 +115,6 @@ impl<S, OP, ST, NT, PL> Replica<S, OP, ST, NT, PL> where S: Service + 'static,
         let timeouts = Timeouts::new::<S::Data>(log_node_id.clone(), Duration::from_millis(1),
                                                 default_timeout,
                                                 exec_tx.clone());
-
-        //Calculate the initial state of the application so we can pass it to the ordering protocol
-        let init_ex_state = S::initial_state()?;
-        let digest = digest_state::<S::Data>(&init_ex_state)?;
-
-        let initial_state = Checkpoint::new(SeqNo::ZERO, init_ex_state, digest);
 
         let persistent_log = PL::init_log::<String, NoPersistentLog, OP, ST>(executor.clone(), db_path)?;
 

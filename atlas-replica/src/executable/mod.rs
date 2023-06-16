@@ -144,6 +144,7 @@ impl<S, NT> Executor<S, NT>
 
         (ExecutorHandle::new(tx), rx)
     }
+
     /// Spawns a new service executor into the async runtime.
     pub fn new<OP, ST, T>(
         reply_worker: ReplyHandle<S>,

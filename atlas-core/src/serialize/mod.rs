@@ -90,6 +90,21 @@ pub trait OrderingProtocolMessage: Send {
     fn deserialize_proof_capnp(reader: febft_capnp::cst_messages_capnp::proof::Reader) -> Result<Self::Proof>;
 }
 
+
+pub trait LogTransferMessage : Send {
+    #[cfg(feature = "serialize_capnp")]
+    type LogTransferMessage: Send + Clone;
+
+    #[cfg(feature = "serialize_serde")]
+    type LogTransferMessage: for<'a> Deserialize<'a> + Serialize + Send + Clone;
+
+    #[cfg(feature = "serialize_capnp")]
+    fn serialize_capnp(builder: febft_capnp::cst_messages_capnp::cst_message::Builder, msg: &Self::LogTransferMessage) -> Result<()>;
+
+    #[cfg(feature = "serialize_capnp")]
+    fn deserialize_capnp(reader: febft_capnp::cst_messages_capnp::cst_message::Reader) -> Result<Self::LogTransferMessage>;
+
+}
 /// The abstraction for state transfer protocol messages.
 /// This allows us to have any state transfer protocol work with the same backbone
 pub trait StateTransferMessage: Send {
@@ -126,25 +141,26 @@ pub trait StatefulOrderProtocolMessage: Send {
 }
 
 /// The type that encapsulates all the serializing, so we don't have to constantly use SystemMessage
-pub struct ServiceMsg<D: SharedData, P: OrderingProtocolMessage, S: StateTransferMessage>(PhantomData<D>, PhantomData<P>, PhantomData<S>);
+pub struct ServiceMsg<D: SharedData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage>(PhantomData<(D, P, S, L)>);
 
-pub type ServiceMessage<D: SharedData, P: OrderingProtocolMessage, S: StateTransferMessage> = <ServiceMsg<D, P, S> as Serializable>::Message;
+pub type ServiceMessage<D: SharedData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage> = <ServiceMsg<D, P, S, L> as Serializable>::Message;
 
-pub type ClientServiceMsg<D: SharedData> = ServiceMsg<D, NoProtocol, NoProtocol>;
+pub type ClientServiceMsg<D: SharedData> = ServiceMsg<D, NoProtocol, NoProtocol, NoProtocol>;
 
 pub type ClientMessage<D: SharedData> = <ClientServiceMsg<D> as Serializable>::Message;
 
-impl<D: SharedData, P: OrderingProtocolMessage, S: StateTransferMessage> Serializable for ServiceMsg<D, P, S> {
-    type Message = SystemMessage<D, P::ProtocolMessage, S::StateTransferMessage>;
+impl<D: SharedData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage> Serializable for ServiceMsg<D, P, S, L> {
+    
+    type Message = SystemMessage<D, P::ProtocolMessage, S::StateTransferMessage, L::LogTransferMessage>;
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::messages_capnp::system::Builder, msg: &Self::Message) -> Result<()> {
-        capnp::serialize_message::<D, P, S>(builder, msg)
+        capnp::serialize_message::<D, P, S, L>(builder, msg)
     }
 
     #[cfg(feature = "serialize_capnp")]
     fn deserialize_capnp(reader: febft_capnp::messages_capnp::system::Reader) -> Result<Self::Message> {
-        capnp::deserialize_message::<D, P, S>(reader)
+        capnp::deserialize_message::<D, P, S, L>(reader)
     }
 }
 
@@ -220,6 +236,20 @@ impl StateTransferMessage for NoProtocol {
 
     #[cfg(feature = "serialize_capnp")]
     fn deserialize_capnp(_: febft_capnp::cst_messages_capnp::cst_message::Reader) -> Result<Self::StateTransferMessage> {
+        unimplemented!()
+    }
+}
+
+impl LogTransferMessage for NoProtocol {
+    type LogTransferMessage = ();
+
+    #[cfg(feature = "serialize_capnp")]
+    fn serialize_capnp(_: febft_capnp::cst_messages_capnp::cst_message::Builder, msg: &Self::LogTransferMessage) -> Result<()> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "serialize_capnp")]
+    fn deserialize_capnp(_: febft_capnp::cst_messages_capnp::cst_message::Reader) -> Result<Self::LogTransferMessage> {
         unimplemented!()
     }
 }

@@ -77,7 +77,7 @@ impl<D: SharedData> Message<D> {
 
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum SystemMessage<D: SharedData, P, ST> {
+pub enum SystemMessage<D: SharedData, P, ST, LT> {
     ///An ordered request
     OrderedRequest(RequestMessage<D::Request>),
     ///An unordered request
@@ -94,9 +94,11 @@ pub enum SystemMessage<D: SharedData, P, ST> {
     ForwardedProtocolMessage(ForwardedProtocolMessage<P>),
     ///A state transfer protocol message
     StateTransferMessage(StateTransfer<ST>),
+    ///A Log trasnfer protocol message
+    LogTransferMessage(LogTransfer<LT>)
 }
 
-impl<D, P, ST> SystemMessage<D, P, ST> where D: SharedData {
+impl<D, P, ST, LT> SystemMessage<D, P, ST, LT> where D: SharedData {
     pub fn from_protocol_message(msg: P) -> Self {
         SystemMessage::ProtocolMessage(Protocol::new(msg))
     }
@@ -130,7 +132,7 @@ impl<D, P, ST> SystemMessage<D, P, ST> where D: SharedData {
     }
 }
 
-impl<D, P, ST> Clone for SystemMessage<D, P, ST> where D: SharedData, P: Clone, ST: Clone {
+impl<D, P, ST, LT> Clone for SystemMessage<D, P, ST, LT> where D: SharedData, P: Clone, ST: Clone, LT: Clone {
     fn clone(&self) -> Self {
         match self {
             SystemMessage::OrderedRequest(req) => {
@@ -157,11 +159,14 @@ impl<D, P, ST> Clone for SystemMessage<D, P, ST> where D: SharedData, P: Clone, 
             SystemMessage::StateTransferMessage(state_transfer) => {
                 SystemMessage::StateTransferMessage(state_transfer.clone())
             }
+            SystemMessage::LogTransferMessage(log_transfer) => {
+                SystemMessage::LogTransferMessage(log_transfer.clone())
+            }
         }
     }
 }
 
-impl<D, P, ST> Debug for SystemMessage<D, P, ST> where D: SharedData, P: Clone, ST: Clone {
+impl<D, P, ST, LT> Debug for SystemMessage<D, P, ST, LT> where D: SharedData, P: Clone, ST: Clone, LT: Clone {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             SystemMessage::OrderedRequest(_) => {
@@ -187,6 +192,9 @@ impl<D, P, ST> Debug for SystemMessage<D, P, ST> where D: SharedData, P: Clone, 
             }
             SystemMessage::StateTransferMessage(_) => {
                 write!(f, "State Transfer Message")
+            }
+            SystemMessage::LogTransferMessage(_) => {
+                write!(f, "Log transfer message")
             }
         }
     }
@@ -308,6 +316,9 @@ impl<P> Deref for Protocol<P> {
     }
 }
 
+///
+/// State transfer messages
+///
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
 pub struct StateTransfer<P> {
@@ -334,7 +345,39 @@ impl<P> Deref for StateTransfer<P> {
     }
 }
 
+///
+/// Log transfer messages
+///
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone)]
+pub struct LogTransfer<P> {
+    payload: P,
+}
+
+impl<P> LogTransfer<P> {
+    pub fn new(payload: P) -> Self {
+        Self { payload }
+    }
+
+    pub fn payload(&self) -> &P { &self.payload }
+
+    pub fn into_inner(self) -> P {
+        self.payload
+    }
+}
+
+impl<P> Deref for LogTransfer<P> {
+    type Target = P;
+
+    fn deref(&self) -> &Self::Target {
+        &self.payload
+    }
+}
+
+
+///
 /// A message containing a number of forwarded requests
+///
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
 pub struct ForwardedRequestsMessage<O> {

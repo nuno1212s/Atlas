@@ -1,3 +1,7 @@
+mod log_transfer;
+mod monolithic_state;
+mod divisible_state;
+
 use std::sync::Arc;
 use atlas_execution::serialize::SharedData;
 use atlas_common::error::*;
@@ -7,7 +11,7 @@ use atlas_communication::message::StoredMessage;
 use atlas_communication::Node;
 use crate::messages::{Protocol, StateTransfer};
 use crate::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, View};
-use crate::serialize::{NetworkView, OrderingProtocolMessage, ServiceMsg, StatefulOrderProtocolMessage, StateTransferMessage};
+use crate::serialize::{LogTransferMessage, NetworkView, OrderingProtocolMessage, ServiceMsg, StatefulOrderProtocolMessage, StateTransferMessage};
 use crate::timeouts::{RqTimeout, Timeouts};
 #[cfg(feature = "serialize_serde")]
 use serde::{Serialize, Deserialize};
@@ -79,6 +83,66 @@ pub enum STTimeoutResult {
 }
 
 pub type CstM<M: StateTransferMessage> = <M as StateTransferMessage>::StateTransferMessage;
+
+pub trait StateTransferPT<S, NT, PL> {
+    /// The type which implements StateTransferMessage, to be implemented by the developer
+    type Serialization: StateTransferMessage + 'static;
+
+    /// The configuration type the state transfer protocol wants to accept
+    type Config;
+
+    /// Initialize the state transferring protocol with the given configuration, timeouts and communication layer
+    fn initialize(config: Self::Config, timeouts: Timeouts, node: Arc<NT>, log: PL) -> Result<Self>
+        where Self: Sized;
+
+    /// Request the latest state from the rest of replicas
+    fn request_latest_state<D, OP, LP>(&mut self) -> Result<()>
+        where
+            D: SharedData + 'static,
+            OP: OrderingProtocolMessage,
+            LP: LogTransferMessage,
+            NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
+
+    /// Handle a state transfer protocol message that was received while executing the ordering protocol
+    fn handle_off_ctx_message<D, OP, LP>(&mut self,
+                              message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
+                              -> Result<()>
+        where D: SharedData + 'static,
+              OP: OrderingProtocolMessage,
+              LP: LogTransferMessage,
+              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
+
+    /// Process a state transfer protocol message, received from other replicas
+    /// We also provide a mutable reference to the stateful ordering protocol, so the
+    /// state can be installed (if that's the case)
+    fn process_message<D, OP, LP>(&mut self,
+                       message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
+                       -> Result<STResult<D>>
+        where  D: SharedData + 'static,
+               OP: OrderingProtocolMessage,
+               LP: LogTransferMessage,
+               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
+
+
+    /// Handle the replica wanting to request a state from the application
+    /// The state transfer protocol then sees if the conditions are met to receive it
+    /// (We could still be waiting for a previous checkpoint, for example)
+    fn handle_app_state_requested<D, OP, LP>(&mut self,
+                                  seq: SeqNo) -> Result<ExecutionResult>
+        where  D: SharedData + 'static,
+               OP: OrderingProtocolMessage,
+               LP: LogTransferMessage,
+               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
+
+
+    /// Handle a timeout being received from the timeout layer
+    fn handle_timeout<D, OP, LP>(&mut self, timeout: Vec<RqTimeout>) -> Result<STTimeoutResult>
+        where  D: SharedData + 'static,
+               OP: OrderingProtocolMessage,
+               LP: LogTransferMessage,
+               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
+    
+}
 
 /// A trait for the implementation of the state transfer protocol
 pub trait StateTransferProtocol<D, OP, NT, PL> where
