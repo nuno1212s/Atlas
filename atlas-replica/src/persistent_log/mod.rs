@@ -39,10 +39,10 @@ impl<D, OPM, SOPM, STM> SMRPersistentLog<D, OPM, SOPM> for PersistentLog<D, OPM,
     }
 
     fn wait_for_proof_persistency_and_execute(&self, batch: ProtocolConsensusDecision<D::Request>) -> Result<Option<ProtocolConsensusDecision<D::Request>>> {
-        todo!()
+        self.wait_for_proof_persistency_and_execute(batch)
     }
 
     fn wait_for_batch_persistency_and_execute(&self, batch: ProtocolConsensusDecision<D::Request>) -> Result<Option<ProtocolConsensusDecision<D::Request>>> {
-        todo!()
+        self.wait_for_batch_persistency_and_execute(batch)
     }
 }
