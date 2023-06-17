@@ -12,6 +12,8 @@ pub trait SMRPersistentLog<D, OPM, SOPM>: OrderingProtocolLog<OPM> + StatefulOrd
     where D: SharedData + 'static,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static {
+    type Config;
+
     fn init_log<K, T, POS, PSP>(executor: ExecutorHandle<D>, db_path: K) -> Result<Self>
         where
             K: AsRef<Path>,
@@ -30,6 +32,8 @@ impl<D, OPM, SOPM, STM> SMRPersistentLog<D, OPM, SOPM> for PersistentLog<D, OPM,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static {
+    type Config = ();
+
     fn init_log<K, T, POS, PSP>(executor: ExecutorHandle<D>, db_path: K) -> Result<Self>
         where K: AsRef<Path>, T: PersistentLogModeTrait,
               POS: PersistableOrderProtocol<OPM, SOPM> + Send + 'static,

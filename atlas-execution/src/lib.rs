@@ -10,9 +10,10 @@ pub mod app;
 pub mod system_params;
 pub mod state;
 
-pub enum ExecutionRequest<S, O> {
-    // install state from state transfer protocol
-    InstallState(S, Vec<O>),
+pub enum ExecutionRequest<O> {
+    PollStateChannel,
+
+    CatchUp(Vec<O>),
 
     // update the state of the service
     Update((UpdateBatch<O>, Instant)),
@@ -29,20 +30,26 @@ pub enum ExecutionRequest<S, O> {
 
 /// Represents a handle to the client request executor.
 pub struct ExecutorHandle<D: SharedData> {
-    e_tx: ChannelSyncTx<ExecutionRequest<D::State, D::Request>>,
+    e_tx: ChannelSyncTx<ExecutionRequest<D::Request>>,
 }
 
 impl<D: SharedData> ExecutorHandle<D>
 {
 
-    pub fn new(tx: ChannelSyncTx<ExecutionRequest<D::State, D::Request>>) -> Self {
+    pub fn new(tx: ChannelSyncTx<ExecutionRequest<D::Request>>) -> Self {
         ExecutorHandle { e_tx: tx }
     }
 
     /// Sets the current state of the execution layer to the given value.
-    pub fn install_state(&self, state: D::State, after: Vec<D::Request>) -> Result<()> {
+    pub fn poll_state_chanel(&self) -> Result<()> {
         self.e_tx
-            .send(ExecutionRequest::InstallState(state, after))
+            .send(ExecutionRequest::PollStateChannel)
+            .simple(ErrorKind::Executable)
+    }
+
+    pub fn catch_up_to_quorum(&self, requests: Vec<D::Request>) -> Result<()> {
+        self.e_tx
+            .send(ExecutionRequest::CatchUp(requests))
             .simple(ErrorKind::Executable)
     }
 

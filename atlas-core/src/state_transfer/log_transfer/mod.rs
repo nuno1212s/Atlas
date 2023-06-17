@@ -7,7 +7,7 @@ use atlas_execution::serialize::SharedData;
 use crate::messages::StateTransfer;
 use crate::ordering_protocol::{OrderingProtocol, OrderingProtocolArgs, View};
 use crate::persistent_log::{StatefulOrderingProtocolLog, StateTransferProtocolLog};
-use crate::serialize::{LogTransferMessage, ServiceMsg, StatefulOrderProtocolMessage};
+use crate::serialize::{LogTransferMessage, ServiceMsg, StatefulOrderProtocolMessage, StateTransferMessage};
 use crate::timeouts::Timeouts;
 
 pub type DecLog<OP> = <OP as StatefulOrderProtocolMessage>::DecLog;
@@ -16,7 +16,6 @@ pub type LogTM<M: LogTransferMessage> = <M as LogTransferMessage>::LogTransferMe
 
 /// An order protocol that uses the log transfer protocol to manage its log
 pub trait StatefulOrderProtocol<D: SharedData + 'static, NT, PL>: OrderingProtocol<D, NT, PL> {
-
     /// The serialization abstraction for ordering protocols with logs, so we can then send it across the network
     type StateSerialization: StatefulOrderProtocolMessage + 'static;
 
@@ -54,8 +53,9 @@ pub enum LTResult<D: SharedData> {
 }
 
 
-pub trait LogTransferProtocol<D, OP, NT, PL> where D: SharedData + 'static, OP: StatefulOrderProtocol<D, NT, PL> + 'static {
-
+pub trait LogTransferProtocol<D, OP, NT, PL> where D: SharedData + 'static,
+                                                       OP: StatefulOrderProtocol<D, NT, PL> + 'static {
+    
     /// The type which implements StateTransferMessage, to be implemented by the developer
     type Serialization: LogTransferMessage + 'static;
 
@@ -69,7 +69,7 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: SharedData + 'static, OP: 
     /// Request the latest state from the rest of replicas
     fn request_latest_state(&mut self,
                             order_protocol: &mut OP) -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>,
+        where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
     /// Handle a state transfer protocol message that was received while executing the ordering protocol
@@ -77,8 +77,8 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: SharedData + 'static, OP: 
                               order_protocol: &mut OP,
                               message: StoredMessage<StateTransfer<LogTM<Self::Serialization>>>)
                               -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>,
-              PL:StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+        where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
+              PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
     /// Process a state transfer protocol message, received from other replicas
     /// We also provide a mutable reference to the stateful ordering protocol, so the
@@ -87,6 +87,6 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: SharedData + 'static, OP: 
                        order_protocol: &mut OP,
                        message: StoredMessage<StateTransfer<LogTM<Self::Serialization>>>)
                        -> Result<LTResult<D>>
-        where NT: Node<ServiceMsg<D, OP::Serialization, Self::Serialization>>,
+        where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 }

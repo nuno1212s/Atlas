@@ -15,7 +15,7 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::{Node, NodeConnections, NodeIncomingRqHandler};
 use atlas_communication::message::StoredMessage;
-use atlas_execution::app::{Request, Service, State};
+use atlas_execution::app::{Application, Request, Service, State};
 use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::{digest_state, SharedData};
 use atlas_core::messages::Message;
@@ -27,7 +27,8 @@ use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTrans
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::serialize::{OrderingProtocolMessage, ServiceMsg};
-use atlas_core::state_transfer::{Checkpoint, StatefulOrderProtocol, StateTransferProtocol, STResult, STTimeoutResult};
+use atlas_core::state_transfer::{Checkpoint, StateTransferProtocol, STResult, STTimeoutResult};
+use atlas_core::state_transfer::log_transfer::{LogTransferProtocol, StatefulOrderProtocol};
 use atlas_core::timeouts::{RqTimeout, TimedOut, Timeout, TimeoutKind, Timeouts};
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
 use atlas_persistent_log::{NoPersistentLog, PersistentLog};
@@ -41,6 +42,7 @@ use crate::server::client_replier::Replier;
 
 pub mod client_replier;
 pub mod follower_handling;
+mod monolithic_server;
 // pub mod rq_finalizer;
 
 
@@ -54,21 +56,22 @@ pub(crate) enum ReplicaPhase {
     StateTransferProtocol,
 }
 
-pub struct Replica<D, OP, ST, NT, PL> where D: SharedData + 'static,
-                                            OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
-                                            ST: StateTransferProtocol<D, OP, NT, PL> + PersistableStateTransferProtocol + 'static,
-                                            ST: PersistableStateTransferProtocol,
-                                            PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static, {
+pub struct Replica<D, OP, ST, LT, NT, PL> where D: SharedData + 'static,
+                                                OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
+                                                ST: StateTransferProtocol<D, NT, PL> + PersistableStateTransferProtocol + 'static,
+                                                LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
+                                                PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static, {
     replica_phase: ReplicaPhase,
-    // The ordering protocol
+    // The ordering protocol, responsible for ordering requests
     ordering_protocol: OP,
     state_transfer_protocol: ST,
+    log_transfer_protocol: LT,
     rq_pre_processor: RequestPreProcessor<D::Request>,
     timeouts: Timeouts,
     executor_handle: ExecutorHandle<D>,
     // The networking layer for a Node in the network (either Client or Replica)
     node: Arc<NT>,
-    // THe handle to the execution and timeouts handler
+    // The handle to the execution and timeouts handler
     execution_rx: ChannelSyncRx<Message<D>>,
     execution_tx: ChannelSyncTx<Message<D>>,
     // THe handle for processed timeouts
@@ -76,12 +79,14 @@ pub struct Replica<D, OP, ST, NT, PL> where D: SharedData + 'static,
     persistent_log: PL,
 }
 
-impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'static,
-                                                         OP: StatefulOrderProtocol<S::Data, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send,
-                                                         ST: StateTransferProtocol<S::Data, OP, NT, PL> + 'static + PersistableStateTransferProtocol + Send,
-                                                         NT: Node<ServiceMsg<S::Data, OP::Serialization, ST::Serialization>> + 'static,
-                                                         PL: SMRPersistentLog<S::Data, OP::Serialization, OP::StateSerialization> + 'static, {
-    pub async fn bootstrap(cfg: ReplicaConfig<S, OP, ST, NT, PL>) -> Result<Self> {
+impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: Application<S> + 'static,
+                                                                       OP: StatefulOrderProtocol<A::AppData, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send,
+                                                                       ST: StateTransferProtocol<A::AppData, NT, PL> + 'static + PersistableStateTransferProtocol + Send,
+                                                                       LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
+                                                                       NT: Node<ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static,
+                                                                       PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + 'static, {
+    
+    pub async fn bootstrap(cfg: ReplicaConfig<S, A, OP, ST, LT, NT, PL>, executor: ExecutorHandle<A::AppData>) -> Result<Self> {
         let ReplicaConfig {
             service,
             id: log_node_id,
@@ -89,30 +94,29 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
             f,
             view,
             next_consensus_seq,
-            db_path, op_config,
-            st_config,
-            node: node_config, ..
+            db_path,
+            op_config,
+            lt_config, 
+            pl_config, 
+            node: node_config,
         } = cfg;
 
         debug!("{:?} // Bootstrapping replica, starting with networking", log_node_id);
 
         let node = NT::bootstrap(node_config).await?;
-
-        let (executor, handle) = Executor::<S, NT>::init_handle();
+        
         let (exec_tx, exec_rx) = channel::new_bounded_sync(1024);
 
-        //CURRENTLY DISABLED, USING THREADPOOL INSTEAD
-        let reply_handle = Replier::new(node.id(), node.clone());
 
         debug!("{:?} // Initializing timeouts", log_node_id);
 
         let (rq_pre_processor, batch_input) = initialize_request_pre_processor
-            ::<WDRoundRobin, S::Data, OP::Serialization, ST::Serialization, NT>(4, node.clone());
+            ::<WDRoundRobin, A::AppData, OP::Serialization, ST::Serialization, NT>(4, node.clone());
 
         let default_timeout = Duration::from_secs(3);
 
-        // start timeouts handler
-        let timeouts = Timeouts::new::<S::Data>(log_node_id.clone(), Duration::from_millis(1),
+// start timeouts handler
+        let timeouts = Timeouts::new::<A::AppData>(log_node_id.clone(), Duration::from_millis(1),
                                                 default_timeout,
                                                 exec_tx.clone());
 
@@ -125,18 +129,17 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
                                            batch_input, node.clone(), persistent_log.clone());
 
         let ordering_protocol = if let Some((view, log)) = log {
-            // Initialize the ordering protocol
+// Initialize the ordering protocol
             OP::initialize_with_initial_state(op_config, op_args, log)?
         } else {
             OP::initialize(op_config, op_args)?
         };
 
-        let state_transfer_protocol = ST::initialize(st_config, timeouts.clone(), node.clone(), persistent_log.clone())?;
 
-        // Check with the order protocol to see if there were no stored states
+// Check with the order protocol to see if there were no stored states
         let state = None;
 
-        // start executor
+// start executor
         Executor::<S, NT>::new::<OP::Serialization, ST::Serialization, ReplicaReplier>(
             reply_handle,
             handle,
@@ -188,7 +191,7 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
         let timeout_channel = channel::new_bounded_sync(1024);
 
         let mut replica = Self {
-            // We start with the state transfer protocol to make sure everything is up to date
+// We start with the state transfer protocol to make sure everything is up to date
             replica_phase: ReplicaPhase::StateTransferProtocol,
             ordering_protocol,
             state_transfer_protocol,
@@ -227,7 +230,7 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
 
                     match poll_res {
                         OrderProtocolPoll::RePoll => {
-                            //Continue
+//Continue
                         }
                         OrderProtocolPoll::ReceiveFromReplicas => {
                             let start = Instant::now();
@@ -249,7 +252,7 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
 
                                         match self.ordering_protocol.process_message(StoredMessage::new(header, protocol))? {
                                             OrderProtocolExecResult::Success => {
-                                                //Continue execution
+//Continue execution
                                             }
                                             OrderProtocolExecResult::RunCst => {
                                                 self.run_state_transfer_protocol()?;
@@ -260,17 +263,16 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
                                         }
                                     }
                                     SystemMessage::StateTransferMessage(state_transfer) => {
-                                        self.state_transfer_protocol.handle_off_ctx_message(&mut self.ordering_protocol,
-                                                                                            StoredMessage::new(header, state_transfer)).unwrap();
+                                        self.state_transfer_protocol.handle_off_ctx_message(StoredMessage::new(header, state_transfer)).unwrap();
                                     }
                                     SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
-                                        // Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
+// Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
                                         self.rq_pre_processor.send(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
                                     }
                                     SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
                                         match self.ordering_protocol.process_message(fwd_protocol.into_inner())? {
                                             OrderProtocolExecResult::Success => {
-                                                //Continue execution
+//Continue execution
                                             }
                                             OrderProtocolExecResult::RunCst => {
                                                 self.run_state_transfer_protocol()?;
@@ -285,7 +287,7 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
                                     }
                                 }
                             } else {
-                                // Receive timeouts in the beginning of the next iteration
+// Receive timeouts in the beginning of the next iteration
                                 continue;
                             }
 
@@ -297,7 +299,7 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
 
                             match self.ordering_protocol.process_message(message)? {
                                 OrderProtocolExecResult::Success => {
-                                    // Continue execution
+// Continue execution
                                 }
                                 OrderProtocolExecResult::RunCst => {
                                     self.run_state_transfer_protocol()?;
@@ -333,7 +335,7 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
                             SystemMessage::StateTransferMessage(state_transfer) => {
                                 let start = Instant::now();
 
-                                let result = self.state_transfer_protocol.process_message(&mut self.ordering_protocol, StoredMessage::new(header, state_transfer))?;
+                                let result = self.state_transfer_protocol.process_message(StoredMessage::new(header, state_transfer))?;
 
                                 match result {
                                     STResult::CstRunning => {}
@@ -411,7 +413,7 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
                 }
                 Message::Timeout(timeout) => {
                     self.timeout_received(timeout)?;
-                    //info!("{:?} // Received and ignored timeout with {} timeouts {:?}", self.node.id(), timeout.len(), timeout);
+//info!("{:?} // Received and ignored timeout with {} timeouts {:?}", self.node.id(), timeout.len(), timeout);
                 }
                 Message::DigestedAppState(digested) => {
                     self.state_transfer_protocol.handle_state_received_from_app(&mut self.ordering_protocol, digested)?;
@@ -453,7 +455,7 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
         if !cst_rq.is_empty() {
             debug!("{:?} // Received cst timeouts: {}", self.node.id(), cst_rq.len());
 
-            match self.state_transfer_protocol.handle_timeout(&mut self.ordering_protocol, cst_rq)? {
+            match self.state_transfer_protocol.handle_timeout( cst_rq)? {
                 STTimeoutResult::RunCst => {
                     self.run_state_transfer_protocol()?;
                 }
@@ -499,9 +501,9 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
     /// Run the state transfer protocol on this replica
     fn run_state_transfer_protocol(&mut self) -> Result<()> {
         if self.replica_phase == ReplicaPhase::StateTransferProtocol {
-            //TODO: This is here for when we receive various timeouts that consecutively call run cst
-            // In reality, this should also lead to a new state request since the previous one could have
-            // Timed out
+//TODO: This is here for when we receive various timeouts that consecutively call run cst
+// In reality, this should also lead to a new state request since the previous one could have
+// Timed out
             return Ok(());
         }
 
@@ -509,7 +511,7 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
 
         self.ordering_protocol.handle_execution_changed(false)?;
 
-        // Start by requesting the current state from neighbour replicas
+// Start by requesting the current state from neighbour replicas
         self.state_transfer_protocol.request_latest_state(&mut self.ordering_protocol)?;
 
         self.replica_phase = ReplicaPhase::StateTransferProtocol;
@@ -520,7 +522,7 @@ impl<S, OP, ST, NT, PL> Replica<S::Data, OP, ST, NT, PL> where S: Service + 'sta
     fn execution_finished_with_appstate(&mut self, seq: SeqNo, appstate: State<S>) -> Result<()> {
         let return_tx = self.execution_tx.clone();
 
-        // Digest the app state before passing it on to the ordering protocols
+// Digest the app state before passing it on to the ordering protocols
         threadpool::execute(move || {
             let result = atlas_execution::serialize::digest_state::<S::Data>(&appstate);
 
