@@ -70,13 +70,26 @@ impl<S> Checkpoint<S> {
 }
 
 /// The result of processing a message in the state transfer protocol
-pub enum STResult<D: SharedData> {
-    RunCst,
-    CstNotNeeded,
-    CstRunning,
-    CstFinished(D::State, Vec<D::Request>),
+pub enum STResult {
+    /// The message was processed successfully and
+    /// we must run the state transfer protocol
+    RunStateTransfer,
+    /// The message was processed successfully and the ST protocol
+    /// is not needed
+    StateTransferNotNeeded(SeqNo),
+    /// The message was processed successfully and the ST protocol
+    /// is still running
+    StateTransferRunning,
+    /// The message was processed successfully and the ST protocol
+    /// is running but there is already a partial state ready to
+    /// be received by the executor
+    StateTransferReady,
+    /// The message was processed successfully and the ST protocol
+    /// has finished
+    StateTransferFinished(SeqNo),
 }
 
+/// The result of processing a message in the state transfer protocol
 pub enum STTimeoutResult {
     RunCst,
     CstNotNeeded,
@@ -111,12 +124,11 @@ pub trait StateTransferProtocol<S, NT, PL> {
     /// state can be installed (if that's the case)
     fn process_message<D, OP, LP>(&mut self,
                                   message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
-                                  -> Result<STResult<D>>
+                                  -> Result<STResult>
         where D: SharedData + 'static,
               OP: OrderingProtocolMessage,
               LP: LogTransferMessage,
               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
-
 
     /// Handle the replica wanting to request a state from the application
     /// The state transfer protocol then sees if the conditions are met to receive it
@@ -127,7 +139,6 @@ pub trait StateTransferProtocol<S, NT, PL> {
               OP: OrderingProtocolMessage,
               LP: LogTransferMessage,
               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
-
 
     /// Handle a timeout being received from the timeout layer
     fn handle_timeout<D, OP, LP>(&mut self, timeout: Vec<RqTimeout>) -> Result<STTimeoutResult>

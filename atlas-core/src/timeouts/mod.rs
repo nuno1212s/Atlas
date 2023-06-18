@@ -40,6 +40,8 @@ pub enum TimeoutKind {
     /// As for CST messages, these messages aren't particularly ordered, they are just
     /// for each own node to know to what messages the peers are responding to.
     Cst(SeqNo),
+
+    LogTransfer(SeqNo),
 }
 
 #[derive(Clone, Debug)]

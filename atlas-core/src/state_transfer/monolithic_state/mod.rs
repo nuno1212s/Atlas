@@ -1,8 +1,10 @@
 use std::sync::Arc;
-use atlas_execution::state::monolithic_state::MonolithicState;
+use atlas_common::channel::ChannelSyncTx;
+use atlas_execution::state::monolithic_state::{InstallStateMessage, MonolithicState};
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_communication::Node;
+use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::SharedData;
 use crate::persistent_log::MonolithicStateLog;
 use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
@@ -16,7 +18,9 @@ pub trait MonolithicStateTransfer<S, NT, PL>: StateTransferProtocol<S, NT, PL> w
     type Config;
     
     /// Initialize the state transferring protocol with the given configuration, timeouts and communication layer
-    fn initialize(config: Self::Config, timeouts: Timeouts, node: Arc<NT>, log: PL) -> Result<Self>
+    fn initialize(config: Self::Config, timeouts: Timeouts,
+                  node: Arc<NT>, log: PL,
+                  executor_handle: ChannelSyncTx<InstallStateMessage<S>>) -> Result<Self>
         where Self: Sized;
     
     /// Handle having received a state from the application

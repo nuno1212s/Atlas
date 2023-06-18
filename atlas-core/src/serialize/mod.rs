@@ -29,6 +29,8 @@ pub trait OrderProtocolLog: Orderable {
 
     // At the moment I only need orderable, but I might need more in the future
 
+    fn first_seq(&self) -> Option<SeqNo>;
+
 }
 
 pub trait OrderProtocolProof: Orderable {

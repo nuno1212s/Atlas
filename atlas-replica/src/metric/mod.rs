@@ -45,6 +45,9 @@ pub const REPLICA_TAKE_FROM_NETWORK_ID: usize = 512;
 pub const REPLICA_ORDERED_RQS_PROCESSED: &str = "REPLICA_ORDERED_RQS_PROCESSED";
 pub const REPLICA_ORDERED_RQS_PROCESSED_ID: usize = 513;
 
+pub const LOG_TRANSFER_PROCESS_TIME: &str = "LOG_TRANSFER_PROCESS_TIME";
+pub const LOG_TRANSFER_PROCESS_TIME_ID: usize = 514;
+
 pub fn metrics() -> Vec<MetricRegistry> {
 
     vec![
@@ -62,6 +65,7 @@ pub fn metrics() -> Vec<MetricRegistry> {
         (REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME.to_string(), MetricKind::Duration, MetricLevel::Trace).into(),
         (REPLICA_TAKE_FROM_NETWORK_ID, REPLICA_TAKE_FROM_NETWORK.to_string(), MetricKind::Duration, MetricLevel::Trace).into(),
         (REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_ORDERED_RQS_PROCESSED.to_string(), MetricKind::Counter, MetricLevel::Trace).into(),
+        (LOG_TRANSFER_PROCESS_TIME_ID, LOG_TRANSFER_PROCESS_TIME.to_string(), MetricKind::Duration, MetricLevel::Debug).into(),
     ]
 
 }

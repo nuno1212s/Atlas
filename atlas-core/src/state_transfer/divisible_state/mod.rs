@@ -1,8 +1,9 @@
 use std::sync::Arc;
+use atlas_common::channel::ChannelSyncTx;
 use atlas_communication::Node;
 use atlas_common::error::*;
 use atlas_execution::serialize::SharedData;
-use atlas_execution::state::divisible_state::DivisibleState;
+use atlas_execution::state::divisible_state::{DivisibleState, InstallStateMessage};
 use crate::persistent_log::DivisibleStateLog;
 use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg};
 use crate::state_transfer::StateTransferProtocol;
@@ -15,7 +16,8 @@ pub trait DivisibleStateTransfer<S, NT, PL>: StateTransferProtocol<S, NT, PL>
     type Config;
 
     /// Initialize the state transferring protocol with the given configuration, timeouts and communication layer
-    fn initialize(config: Self::Config, timeouts: Timeouts, node: Arc<NT>, log: PL) -> Result<Self>
+    fn initialize(config: Self::Config, timeouts: Timeouts, node: Arc<NT>, log: PL,
+                  executor_state_handle: ChannelSyncTx<InstallStateMessage<S>>) -> Result<Self>
         where Self: Sized;
 
     /// Handle having received a state from the application

@@ -4,11 +4,11 @@ use atlas_common::ordering::SeqNo;
 use atlas_communication::message::StoredMessage;
 use atlas_communication::Node;
 use atlas_execution::serialize::SharedData;
-use crate::messages::StateTransfer;
+use crate::messages::{LogTransfer, StateTransfer};
 use crate::ordering_protocol::{OrderingProtocol, OrderingProtocolArgs, View};
 use crate::persistent_log::{StatefulOrderingProtocolLog, StateTransferProtocolLog};
 use crate::serialize::{LogTransferMessage, ServiceMsg, StatefulOrderProtocolMessage, StateTransferMessage};
-use crate::timeouts::Timeouts;
+use crate::timeouts::{RqTimeout, Timeouts};
 
 pub type DecLog<OP> = <OP as StatefulOrderProtocolMessage>::DecLog;
 
@@ -35,6 +35,10 @@ pub trait StatefulOrderProtocol<D: SharedData + 'static, NT, PL>: OrderingProtoc
     fn snapshot_log(&mut self) -> Result<(View<Self::Serialization>, DecLog<Self::StateSerialization>)>
         where PL: StatefulOrderingProtocolLog<Self::Serialization, Self::StateSerialization>;
 
+    /// Get a reference to the current log of this ordering protocol
+    fn current_log(&self) -> Result<&DecLog<Self::StateSerialization>>
+        where PL: StatefulOrderingProtocolLog<Self::Serialization, Self::StateSerialization>;
+
     /// Notify the consensus protocol that we have a checkpoint at a given sequence number,
     /// meaning it can now be garbage collected
     fn checkpointed(&mut self, seq: SeqNo) -> Result<()>
@@ -49,13 +53,17 @@ pub enum LTResult<D: SharedData> {
     /// The log transfer protocol has finished and the ordering protocol should now
     /// be proceeded. The requests contained are requests that must be executed by the application
     /// in order to reach the state that corresponds to the decision log
-    LTPFinished(Vec<D::Request>),
+    LTPFinished(SeqNo, SeqNo, Vec<D::Request>),
+}
+
+pub enum LTTimeoutResult {
+    RunLTP,
+    NotNeeded
 }
 
 
 pub trait LogTransferProtocol<D, OP, NT, PL> where D: SharedData + 'static,
-                                                       OP: StatefulOrderProtocol<D, NT, PL> + 'static {
-    
+                                                   OP: StatefulOrderProtocol<D, NT, PL> + 'static {
     /// The type which implements StateTransferMessage, to be implemented by the developer
     type Serialization: LogTransferMessage + 'static;
 
@@ -67,26 +75,35 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: SharedData + 'static,
         where Self: Sized;
 
     /// Request the latest state from the rest of replicas
-    fn request_latest_state(&mut self,
-                            order_protocol: &mut OP) -> Result<()>
+    fn request_latest_log<ST>(&mut self,
+                              order_protocol: &mut OP) -> Result<()>
         where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
+              ST: StateTransferMessage,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
     /// Handle a state transfer protocol message that was received while executing the ordering protocol
-    fn handle_off_ctx_message(&mut self,
-                              order_protocol: &mut OP,
-                              message: StoredMessage<StateTransfer<LogTM<Self::Serialization>>>)
-                              -> Result<()>
+    fn handle_off_ctx_message<ST>(&mut self,
+                                  order_protocol: &mut OP,
+                                  message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
+                                  -> Result<()>
         where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
+              ST: StateTransferMessage,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
     /// Process a state transfer protocol message, received from other replicas
     /// We also provide a mutable reference to the stateful ordering protocol, so the
     /// state can be installed (if that's the case)
-    fn process_message(&mut self,
+    fn process_message<ST>(&mut self,
                        order_protocol: &mut OP,
-                       message: StoredMessage<StateTransfer<LogTM<Self::Serialization>>>)
+                       message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
                        -> Result<LTResult<D>>
         where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
+              ST: StateTransferMessage,
+              PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+
+    /// Handle a timeout being received from the timeout layer
+    fn handle_timeout<ST>(&mut self, timeout: Vec<RqTimeout>) -> Result<LTTimeoutResult>
+        where ST: StateTransferMessage,
+              NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 }
