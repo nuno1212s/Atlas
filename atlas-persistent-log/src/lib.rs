@@ -8,16 +8,17 @@ use atlas_common::channel;
 use atlas_common::channel::ChannelSyncTx;
 use atlas_common::crypto::hash::Digest;
 use atlas_execution::ExecutorHandle;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::persistentdb::KVDB;
 use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::{ProtocolConsensusDecision, ProtocolMessage, SerProof, SerProofMetadata, View};
-use atlas_core::persistent_log::{OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, StateTransferProtocolLog, WriteMode};
+use atlas_core::persistent_log::{OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, WriteMode};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
-use atlas_core::state_transfer::{Checkpoint, DecLog};
+use atlas_core::state_transfer::{Checkpoint};
+use atlas_core::state_transfer::log_transfer::DecLog;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
 use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, read_latest_state, write_checkpoint, write_latest_seq_no, write_latest_view, write_message, write_proof, write_proof_metadata, write_state};
 
@@ -31,7 +32,7 @@ mod worker;
 // pub type CallbackType = Box<dyn FnOnce(Result<ResponseMessage>) + Send>;
 pub type CallbackType = ();
 
-pub enum PersistentLogMode<D: SharedData> {
+pub enum PersistentLogMode<D: ApplicationData> {
     /// The strict log mode is meant to indicate that the consensus can only be finalized and the
     /// requests executed when the replica has all the information persistently stored.
     ///
@@ -66,7 +67,7 @@ pub enum PersistentLogMode<D: SharedData> {
 pub trait PersistentLogModeTrait: Send {
     fn init_persistent_log<D>(executor: ExecutorHandle<D>) -> PersistentLogMode<D>
         where
-            D: SharedData + 'static;
+            D: ApplicationData + 'static;
 }
 
 ///Strict log mode initializer
@@ -75,7 +76,7 @@ pub struct StrictPersistentLog;
 impl PersistentLogModeTrait for StrictPersistentLog {
     fn init_persistent_log<D>(executor: ExecutorHandle<D>) -> PersistentLogMode<D>
         where
-            D: SharedData + 'static,
+            D: ApplicationData + 'static,
     {
         let handle = ConsensusBacklog::init_backlog(executor);
 
@@ -87,7 +88,7 @@ impl PersistentLogModeTrait for StrictPersistentLog {
 pub struct OptimisticPersistentLog;
 
 impl PersistentLogModeTrait for OptimisticPersistentLog {
-    fn init_persistent_log<D: SharedData + 'static>(_: ExecutorHandle<D>) -> PersistentLogMode<D> {
+    fn init_persistent_log<D: ApplicationData + 'static>(_: ExecutorHandle<D>) -> PersistentLogMode<D> {
         PersistentLogMode::Optimistic
     }
 }
@@ -95,14 +96,14 @@ impl PersistentLogModeTrait for OptimisticPersistentLog {
 pub struct NoPersistentLog;
 
 impl PersistentLogModeTrait for NoPersistentLog {
-    fn init_persistent_log<D>(_: ExecutorHandle<D>) -> PersistentLogMode<D> where D: SharedData + 'static {
+    fn init_persistent_log<D>(_: ExecutorHandle<D>) -> PersistentLogMode<D> where D: ApplicationData + 'static {
         PersistentLogMode::None
     }
 }
 
 ///TODO: Handle sequence numbers that loop the u32 range.
 /// This is the main reference to the persistent log, used to push data to it
-pub struct PersistentLog<D: SharedData,
+pub struct PersistentLog<D: ApplicationData,
     OPM: OrderingProtocolMessage,
     SOPM: StatefulOrderProtocolMessage,
     STM: StateTransferMessage>
@@ -126,7 +127,7 @@ pub type InstallState<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolM
 );
 
 /// Work messages for the persistent log workers
-pub enum PWMessage<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
+pub enum PWMessage<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
     //Persist a new view into the persistent storage
     View(View<OPM>),
 
@@ -188,11 +189,11 @@ pub enum ResponseMessage {
 }
 
 /// Messages that are sent to the logging thread to log specific requests
-pub(crate) type ChannelMsg<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> = (PWMessage<D, OPM, SOPM>, Option<CallbackType>);
+pub(crate) type ChannelMsg<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> = (PWMessage<D, OPM, SOPM>, Option<CallbackType>);
 
 pub fn initialize_persistent_log<D, K, T, OPM, SOPM, STM, POP, PSP>(executor: ExecutorHandle<D>, db_path: K)
                                                                     -> Result<PersistentLog<D, OPM, SOPM, STM>>
-    where D: SharedData + 'static, K: AsRef<Path>, T: PersistentLogModeTrait,
+    where D: ApplicationData + 'static, K: AsRef<Path>, T: PersistentLogModeTrait,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static,
@@ -203,7 +204,7 @@ pub fn initialize_persistent_log<D, K, T, OPM, SOPM, STM, POP, PSP>(executor: Ex
 }
 
 impl<D, OPM, SOPM, STM> PersistentLog<D, OPM, SOPM, STM>
-    where D: SharedData + 'static,
+    where D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static,
@@ -299,7 +300,7 @@ impl<D, OPM, SOPM, STM> PersistentLog<D, OPM, SOPM, STM>
 }
 
 impl<D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for PersistentLog<D, OPM, SOPM, STM>
-    where D: SharedData + 'static,
+    where D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static {
@@ -411,7 +412,7 @@ impl<D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for PersistentLog<D, OPM, SOPM,
 }
 
 impl<D, OPM, SOPM, STM> StatefulOrderingProtocolLog<OPM, SOPM> for PersistentLog<D, OPM, SOPM, STM>
-    where D: SharedData + 'static,
+    where D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static {
@@ -452,31 +453,7 @@ impl<D, OPM, SOPM, STM> StatefulOrderingProtocolLog<OPM, SOPM> for PersistentLog
     }
 }
 
-impl<D, OPM, SOPM, STM> StateTransferProtocolLog<OPM, SOPM, D> for PersistentLog<D, OPM, SOPM, STM>
-    where D: SharedData + 'static,
-          OPM: OrderingProtocolMessage + 'static,
-          SOPM: StatefulOrderProtocolMessage + 'static,
-          STM: StateTransferMessage + 'static {
-    fn write_checkpoint(&self, write_mode: WriteMode, checkpoint: Arc<ReadOnly<Checkpoint<D::State>>>) -> Result<()> {
-        match self.persistency_mode {
-            PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
-                match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
-                        self.worker_handle.queue_state(checkpoint, callback)
-                    }
-                    WriteMode::BlockingSync => {
-                        todo!()
-                    }
-                }
-            }
-            PersistentLogMode::None => {
-                Ok(())
-            }
-        }
-    }
-}
-
-impl<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, STM: StateTransferMessage> Clone for PersistentLog<D, OPM, SOPM, STM> {
+impl<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, STM: StateTransferMessage> Clone for PersistentLog<D, OPM, SOPM, STM> {
     fn clone(&self) -> Self {
         Self {
             persistency_mode: self.persistency_mode.clone(),
@@ -487,7 +464,7 @@ impl<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMes
     }
 }
 
-impl<D: SharedData> Clone for PersistentLogMode<D> {
+impl<D: ApplicationData> Clone for PersistentLogMode<D> {
     fn clone(&self) -> Self {
         match self {
             PersistentLogMode::Strict(handle) => {

@@ -22,7 +22,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::config::NodeConfig;
 use atlas_communication::message::{NetworkMessage, NetworkMessageKind, System};
 use atlas_communication::{Node, NodeConnections, NodeIncomingRqHandler};
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_execution::system_params::SystemParams;
 use atlas_core::messages::{ReplyMessage, SystemMessage};
 use atlas_core::serialize::{ClientMessage, ClientServiceMsg, OrderingProtocolMessage, ServiceMessage, ServiceMsg, StateTransferMessage};
@@ -89,7 +89,7 @@ impl<P> Deref for Callback<P> {
 
 pub struct ClientData<D>
     where
-        D: SharedData + 'static,
+        D: ApplicationData + 'static,
 {
     //The global session counter, so we don't have two client objects with the same session number
     session_counter: AtomicU32,
@@ -113,7 +113,7 @@ pub struct ClientData<D>
     stats: Option<Arc<ClientPerf>>,
 }
 
-pub trait ClientType<D: SharedData + 'static, NT> {
+pub trait ClientType<D: ApplicationData + 'static, NT> {
     ///Initialize request in accordance with the type of clients
     fn init_request(
         session_id: SeqNo,
@@ -135,7 +135,7 @@ pub trait ClientType<D: SharedData + 'static, NT> {
 
 /// Represents a client node in `febft`.
 // TODO: maybe make the clone impl more efficient
-pub struct Client<D: SharedData + 'static, NT: 'static> {
+pub struct Client<D: ApplicationData + 'static, NT: 'static> {
     session_id: SeqNo,
     operation_counter: SeqNo,
     data: Arc<ClientData<D>>,
@@ -143,7 +143,7 @@ pub struct Client<D: SharedData + 'static, NT: 'static> {
     node: Arc<NT>,
 }
 
-impl<D: SharedData, NT> Clone for Client<D, NT> {
+impl<D: ApplicationData, NT> Clone for Client<D, NT> {
     fn clone(&self) -> Self {
         let session_id = self
             .data
@@ -220,7 +220,7 @@ impl<'a, P> Future for ClientRequestFut<'a, P> {
 }
 
 /// Represents a configuration used to bootstrap a `Client`.
-pub struct ClientConfig<D: SharedData + 'static, NT: Node<ClientServiceMsg<D>>> {
+pub struct ClientConfig<D: ApplicationData + 'static, NT: Node<ClientServiceMsg<D>>> {
     pub n: usize,
     pub f: usize,
 
@@ -243,11 +243,11 @@ pub struct ReplicaVotes {
     digests: BTreeMap<Digest, usize>,
 }
 
-pub type RequestCallback<D: SharedData> = Box<dyn FnOnce(Result<D::Reply>) + Send>;
+pub type RequestCallback<D: ApplicationData> = Box<dyn FnOnce(Result<D::Reply>) + Send>;
 
 impl<D, NT> Client<D, NT>
     where
-        D: SharedData + 'static,
+        D: ApplicationData + 'static,
         NT: 'static
 {
     /// Bootstrap a client in `febft`.
@@ -871,10 +871,10 @@ fn get_correct_vec_for<T>(session_id: SeqNo, vec: &Vec<Mutex<T>>) -> &Mutex<T> {
 }
 
 #[inline]
-pub(super) fn register_callback<D: SharedData>(session_id: SeqNo,
-                                               request_key: u64,
-                                               data: &ClientData<D>,
-                                               callback: RequestCallback<D>) {
+pub(super) fn register_callback<D: ApplicationData>(session_id: SeqNo,
+                                                    request_key: u64,
+                                                    data: &ClientData<D>,
+                                                    callback: RequestCallback<D>) {
     let ready = get_ready::<D>(session_id, &*data);
 
     let callback = Callback {
@@ -891,7 +891,7 @@ pub(super) fn register_callback<D: SharedData>(session_id: SeqNo,
 }
 
 #[inline]
-fn get_ready<D: SharedData>(
+fn get_ready<D: ApplicationData>(
     session_id: SeqNo,
     data: &ClientData<D>,
 ) -> &Mutex<IntMap<ClientAwaker<D::Reply>>> {
@@ -899,7 +899,7 @@ fn get_ready<D: SharedData>(
 }
 
 #[inline]
-fn get_request_info<D: SharedData>(
+fn get_request_info<D: ApplicationData>(
     session_id: SeqNo,
     data: &ClientData<D>,
 ) -> &Mutex<IntMap<SentRequestInfo>> {

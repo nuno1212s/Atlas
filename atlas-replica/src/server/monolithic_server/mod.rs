@@ -12,7 +12,7 @@ use atlas_core::serialize::ServiceMsg;
 use atlas_core::state_transfer::log_transfer::{LogTransferProtocol, StatefulOrderProtocol};
 use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_core::state_transfer::{Checkpoint, StateTransferProtocol};
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::monolithic_state::{AppStateMessage, InstallStateMessage};
 use atlas_execution::state::monolithic_state::MonolithicState;
 use atlas_metrics::metrics::metric_duration;
@@ -26,7 +26,7 @@ use crate::server::Replica;
 /// Replica type made to handle monolithic states and executors
 pub struct MonReplica<S, A, OP, ST, LT, NT, PL>
     where S: MonolithicState + 'static,
-          A: SharedData + 'static,
+          A: ApplicationData + 'static,
           OP: StatefulOrderProtocol<A, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
           ST: MonolithicStateTransfer<A, NT, PL> + PersistableStateTransferProtocol + 'static,
           LT: LogTransferProtocol<A, OP, NT, PL> + 'static,
@@ -44,7 +44,7 @@ pub struct MonReplica<S, A, OP, ST, LT, NT, PL>
 impl<S, A, OP, ST, LT, NT, PL> MonReplica<S, A, OP, ST, LT, NT, PL>
     where
         S: MonolithicState + 'static,
-        A: SharedData + 'static,
+        A: ApplicationData + 'static,
         OP: StatefulOrderProtocol<A, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
         ST: MonolithicStateTransfer<A, NT, PL> + PersistableStateTransferProtocol + 'static,
         LT: LogTransferProtocol<A, OP, NT, PL> + 'static,

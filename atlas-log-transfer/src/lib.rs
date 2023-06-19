@@ -14,7 +14,7 @@ use atlas_core::persistent_log::StatefulOrderingProtocolLog;
 use atlas_core::serialize::{NetworkView, OrderingProtocolMessage, OrderProtocolLog, ServiceMsg, StatefulOrderProtocolMessage, StateTransferMessage};
 use atlas_core::state_transfer::log_transfer::{DecLog, LogTM, LogTransferProtocol, LTResult, LTTimeoutResult, StatefulOrderProtocol};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use crate::config::LogTransferConfig;
 use crate::messages::{LogTransferMessageKind, LTMessage};
 use crate::messages::serialize::LTMsg;
@@ -52,7 +52,7 @@ enum LogTransferState<V, P, D> {
 }
 
 pub struct CollabLogTransfer<D, OP, NT, PL>
-    where D: SharedData + 'static, OP: StatefulOrderProtocol<D, NT, PL>
+    where D: ApplicationData + 'static, OP: StatefulOrderProtocol<D, NT, PL>
 {
     // The current sequence number of the log transfer protocol
     curr_seq: SeqNo,
@@ -71,7 +71,7 @@ pub struct CollabLogTransfer<D, OP, NT, PL>
 }
 
 impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
-    where D: SharedData + 'static,
+    where D: ApplicationData + 'static,
           OP: StatefulOrderProtocol<D, NT, PL> {
     fn curr_seq(&self) -> SeqNo {
         self.curr_seq
@@ -177,7 +177,7 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 }
 
 impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, OP, NT, PL>
-    where D: SharedData + 'static,
+    where D: ApplicationData + 'static,
           OP: StatefulOrderProtocol<D, NT, PL> {
     type Serialization = LTMsg<D, OP::Serialization, OP::StateSerialization>;
     type Config = LogTransferConfig;

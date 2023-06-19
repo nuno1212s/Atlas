@@ -2,17 +2,13 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_metrics::benchmarks::BatchMeta;
-use crate::serialize::{ApplicationData, SharedData};
-
-
-/// State type of the `Service`.
-pub type State<S> = <<S as Service>::Data as SharedData>::State;
+use crate::serialize::ApplicationData;
 
 /// Request type of the `Service`.
-pub type Request<S> = <<S as Service>::Data as SharedData>::Request;
+pub type Request<A, S> = <<A as Application<S>>::AppData as ApplicationData>::Request;
 
 /// Reply type of the `Service`.
-pub type Reply<S> = <<S as Service>::Data as SharedData>::Reply;
+pub type Reply<A, S> = <<A as Application<S>>::AppData as ApplicationData>::Reply;
 
 /// An application for a state machine replication protocol.
 pub trait Application<S> {
@@ -24,7 +20,7 @@ pub trait Application<S> {
     
     /// Process an unordered client request, and produce a matching reply
     /// Cannot alter the application state
-    fn unordered_execution(&self, state: &S, request: Request<Self>) -> Reply<Self>;
+    fn unordered_execution(&self, state: &S, request: Request<Self, S>) -> Reply<Self, S>;
     
     /// Much like [`unordered_execution()`], but processes a batch of requests.
     ///
@@ -41,8 +37,8 @@ pub trait Application<S> {
     fn unordered_batched_execution(
         &self,
         state: &S,
-        requests: UnorderedBatch<Request<Self>>,
-    ) -> BatchReplies<Reply<Self>> {
+        requests: UnorderedBatch<Request<Self, S>>,
+    ) -> BatchReplies<Reply<Self, S>> {
         let mut reply_batch = BatchReplies::with_capacity(requests.len());
 
         for unordered_req in requests.into_inner() {
@@ -56,7 +52,7 @@ pub trait Application<S> {
 
     /// Process a user request, producing a matching reply,
     /// meanwhile updating the application state.
-    fn update(&mut self, state: &mut S, request: Request<Self>) -> Reply<Self>;
+    fn update(&mut self, state: &mut S, request: Request<Self, S>) -> Reply<Self, S>;
 
     /// Much like `update()`, but processes a batch of requests.
     ///
@@ -75,8 +71,8 @@ pub trait Application<S> {
     fn update_batch(
         &mut self,
         state: &mut S,
-        batch: UpdateBatch<Request<Self>>,
-    ) -> BatchReplies<Reply<Self>> {
+        batch: UpdateBatch<Request<Self, S>>,
+    ) -> BatchReplies<Reply<Self, S>> {
         let mut reply_batch = BatchReplies::with_capacity(batch.len());
 
         for update in batch.into_inner() {
@@ -88,86 +84,6 @@ pub trait Application<S> {
         reply_batch
     }
     
-}
-
-/// A user defined `Service`.
-///
-/// Application logic is implemented by this trait.
-pub trait Service: Send {
-
-    /// The data types used by the application and the SMR protocol.
-    ///
-    /// This includes their respective serialization routines.
-    type Data: SharedData;
-
-    /// Returns the initial state of the application.
-    fn initial_state() -> Result<State<Self>>;
-
-    /// Process an unordered client request, and produce a matching reply
-    /// Cannot alter the application state
-    fn unordered_execution(&self, state: &State<Self>, request: Request<Self>) -> Reply<Self>;
-
-    /// Much like [`unordered_execution()`], but processes a batch of requests.
-    ///
-    /// If [`unordered_batched_execution()`] is defined by the user, then [`unordered_execution()`] may
-    /// simply be defined as such:
-    ///
-    /// ```rust
-    /// fn unordered_execution(&self,
-    /// state: State<Self>,
-    /// request: Request<Self>) -> Reply<Self> {
-    ///     unimplemented!()
-    /// }
-    /// ```
-    fn unordered_batched_execution(
-        &self,
-        state: &State<Self>,
-        requests: UnorderedBatch<Request<Self>>,
-    ) -> BatchReplies<Reply<Self>> {
-        let mut reply_batch = BatchReplies::with_capacity(requests.len());
-
-        for unordered_req in requests.into_inner() {
-            let (peer_id, sess, opid, req) = unordered_req.into_inner();
-            let reply = self.unordered_execution(&state, req);
-            reply_batch.add(peer_id, sess, opid, reply);
-        }
-
-        reply_batch
-    }
-
-    /// Process a user request, producing a matching reply,
-    /// meanwhile updating the application state.
-    fn update(&mut self, state: &mut State<Self>, request: Request<Self>) -> Reply<Self>;
-
-    /// Much like `update()`, but processes a batch of requests.
-    ///
-    /// If `update_batch()` is defined by the user, then `update()` may
-    /// simply be defined as such:
-    ///
-    /// ```rust
-    /// fn update(
-    ///     &mut self,
-    ///     state: &mut State<Self>,
-    ///     request: Request<Self>,
-    /// ) -> Reply<Self> {
-    ///     unimplemented!()
-    /// }
-    /// ```
-    fn update_batch(
-        &mut self,
-        state: &mut State<Self>,
-        batch: UpdateBatch<Request<Self>>,
-    ) -> BatchReplies<Reply<Self>> {
-        let mut reply_batch = BatchReplies::with_capacity(batch.len());
-
-        for update in batch.into_inner() {
-            let (peer_id, sess, opid, req) = update.into_inner();
-            let reply = self.update(state, req);
-            reply_batch.add(peer_id, sess, opid, reply);
-        }
-
-        reply_batch
-    }
 }
 
 /// Represents a single client update request, to be executed.

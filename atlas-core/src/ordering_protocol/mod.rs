@@ -8,7 +8,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::Node;
 use atlas_execution::app::{Update, UpdateBatch};
 use atlas_execution::ExecutorHandle;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use crate::messages::{ClientRqInfo, ForwardedRequestsMessage, Protocol, StoredRequestMessage, SystemMessage};
 use crate::persistent_log::OrderingProtocolLog;
 use crate::request_pre_processing::{BatchOutput, RequestPreProcessor};
@@ -21,10 +21,10 @@ pub type ProtocolMessage<OP> = <OP as OrderingProtocolMessage>::ProtocolMessage;
 pub type SerProof<OP> = <OP as OrderingProtocolMessage>::Proof;
 pub type SerProofMetadata<OP> = <OP as OrderingProtocolMessage>::ProofMetadata;
 
-pub struct OrderingProtocolArgs<D, NT, PL>(pub ExecutorHandle<D>, pub Timeouts, pub RequestPreProcessor<D::Request>, pub BatchOutput<D::Request>, pub Arc<NT>, pub PL) where D: SharedData;
+pub struct OrderingProtocolArgs<D, NT, PL>(pub ExecutorHandle<D>, pub Timeouts, pub RequestPreProcessor<D::Request>, pub BatchOutput<D::Request>, pub Arc<NT>, pub PL) where D: ApplicationData;
 
 /// The trait for an ordering protocol to be implemented in Atlas
-pub trait OrderingProtocol<D, NT, PL>: Orderable where D: SharedData + 'static {
+pub trait OrderingProtocol<D, NT, PL>: Orderable where D: ApplicationData + 'static {
     /// The type which implements OrderingProtocolMessage, to be implemented by the developer
     type Serialization: OrderingProtocolMessage + 'static;
 

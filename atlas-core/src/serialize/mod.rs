@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use atlas_common::error::*;
 use atlas_communication::serialize::Serializable;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use crate::messages::SystemMessage;
 #[cfg(feature = "serialize_serde")]
 use serde::{Serialize, Deserialize};
@@ -142,15 +142,15 @@ pub trait StatefulOrderProtocolMessage: Send {
 }
 
 /// The type that encapsulates all the serializing, so we don't have to constantly use SystemMessage
-pub struct ServiceMsg<D: SharedData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage>(PhantomData<(D, P, S, L)>);
+pub struct ServiceMsg<D: ApplicationData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage>(PhantomData<(D, P, S, L)>);
 
-pub type ServiceMessage<D: SharedData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage> = <ServiceMsg<D, P, S, L> as Serializable>::Message;
+pub type ServiceMessage<D: ApplicationData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage> = <ServiceMsg<D, P, S, L> as Serializable>::Message;
 
-pub type ClientServiceMsg<D: SharedData> = ServiceMsg<D, NoProtocol, NoProtocol, NoProtocol>;
+pub type ClientServiceMsg<D: ApplicationData> = ServiceMsg<D, NoProtocol, NoProtocol, NoProtocol>;
 
-pub type ClientMessage<D: SharedData> = <ClientServiceMsg<D> as Serializable>::Message;
+pub type ClientMessage<D: ApplicationData> = <ClientServiceMsg<D> as Serializable>::Message;
 
-impl<D: SharedData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage> Serializable for ServiceMsg<D, P, S, L> {
+impl<D: ApplicationData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage> Serializable for ServiceMsg<D, P, S, L> {
     
     type Message = SystemMessage<D, P::ProtocolMessage, S::StateTransferMessage, L::LogTransferMessage>;
 

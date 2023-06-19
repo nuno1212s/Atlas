@@ -3,7 +3,7 @@ use std::sync::Arc;
 use atlas_common::channel::ChannelSyncTx;
 use atlas_common::globals::ReadOnly;
 use atlas_communication::message::StoredMessage;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use crate::messages::Protocol;
 use crate::ordering_protocol::OrderingProtocol;
 use crate::serialize::OrderingProtocolMessage;

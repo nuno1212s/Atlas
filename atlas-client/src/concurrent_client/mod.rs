@@ -4,7 +4,7 @@ use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_common::node_id::NodeId;
 use atlas_communication::Node;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_core::serialize::ClientServiceMsg;
 use std::sync::Arc;
 use crate::client::ClientData;
@@ -14,14 +14,14 @@ use crate::client::{Client, ClientConfig, ClientType, register_callback, Request
 /// as much as possible
 /// Can be cloned in order to be used in multiple locations simultaneously
 #[derive(Clone)]
-pub struct ConcurrentClient<D: SharedData + 'static, NT: 'static> {
+pub struct ConcurrentClient<D: ApplicationData + 'static, NT: 'static> {
     id: NodeId,
     client_data: Arc<ClientData<D>>,
     session_return: ChannelSyncTx<Client<D, NT>>,
     sessions: ChannelSyncRx<Client<D, NT>>,
 }
 
-impl<D, NT> ConcurrentClient<D, NT> where D: SharedData + 'static, NT: 'static {
+impl<D, NT> ConcurrentClient<D, NT> where D: ApplicationData + 'static, NT: 'static {
     /// Creates a new concurrent client, with the given configuration
     pub async fn boostrap_client(cfg: ClientConfig<D, NT>, session_limit: usize) -> Result<Self> where NT: Node<ClientServiceMsg<D>> {
         let (tx, rx) = channel::new_bounded_sync(session_limit);

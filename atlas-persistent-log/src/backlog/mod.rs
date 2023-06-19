@@ -7,14 +7,14 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::error::*;
 use atlas_core::ordering_protocol::ProtocolConsensusDecision;
 use atlas_execution::ExecutorHandle;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::MetricLevel::Info;
 use crate::ResponseMessage;
 
 ///This is made to handle the backlog when the consensus is working faster than the persistent storage layer.
 /// It holds update batches that are yet to be executed since they are still waiting for the confirmation of the persistent log
 /// This is only needed (and only instantiated) when the persistency mode is strict
-pub struct ConsensusBacklog<D: SharedData> {
+pub struct ConsensusBacklog<D: ApplicationData> {
     rx: ChannelSyncRx<BacklogMessage<D::Request>>,
 
     //Receives messages from the persistent log
@@ -100,7 +100,7 @@ impl<O> Clone for ConsensusBackLogHandle<O> {
 ///That can be waiting for messages
 const CHANNEL_SIZE: usize = 1024;
 
-impl<D: SharedData + 'static> ConsensusBacklog<D> {
+impl<D: ApplicationData + 'static> ConsensusBacklog<D> {
     ///Initialize the consensus backlog
     pub fn init_backlog(executor: ExecutorHandle<D>) -> ConsensusBackLogHandle<D::Request> {
         let (logger_tx, logger_rx) = channel::new_bounded_sync(CHANNEL_SIZE);

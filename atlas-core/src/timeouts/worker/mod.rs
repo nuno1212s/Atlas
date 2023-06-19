@@ -10,7 +10,7 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, TryRecvError};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 
 use crate::messages::{ClientRqInfo, Message};
 use crate::request_pre_processing::operation_key_raw;
@@ -45,7 +45,7 @@ struct ClientRqTimeoutInfo {
     timeout_info: ClientRqInfo,
 }
 
-pub(super) struct TimeoutWorker<D: SharedData + 'static> {
+pub(super) struct TimeoutWorker {
     my_node_id: NodeId,
     worker_id: TimeoutWorkerId,
     default_timeout: Duration,
@@ -59,11 +59,11 @@ pub(super) struct TimeoutWorker<D: SharedData + 'static> {
     pending_timeouts: BTreeMap<u64, Vec<TimeoutRequest>>,
 
     // Channel to deliver the timeouts to the main thread
-    loopback_channel: ChannelSyncTx<Message<D>>,
+    loopback_channel: ChannelSyncTx<Message>,
 }
 
-impl<D: SharedData + 'static> TimeoutWorker<D> {
-    pub(super) fn new(worker_id: TimeoutWorkerId, node_id: NodeId, default_timeout: Duration, loopback: ChannelSyncTx<Message<D>>) -> ChannelSyncTx<TimeoutMessage> {
+impl TimeoutWorker {
+    pub(super) fn new(worker_id: TimeoutWorkerId, node_id: NodeId, default_timeout: Duration, loopback: ChannelSyncTx<Message>) -> ChannelSyncTx<TimeoutMessage> {
         let (work_tx, work_rx) = channel::new_bounded_sync(CHANNEL_SIZE);
 
         let worker = Self {
@@ -268,6 +268,9 @@ impl<D: SharedData + 'static> TimeoutWorker<D> {
                 }
             }
             TimeoutKind::Cst(rq) => {
+                (true, None)
+            }
+            TimeoutKind::LogTransfer(rq) => {
                 (true, None)
             }
         };

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use atlas_common::channel::ChannelSyncTx;
 use atlas_communication::Node;
 use atlas_common::error::*;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::divisible_state::{DivisibleState, InstallStateMessage};
 use crate::persistent_log::DivisibleStateLog;
 use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg};
@@ -26,8 +26,8 @@ pub trait DivisibleStateTransfer<S, NT, PL>: StateTransferProtocol<S, NT, PL>
     fn handle_state_received_from_app<D, OP, LP>(&mut self,
                                                  descriptor: Vec<S::StateDescriptor>,
                                                  state: Vec<S::StatePart>) -> Result<()>
-        where D: SharedData + 'static,
-              OP: OrderingProtocolMessage,
-              LP: LogTransferMessage,
+        where D: ApplicationData + 'static,
+              OP: OrderingProtocolMessage + 'static,
+              LP: LogTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
 }

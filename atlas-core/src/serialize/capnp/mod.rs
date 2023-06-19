@@ -1,5 +1,5 @@
 use febft_capnp::{messages_capnp, service_messages_capnp};
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_common::error::*;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
@@ -11,7 +11,7 @@ const DEFAULT_SERIALIZE_BUFFER_SIZE: usize = 1024;
 
 pub type Message<D, P, SP> = <ServiceMsg<D, P, SP> as Serializable>::Message;
 
-pub(super) fn serialize_message<D, P, SP>(builder: messages_capnp::system::Builder, msg: &Message<D, P, SP>) -> Result<()> where D: SharedData, P: OrderingProtocolMessage, SP: StateTransferMessage {
+pub(super) fn serialize_message<D, P, SP>(builder: messages_capnp::system::Builder, msg: &Message<D, P, SP>) -> Result<()> where D: ApplicationData, P: OrderingProtocolMessage, SP: StateTransferMessage {
     match msg {
         SystemMessage::OrderedRequest(req) => {
             let rq_builder = builder.init_request();
@@ -72,7 +72,7 @@ pub(super) fn serialize_message<D, P, SP>(builder: messages_capnp::system::Build
 }
 
 pub(super) fn deserialize_message<D, P, ST>(reader: messages_capnp::system::Reader) -> Result<Message<D, P, ST>>
-    where D: SharedData, P: OrderingProtocolMessage, ST: StateTransferMessage {
+    where D: ApplicationData, P: OrderingProtocolMessage, ST: StateTransferMessage {
     let which = reader.which().wrapped_msg(ErrorKind::CommunicationSerialize, "Failed to read which type of message for the system message")?;
 
     return match which {
@@ -147,7 +147,7 @@ pub(super) fn deserialize_message<D, P, ST>(reader: messages_capnp::system::Read
     };
 }
 
-pub fn serialize_request<D>(mut builder: service_messages_capnp::request::Builder, msg: &RequestMessage<D::Request>) -> Result<()> where D: SharedData {
+pub fn serialize_request<D>(mut builder: service_messages_capnp::request::Builder, msg: &RequestMessage<D::Request>) -> Result<()> where D: ApplicationData {
     builder.set_operation_id(u32::from(msg.sequence_number()));
     builder.set_session_id(u32::from(msg.session_id()));
 
@@ -161,7 +161,7 @@ pub fn serialize_request<D>(mut builder: service_messages_capnp::request::Builde
 }
 
 pub fn deserialize_request<D>(reader: service_messages_capnp::request::Reader) -> Result<RequestMessage<D::Request>>
-    where D: SharedData {
+    where D: ApplicationData {
     let seq_no = SeqNo::from(reader.get_operation_id());
     let session = SeqNo::from(reader.get_session_id());
 
@@ -170,7 +170,7 @@ pub fn deserialize_request<D>(reader: service_messages_capnp::request::Reader) -
     Ok(RequestMessage::new(session, seq_no, operation))
 }
 
-pub fn serialize_reply<D>(mut builder: service_messages_capnp::reply::Builder, msg: &ReplyMessage<D::Reply>) -> Result<()> where D: SharedData {
+pub fn serialize_reply<D>(mut builder: service_messages_capnp::reply::Builder, msg: &ReplyMessage<D::Reply>) -> Result<()> where D: ApplicationData {
     builder.set_operation_id(u32::from(msg.sequence_number()));
     builder.set_session_id(u32::from(msg.session_id()));
 
@@ -184,7 +184,7 @@ pub fn serialize_reply<D>(mut builder: service_messages_capnp::reply::Builder, m
 }
 
 pub fn deserialize_reply<D>(reader: service_messages_capnp::reply::Reader) -> Result<ReplyMessage<D::Reply>>
-    where D: SharedData {
+    where D: ApplicationData {
     let seq_no = SeqNo::from(reader.get_operation_id());
     let session = SeqNo::from(reader.get_session_id());
 

@@ -1,8 +1,8 @@
 use atlas_common::channel::ChannelSyncTx;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
-use crate::app::{Reply, Request, Service, State, UnorderedBatch, UpdateBatch};
-use crate::serialize::SharedData;
+use crate::app::{Reply, Request, UnorderedBatch, UpdateBatch};
+use crate::serialize::ApplicationData;
 use std::time::Instant;
 
 pub mod serialize;
@@ -29,11 +29,11 @@ pub enum ExecutionRequest<O> {
 }
 
 /// Represents a handle to the client request executor.
-pub struct ExecutorHandle<D: SharedData> {
+pub struct ExecutorHandle<D: ApplicationData> {
     e_tx: ChannelSyncTx<ExecutionRequest<D::Request>>,
 }
 
-impl<D: SharedData> ExecutorHandle<D>
+impl<D: ApplicationData> ExecutorHandle<D>
 {
 
     pub fn new(tx: ChannelSyncTx<ExecutionRequest<D::Request>>) -> Self {
@@ -83,7 +83,7 @@ impl<D: SharedData> ExecutorHandle<D>
     }
 }
 
-impl<D: SharedData> Clone for ExecutorHandle<D> {
+impl<D: ApplicationData> Clone for ExecutorHandle<D> {
     fn clone(&self) -> Self {
         let e_tx = self.e_tx.clone();
         Self { e_tx }

@@ -3,7 +3,7 @@ pub mod monolithic_state;
 pub mod divisible_state;
 
 use std::sync::Arc;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -17,7 +17,7 @@ use crate::timeouts::{RqTimeout, Timeouts};
 use serde::{Serialize, Deserialize};
 use atlas_common::crypto::hash::Digest;
 use atlas_execution::ExecutorHandle;
-use crate::persistent_log::{StatefulOrderingProtocolLog, StateTransferProtocolLog};
+use crate::persistent_log::{StatefulOrderingProtocolLog};
 use crate::request_pre_processing::BatchOutput;
 
 
@@ -104,9 +104,9 @@ pub trait StateTransferProtocol<S, NT, PL> {
     /// Request the latest state from the rest of replicas
     fn request_latest_state<D, OP, LP, V>(&mut self, view: V) -> Result<()>
         where
-            D: SharedData + 'static,
-            OP: OrderingProtocolMessage,
-            LP: LogTransferMessage,
+            D: ApplicationData + 'static,
+            OP: OrderingProtocolMessage + 'static,
+            LP: LogTransferMessage + 'static,
             NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
             V: NetworkView;
 
@@ -115,9 +115,9 @@ pub trait StateTransferProtocol<S, NT, PL> {
                                             view: V,
                                             message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
                                             -> Result<()>
-        where D: SharedData + 'static,
-              OP: OrderingProtocolMessage,
-              LP: LogTransferMessage,
+        where D: ApplicationData + 'static,
+              OP: OrderingProtocolMessage + 'static,
+              LP: LogTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
               V: NetworkView;
 
@@ -128,9 +128,9 @@ pub trait StateTransferProtocol<S, NT, PL> {
                                      view: V,
                                      message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
                                      -> Result<STResult>
-        where D: SharedData + 'static,
-              OP: OrderingProtocolMessage,
-              LP: LogTransferMessage,
+        where D: ApplicationData + 'static,
+              OP: OrderingProtocolMessage + 'static,
+              LP: LogTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
               V: NetworkView;
 
@@ -140,9 +140,9 @@ pub trait StateTransferProtocol<S, NT, PL> {
     fn handle_app_state_requested<D, OP, LP, V>(&mut self,
                                                 view: V,
                                                 seq: SeqNo) -> Result<ExecutionResult>
-        where D: SharedData + 'static,
-              OP: OrderingProtocolMessage,
-              LP: LogTransferMessage,
+        where D: ApplicationData + 'static,
+              OP: OrderingProtocolMessage + 'static,
+              LP: LogTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
               V: NetworkView;
 
@@ -150,9 +150,9 @@ pub trait StateTransferProtocol<S, NT, PL> {
     fn handle_timeout<D, OP, LP, V>(&mut self,
                                     view: V,
                                     timeout: Vec<RqTimeout>) -> Result<STTimeoutResult>
-        where D: SharedData + 'static,
-              OP: OrderingProtocolMessage,
-              LP: LogTransferMessage,
+        where D: ApplicationData + 'static,
+              OP: OrderingProtocolMessage + 'static,
+              LP: LogTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
               V: NetworkView;
 }

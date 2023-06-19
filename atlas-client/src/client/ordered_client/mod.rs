@@ -1,14 +1,14 @@
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::{Node};
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_core::messages::{RequestMessage, SystemMessage};
 use atlas_core::serialize::ClientMessage;
 use super::{ClientType, Client};
 
 pub struct Ordered;
 
-impl<D, NT> ClientType<D, NT> for Ordered where D: SharedData + 'static {
+impl<D, NT> ClientType<D, NT> for Ordered where D: ApplicationData + 'static {
     fn init_request(
         session_id: SeqNo,
         operation_id: SeqNo,

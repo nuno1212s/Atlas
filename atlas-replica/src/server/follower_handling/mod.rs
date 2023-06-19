@@ -7,7 +7,7 @@ use atlas_common::node_id::NodeId;
 use atlas_communication::message::{NetworkMessageKind, StoredMessage, System};
 use atlas_communication::{Node};
 use atlas_execution::app::{Request, Service};
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_core::followers::{FollowerChannelMsg, FollowerEvent, FollowerHandle};
 use atlas_core::messages::{Protocol, SystemMessage};
 use atlas_core::serialize::{OrderingProtocolMessage, ServiceMsg, StateTransferMessage, NetworkView};
@@ -32,7 +32,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     /// Starts the follower handling thread and returns a cloneable handle that
     /// can be used to deliver messages to it.
     pub fn init_follower_handling<D, ST>(id: NodeId, node: &Arc<NT>) -> FollowerHandle<OP>
-        where D: SharedData + 'static,
+        where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP, ST>>  {
         let (tx, rx) = channel::new_bounded_sync(1024);
@@ -49,7 +49,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
         FollowerHandle::new(tx)
     }
 
-    fn start_thread<D, ST>(self) where D: SharedData + 'static,
+    fn start_thread<D, ST>(self) where D: ApplicationData + 'static,
                                        ST: StateTransferMessage + 'static,
                                        NT: Node<ServiceMsg<D, OP, ST>> {
         std::thread::Builder::new()
@@ -64,7 +64,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     }
 
     fn run<D, ST>(mut self)
-        where D: SharedData + 'static,
+        where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP, ST>> {
         loop {
@@ -136,7 +136,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
         &mut self,
         view: &OP::ViewInfo,
         message: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
-    ) where D: SharedData + 'static,
+    ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
             NT: Node<ServiceMsg<D, OP, ST>> {
         if view.primary() == self.own_id {
@@ -164,7 +164,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     fn handle_prepare_msg<D, ST>(
         &mut self,
         prepare: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
-    ) where D: SharedData + 'static,
+    ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
             NT: Node<ServiceMsg<D, OP, ST>> {
         if prepare.header().from() != self.own_id {
@@ -190,7 +190,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     fn handle_commit_msg<D, ST>(
         &mut self,
         commit: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
-    ) where D: SharedData + 'static,
+    ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
             NT: Node<ServiceMsg<D, OP, ST>> {
         if commit.header().from() != self.own_id {
@@ -209,7 +209,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
 
     ///
     fn handle_sync_msg<D, ST>(&mut self, msg: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>)
-        where D: SharedData + 'static,
+        where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP, ST>> {
         let header = msg.header().clone();

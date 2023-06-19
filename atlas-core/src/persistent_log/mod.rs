@@ -7,12 +7,13 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 use crate::ordering_protocol::{OrderingProtocol, ProtocolConsensusDecision, ProtocolMessage, SerProof, SerProofMetadata, View};
 use crate::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
-use crate::state_transfer::{Checkpoint, DecLog, StatefulOrderProtocol, StateTransferProtocol};
+use crate::state_transfer::{Checkpoint, StateTransferProtocol};
+use crate::state_transfer::log_transfer::DecLog;
 
 
 ///How should the data be written and response delivered?
@@ -116,14 +117,4 @@ pub trait DivisibleStateLog<S> where S: DivisibleState {
     
     fn delete_part(&self, write_mode: WriteMode, part: S::StateDescriptor) -> Result<()>;
     
-}
-
-pub trait StateTransferProtocolLog<OPM, SOPM, D>: StatefulOrderingProtocolLog<OPM, SOPM>
-    where OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, D: SharedData {
-    /// Write a checkpoint to the persistent log
-    fn write_checkpoint(
-        &self,
-        write_mode: WriteMode,
-        checkpoint: Arc<ReadOnly<Checkpoint<D::State>>>,
-    ) -> Result<()>;
 }

@@ -18,7 +18,7 @@ use atlas_communication::message::{NetworkMessageKind};
 use atlas_communication::metric::REPLICA_RQ_PASSING_TIME_ID;
 use atlas_execution::app::{BatchReplies, Reply, Request, Service, State, UnorderedBatch, UpdateBatch};
 use atlas_execution::{ExecutionRequest, ExecutorHandle};
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_core::messages::{Message, ReplyMessage, SystemMessage};
 use atlas_core::ordering_protocol::OrderingProtocol;
 use atlas_core::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
@@ -34,7 +34,7 @@ pub trait ExecutorReplier: Send {
         node: Arc<NT>,
         seq: Option<SeqNo>,
         batch: BatchReplies<D::Reply>,
-    ) where D: SharedData + 'static,
+    ) where D: ApplicationData + 'static,
             OP: OrderingProtocolMessage + 'static,
             ST: StateTransferMessage + 'static,
             LT: LogTransferMessage + 'static,
@@ -48,7 +48,7 @@ impl ExecutorReplier for FollowerReplier {
         node: Arc<NT>,
         seq: Option<SeqNo>,
         batch: BatchReplies<D::Reply>,
-    ) where D: SharedData + 'static,
+    ) where D: ApplicationData + 'static,
             OP: OrderingProtocolMessage + 'static,
             ST: StateTransferMessage + 'static,
             LT: LogTransferMessage + 'static,
@@ -69,7 +69,7 @@ impl ExecutorReplier for ReplicaReplier {
         mut send_node: Arc<NT>,
         _seq: Option<SeqNo>,
         batch: BatchReplies<D::Reply>,
-    ) where D: SharedData + 'static,
+    ) where D: ApplicationData + 'static,
             OP: OrderingProtocolMessage + 'static,
             ST: StateTransferMessage + 'static,
             LT: LogTransferMessage + 'static,

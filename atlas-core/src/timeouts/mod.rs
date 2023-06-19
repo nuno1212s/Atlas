@@ -10,7 +10,7 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use crate::messages::{ClientRqInfo, Message};
 use crate::request_pre_processing::work_dividers::WDRoundRobin;
 use crate::request_pre_processing::WorkPartitioner;
@@ -93,9 +93,9 @@ pub struct Timeouts {
 impl Timeouts {
     ///Initialize the timeouts thread and return a handle to it
     /// This handle can then be used everywhere timeouts are needed.
-    pub fn new<D: SharedData + 'static>(node_id: NodeId, iteration_delay: Duration,
-                                        default_timeout: Duration,
-                                        loopback_channel: ChannelSyncTx<Message<D>>) -> Self {
+    pub fn new<D: ApplicationData + 'static>(node_id: NodeId, iteration_delay: Duration,
+                                             default_timeout: Duration,
+                                             loopback_channel: ChannelSyncTx<Message>) -> Self {
         launch_orchestrator_thread::<WDRoundRobin, D>(2, node_id, default_timeout, loopback_channel)
     }
 
@@ -203,7 +203,7 @@ impl<WP, D> TimeoutOrchestrator<WP, D> {
         }
     }
 
-    fn run(self) where WP: WorkPartitioner<D::Request>, D: SharedData + 'static {
+    fn run(self) where WP: WorkPartitioner<D::Request>, D: ApplicationData + 'static {
         loop {
             let message = match self.work_rx.recv() {
                 Ok(message) => { message }
@@ -238,7 +238,7 @@ impl<WP, D> TimeoutOrchestrator<WP, D> {
         }
     }
 
-    fn handle_timeout_request(&self, request: RqTimeoutMessage) where WP: WorkPartitioner<D::Request>, D: SharedData + 'static {
+    fn handle_timeout_request(&self, request: RqTimeoutMessage) where WP: WorkPartitioner<D::Request>, D: ApplicationData + 'static {
         let RqTimeoutMessage {
             timeout, notifications_needed, timeout_info
         } = request;
@@ -272,7 +272,7 @@ impl<WP, D> TimeoutOrchestrator<WP, D> {
         }
     }
 
-    fn handle_messages_received(&self, messages: ReceivedRequest) where WP: WorkPartitioner<D::Request>, D: SharedData + 'static {
+    fn handle_messages_received(&self, messages: ReceivedRequest) where WP: WorkPartitioner<D::Request>, D: ApplicationData + 'static {
         match messages {
             ReceivedRequest::PrePrepareRequestReceived(sender, messages) => {
                 let mut separated_vecs: Vec<Vec<ClientRqInfo>> = self.init_worker_separated_vec(|| Vec::with_capacity(messages.len()));
@@ -299,7 +299,7 @@ impl<WP, D> TimeoutOrchestrator<WP, D> {
     }
 
     fn handle_clear_client_timeouts(&self, clear_timeouts: Option<Vec<ClientRqInfo>>)
-        where WP: WorkPartitioner<D::Request>, D: SharedData + 'static {
+        where WP: WorkPartitioner<D::Request>, D: ApplicationData + 'static {
         let mut separated_vecs = if clear_timeouts.is_some() {
             let vec_length = clear_timeouts.as_ref().map(|t| t.len()).unwrap();
 
@@ -379,8 +379,8 @@ impl TimeoutPhase {
     }
 }
 
-fn launch_orchestrator_thread<WP, D>(worker_count: u32, node_id: NodeId, timeout_dur: Duration, loopback: ChannelSyncTx<Message<D>>) -> Timeouts
-    where D: SharedData + 'static,
+fn launch_orchestrator_thread<WP, D>(worker_count: u32, node_id: NodeId, timeout_dur: Duration, loopback: ChannelSyncTx<Message>) -> Timeouts
+    where D: ApplicationData + 'static,
           WP: WorkPartitioner<D::Request> + 'static {
     let (tx, rx) = channel::new_bounded_sync(CHANNEL_SIZE);
 

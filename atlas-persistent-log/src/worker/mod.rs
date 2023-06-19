@@ -10,11 +10,12 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::ordering_protocol::{ProtocolMessage, SerProof, SerProofMetadata, View};
-use atlas_core::state_transfer::{Checkpoint, DecLog};
-use atlas_execution::serialize::SharedData;
+use atlas_core::state_transfer::{Checkpoint};
+use atlas_execution::serialize::ApplicationData;
 use crate::{CallbackType, ChannelMsg, InstallState, PWMessage, ResponseMessage, serialize};
 use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use atlas_core::state_transfer::log_transfer::DecLog;
 
 
 ///Latest checkpoint made by the execution
@@ -35,19 +36,19 @@ pub(super) const COLUMN_FAMILY_PROOFS: &str = "proof_metadata";
 /// A handle for all of the persistent workers.
 /// Handles task distribution and load balancing across the
 /// workers
-pub struct PersistentLogWorkerHandle<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
+pub struct PersistentLogWorkerHandle<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
     round_robin_counter: AtomicUsize,
     tx: Vec<PersistentLogWriteStub<D, OPM, SOPM>>,
 }
 
 ///A stub that is only useful for writing to the persistent log
 #[derive(Clone)]
-pub struct PersistentLogWriteStub<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
+pub struct PersistentLogWriteStub<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
     pub(crate) tx: ChannelSyncTx<ChannelMsg<D, OPM, SOPM>>,
 }
 
 impl<D, OPM, SOPM> PersistentLogWorkerHandle<D, OPM, SOPM>
-    where D: SharedData + 'static,
+    where D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static {
     pub fn new(tx: Vec<PersistentLogWriteStub<D, OPM, SOPM>>) -> Self {
@@ -57,7 +58,7 @@ impl<D, OPM, SOPM> PersistentLogWorkerHandle<D, OPM, SOPM>
 
 
 ///A worker for the persistent logging
-pub struct PersistentLogWorker<D, OPM, SOPM, POP, PSP> where D: SharedData + 'static,
+pub struct PersistentLogWorker<D, OPM, SOPM, POP, PSP> where D: ApplicationData + 'static,
                                                              OPM: OrderingProtocolMessage + 'static,
                                                              SOPM: StatefulOrderProtocolMessage + 'static,
                                                              POP: PersistableOrderProtocol<OPM, SOPM> + 'static,
@@ -72,7 +73,7 @@ pub struct PersistentLogWorker<D, OPM, SOPM, POP, PSP> where D: SharedData + 'st
 }
 
 
-impl<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> PersistentLogWorkerHandle<D, OPM, SOPM> {
+impl<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> PersistentLogWorkerHandle<D, OPM, SOPM> {
     /// Employ a simple round robin load distribution
     fn next_worker(&self) -> &PersistentLogWriteStub<D, OPM, SOPM> {
         let counter = self.round_robin_counter.fetch_add(1, Ordering::Relaxed);
@@ -135,7 +136,7 @@ impl<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMes
 
 
 impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
-    where D: SharedData + 'static,
+    where D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           PS: PersistableOrderProtocol<OPM, SOPM> + 'static,
@@ -334,7 +335,7 @@ fn read_latest_view_seq<OPM: OrderingProtocolMessage>(db: &KVDB) -> Result<Optio
 
 
 /// Writes a given state to the persistent log
-pub(super) fn write_state<D: SharedData,
+pub(super) fn write_state<D: ApplicationData,
     OPM: OrderingProtocolMessage,
     SOPM: StatefulOrderProtocolMessage,
     PS: PersistableOrderProtocol<OPM, SOPM>>(
@@ -363,7 +364,7 @@ pub(super) fn write_latest_seq_no(db: &KVDB, seq_no: SeqNo) -> Result<()> {
     db.set(COLUMN_FAMILY_OTHER, LATEST_SEQ, &f_seq_no[..])
 }
 
-pub(super) fn write_checkpoint<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, PS: PersistableOrderProtocol<OPM, SOPM>>(db: &KVDB, checkpoint: Arc<ReadOnly<Checkpoint<D::State>>>) -> Result<()> {
+pub(super) fn write_checkpoint<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, PS: PersistableOrderProtocol<OPM, SOPM>>(db: &KVDB, checkpoint: Arc<ReadOnly<Checkpoint<D::State>>>) -> Result<()> {
     let mut state = Vec::new();
 
     D::serialize_state(&mut state, checkpoint.state())?;
@@ -482,7 +483,7 @@ fn delete_all_proof_metadata_for_seq(db: &KVDB, seq: SeqNo) -> Result<()> {
 }
 
 
-impl<D: SharedData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> Deref for PersistentLogWriteStub<D, OPM, SOPM> {
+impl<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> Deref for PersistentLogWriteStub<D, OPM, SOPM> {
     type Target = ChannelSyncTx<ChannelMsg<D, OPM, SOPM>>;
 
     fn deref(&self) -> &Self::Target {

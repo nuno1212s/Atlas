@@ -5,7 +5,7 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_communication::Node;
 use atlas_execution::ExecutorHandle;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use crate::persistent_log::MonolithicStateLog;
 use crate::serialize::{LogTransferMessage, NetworkView, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
 use crate::state_transfer::{Checkpoint, StateTransferProtocol};
@@ -29,9 +29,9 @@ pub trait MonolithicStateTransfer<S, NT, PL>: StateTransferProtocol<S, NT, PL>
     fn handle_state_received_from_app<D, OP, LP, V>(&mut self,
                                                     view: V,
                                                     state: Arc<ReadOnly<Checkpoint<S>>>) -> Result<()>
-        where D: SharedData + 'static,
-              OP: OrderingProtocolMessage,
-              LP: LogTransferMessage,
+        where D: ApplicationData + 'static,
+              OP: OrderingProtocolMessage + 'static,
+              LP: LogTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
               V: NetworkView;
 }

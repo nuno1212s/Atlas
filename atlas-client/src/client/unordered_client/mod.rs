@@ -7,7 +7,7 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::{Node, NodeConnections};
 use atlas_communication::tcpip::TlsNodeConnector;
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_core::messages::{RequestMessage, SystemMessage};
 use atlas_core::serialize::{ClientMessage, ClientServiceMsg};
 
@@ -48,7 +48,7 @@ impl FollowerData {
 
 impl<D, NT> Client<D, NT>
     where
-        D: SharedData + 'static,
+        D: ApplicationData + 'static,
 {
     ///Connect to a follower with a given node id
     ///
@@ -99,7 +99,7 @@ pub struct Unordered;
 
 impl<D, NT> ClientType<D, NT> for Unordered
     where
-        D: SharedData + 'static,
+        D: ApplicationData + 'static,
 {
     fn init_request(
         session_id: SeqNo,

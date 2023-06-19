@@ -21,7 +21,7 @@ pub struct DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'static, A
     application: A,
     state: S,
 
-    work_rx: ChannelSyncRx<ExecutionRequest<Request<A>>>,
+    work_rx: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
     state_rx: ChannelSyncRx<InstallStateMessage<S>>,
     checkpoint_tx: ChannelSyncTx<AppStateMessage<S>>,
 
@@ -32,7 +32,7 @@ pub struct DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'static, A
 }
 
 impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'static, A: Application<S> + 'static {
-    pub fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A>>>) {
+    pub fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>) {
         let (tx, rx) = channel::new_bounded_sync(EXECUTING_BUFFER);
 
         (ExecutorHandle::new(tx), rx)
@@ -40,8 +40,8 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
 
     pub fn init<OP, ST, LT, T>(
         reply_worker: ReplyHandle<A>,
-        handle: ChannelSyncRx<ExecutionRequest<Request<S>>>,
-        initial_state: Option<(S, Vec<Request<A>>)>,
+        handle: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
+        initial_state: Option<(S, Vec<Request<A, S>>)>,
         mut service: A,
         send_node: Arc<NT>)
         -> Result<(ChannelSyncTx<InstallStateMessage<S>>, ChannelSyncRx<AppStateMessage<S>>)>
@@ -158,7 +158,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
         self.checkpoint_tx.send(AppStateMessage::new(seq, current_state.clone(), parts)).expect("Failed to send checkpoint");
     }
 
-    fn execution_finished<OP, ST, LT, T>(&self, seq: Option<SeqNo>, batch: BatchReplies<Reply<A>>)
+    fn execution_finished<OP, ST, LT, T>(&self, seq: Option<SeqNo>, batch: BatchReplies<Reply<A, S>>)
         where OP: OrderingProtocolMessage + 'static,
               ST: StateTransferMessage + 'static,
               LT: LogTransferMessage + 'static,

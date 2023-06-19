@@ -5,7 +5,7 @@ use std::sync::Arc;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::error::*;
 use atlas_communication::message::{Header, NetworkMessage, StoredMessage};
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use crate::serialize::{OrderingProtocolMessage, ServiceMsg};
 
 #[cfg(feature = "serialize_serde")]
@@ -20,30 +20,18 @@ use crate::timeouts::{TimedOut, Timeout};
 /// The `Message` type encompasses all the messages traded between different
 /// asynchronous tasks in the system.
 ///
-pub enum Message<D> where D: SharedData {
-    /// Same as `Message::ExecutionFinished`, but includes a snapshot of
-    /// the application state.
-    ///
-    /// This is useful for local checkpoints.
-    ExecutionFinishedWithAppstate((SeqNo, D::State)),
-    DigestedAppState(Arc<ReadOnly<Checkpoint<D::State>>>),
+pub enum Message {
     /// We received a timeout from the timeouts layer.
     Timeout(TimedOut),
     /// Timeouts that have already been processed by the request pre processing layer.
     ProcessedTimeout(TimedOut, TimedOut),
 }
 
-impl<D> Debug for Message<D> where D: SharedData {
+impl Debug for Message  {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Message::ExecutionFinishedWithAppstate(_) => {
-                write!(f, "Execution finished")
-            }
             Message::Timeout(_) => {
                 write!(f, "timeout")
-            }
-            Message::DigestedAppState(_) => {
-                write!(f, "DigestedAppState")
             }
             Message::ProcessedTimeout(_, _) => {
                 write!(f, "Digested Timeouts")
@@ -52,32 +40,8 @@ impl<D> Debug for Message<D> where D: SharedData {
     }
 }
 
-impl<D: SharedData> Message<D> {
-    /// Returns the `Header` of this message, if it is
-    /// a `SystemMessage`.
-    pub fn header(&self) -> Result<&Header> {
-        match self {
-            Message::ExecutionFinishedWithAppstate(_) =>
-                Err("Expected System found ExecutionFinishedWithAppstate")
-                    .wrapped(ErrorKind::CommunicationMessage),
-            Message::Timeout(_) =>
-                Err("Expected System found Timeout")
-                    .wrapped(ErrorKind::CommunicationMessage),
-            Message::DigestedAppState(_) => {
-                Err("Expected System found DigestedAppState")
-                    .wrapped(ErrorKind::CommunicationMessage)
-            }
-            Message::ProcessedTimeout(_, _) => {
-                Err("Expected System found ProcessedTimeout")
-                    .wrapped(ErrorKind::CommunicationMessage)
-            }
-        }
-    }
-}
-
-
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum SystemMessage<D: SharedData, P, ST, LT> {
+pub enum SystemMessage<D: ApplicationData, P, ST, LT> {
     ///An ordered request
     OrderedRequest(RequestMessage<D::Request>),
     ///An unordered request
@@ -98,7 +62,7 @@ pub enum SystemMessage<D: SharedData, P, ST, LT> {
     LogTransferMessage(LogTransfer<LT>)
 }
 
-impl<D, P, ST, LT> SystemMessage<D, P, ST, LT> where D: SharedData {
+impl<D, P, ST, LT> SystemMessage<D, P, ST, LT> where D: ApplicationData {
     pub fn from_protocol_message(msg: P) -> Self {
         SystemMessage::ProtocolMessage(Protocol::new(msg))
     }
@@ -106,7 +70,7 @@ impl<D, P, ST, LT> SystemMessage<D, P, ST, LT> where D: SharedData {
     pub fn from_state_transfer_message(msg: ST) -> Self {
         SystemMessage::StateTransferMessage(StateTransfer::new(msg))
     }
-    
+
     pub fn from_log_transfer_message(msg: LT) -> Self {
         SystemMessage::LogTransferMessage(LogTransfer::new(msg))
     }
@@ -136,7 +100,7 @@ impl<D, P, ST, LT> SystemMessage<D, P, ST, LT> where D: SharedData {
     }
 }
 
-impl<D, P, ST, LT> Clone for SystemMessage<D, P, ST, LT> where D: SharedData, P: Clone, ST: Clone, LT: Clone {
+impl<D, P, ST, LT> Clone for SystemMessage<D, P, ST, LT> where D: ApplicationData, P: Clone, ST: Clone, LT: Clone {
     fn clone(&self) -> Self {
         match self {
             SystemMessage::OrderedRequest(req) => {
@@ -170,7 +134,7 @@ impl<D, P, ST, LT> Clone for SystemMessage<D, P, ST, LT> where D: SharedData, P:
     }
 }
 
-impl<D, P, ST, LT> Debug for SystemMessage<D, P, ST, LT> where D: SharedData, P: Clone, ST: Clone, LT: Clone {
+impl<D, P, ST, LT> Debug for SystemMessage<D, P, ST, LT> where D: ApplicationData, P: Clone, ST: Clone, LT: Clone {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             SystemMessage::OrderedRequest(_) => {
