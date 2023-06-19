@@ -1,6 +1,5 @@
 //! Contains the server side core protocol logic of `febft`.
 
-use std::os::macos::raw::stat;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use futures_timer::Delay;
@@ -16,9 +15,8 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::{Node, NodeConnections, NodeIncomingRqHandler};
 use atlas_communication::message::StoredMessage;
-use atlas_execution::app::{Application, Request, Service, State};
+use atlas_execution::app::{Application, Request};
 use atlas_execution::ExecutorHandle;
-use atlas_execution::serialize::{ApplicationData, digest_state, ApplicationData};
 use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
 use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
@@ -31,10 +29,11 @@ use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ServiceMs
 use atlas_core::state_transfer::{Checkpoint, StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::state_transfer::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult, StatefulOrderProtocol};
 use atlas_core::timeouts::{RqTimeout, TimedOut, Timeout, TimeoutKind, Timeouts};
+use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
 use atlas_persistent_log::{NoPersistentLog, PersistentLog};
 use crate::config::ReplicaConfig;
-use crate::executable::{Executor, ReplicaReplier};
+use crate::executable::{ReplicaReplier};
 use crate::metric::{LOG_TRANSFER_PROCESS_TIME_ID, ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_RQ_QUEUE_SIZE_ID, REPLICA_TAKE_FROM_NETWORK_ID, RUN_LATENCY_TIME_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::client_replier::Replier;
@@ -50,7 +49,7 @@ pub mod monolithic_server;
 pub const REPLICA_WAIT_TIME: Duration = Duration::from_millis(1000);
 
 pub type StateTransferDone = Option<SeqNo>;
-pub type LogTransferDone<D: ApplicationData> = Option<(SeqNo, SeqNo, Vec<A::Request>)>;
+pub type LogTransferDone<D: ApplicationData> = Option<(SeqNo, SeqNo, Vec<D::Request>)>;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ReplicaPhase<D> where D: ApplicationData {
@@ -78,8 +77,8 @@ pub struct Replica<D, OP, ST, LT, NT, PL> where D: ApplicationData + 'static,
     // The networking layer for a Node in the network (either Client or Replica)
     node: Arc<NT>,
     // The handle to the execution and timeouts handler
-    execution_rx: ChannelSyncRx<Message<D>>,
-    execution_tx: ChannelSyncTx<Message<D>>,
+    execution_rx: ChannelSyncRx<Message>,
+    execution_tx: ChannelSyncTx<Message>,
     // THe handle for processed timeouts
     processed_timeout: (ChannelSyncTx<(Vec<RqTimeout>, Vec<RqTimeout>)>, ChannelSyncRx<(Vec<RqTimeout>, Vec<RqTimeout>)>),
     persistent_log: PL,
@@ -112,7 +111,7 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
         debug!("{:?} // Initializing timeouts", log_node_id);
 
         let (rq_pre_processor, batch_input) = initialize_request_pre_processor
-            ::<WDRoundRobin, A::AppData, OP::Serialization, ST::Serialization, NT>(4, node.clone());
+            ::<WDRoundRobin, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, NT>(4, node.clone());
 
         let default_timeout = Duration::from_secs(3);
 
@@ -388,7 +387,7 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
         Ok(())
     }
 
-    fn execute_decisions(&mut self, state_transfer: &mut ST, decisions: Vec<ProtocolConsensusDecision<Request<S>>>) -> Result<()> {
+    fn execute_decisions(&mut self, state_transfer: &mut ST, decisions: Vec<ProtocolConsensusDecision<Request<A, S>>>) -> Result<()> {
         for decision in decisions {
             if let Some(decided) = decision.batch_info() {
                 if let Err(err) = self.rq_pre_processor.send(PreProcessorMessage::DecidedBatch(decided.client_requests().clone())) {
@@ -581,28 +580,6 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
                 state_transfer_p.request_latest_state()?;
             }
         }
-
-        Ok(())
-    }
-
-    fn execution_finished_with_appstate(&mut self, seq: SeqNo, appstate: State<S>) -> Result<()> {
-        let return_tx = self.execution_tx.clone();
-
-// Digest the app state before passing it on to the ordering protocols
-        threadpool::execute(move || {
-            let result = atlas_execution::state::monolithic_state::digest_state(appstate);
-
-            match result {
-                Ok(digest) => {
-                    let checkpoint = Checkpoint::new(seq, appstate, digest);
-
-                    return_tx.send(Message::DigestedAppState(checkpoint)).unwrap();
-                }
-                Err(error) => {
-                    error!("Failed to serialize and digest application state: {:?}", error)
-                }
-            }
-        });
 
         Ok(())
     }

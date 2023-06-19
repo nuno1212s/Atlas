@@ -20,7 +20,7 @@ use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessag
 use atlas_core::state_transfer::{Checkpoint};
 use atlas_core::state_transfer::log_transfer::DecLog;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
-use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, read_latest_state, write_checkpoint, write_latest_seq_no, write_latest_view, write_message, write_proof, write_proof_metadata, write_state};
+use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, read_latest_state, write_latest_seq_no, write_latest_view, write_message, write_proof, write_proof_metadata, write_state};
 
 pub mod serialize;
 pub mod backlog;
@@ -141,7 +141,7 @@ pub enum PWMessage<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: State
     Message(Arc<ReadOnly<StoredMessage<ProtocolMessage<OPM>>>>),
 
     //Persist a given state into storage.
-    Checkpoint(Arc<ReadOnly<Checkpoint<D::State>>>),
+    Checkpoint(PhantomData<D>),
 
     //Remove all associated stored messages for this given seq number
     Invalidate(SeqNo),

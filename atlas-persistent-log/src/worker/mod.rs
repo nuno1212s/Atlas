@@ -69,7 +69,7 @@ pub struct PersistentLogWorker<D, OPM, SOPM, POP, PSP> where D: ApplicationData 
 
     db: KVDB,
 
-    phantom: PhantomData<(POP, PSP)>,
+    phantom: PhantomData<(D, POP, PSP)>,
 }
 
 
@@ -121,9 +121,9 @@ impl<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtoc
         Self::translate_error(self.next_worker().send((PWMessage::Message(message), callback)))
     }
 
-    pub(super) fn queue_state(&self, state: Arc<ReadOnly<Checkpoint<D::State>>>, callback: Option<CallbackType>) -> Result<()> {
-        Self::translate_error(self.next_worker().send((PWMessage::Checkpoint(state), callback)))
-    }
+    /*pub(super) fn queue_state(&self, state: Arc<ReadOnly<Checkpoint<D::State>>>, callback: Option<CallbackType>) -> Result<()> {
+        //Self::translate_error(self.next_worker().send((PWMessage::Checkpoint(state), callback)))
+    }*/
 
     pub(super) fn queue_install_state(&self, install_state: InstallState<OPM, SOPM>, callback: Option<CallbackType>) -> Result<()> {
         Self::translate_error(self.next_worker().send((PWMessage::InstallState(install_state), callback)))
@@ -200,11 +200,13 @@ impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
                 ResponseMessage::WroteMessage(seq, msg.header().digest().clone())
             }
             PWMessage::Checkpoint(checkpoint) => {
-                let seq = checkpoint.sequence_number();
+                /*let seq = checkpoint.sequence_number();
 
                 write_checkpoint::<D, OPM, SOPM, PS>(&self.db, checkpoint)?;
 
                 ResponseMessage::Checkpointed(seq)
+                 */
+                ResponseMessage::Checkpointed(SeqNo::ZERO)
             }
             PWMessage::Invalidate(seq) => {
                 invalidate_seq::<OPM, SOPM, PS>(&self.db, seq)?;
@@ -363,7 +365,7 @@ pub(super) fn write_latest_seq_no(db: &KVDB, seq_no: SeqNo) -> Result<()> {
 
     db.set(COLUMN_FAMILY_OTHER, LATEST_SEQ, &f_seq_no[..])
 }
-
+/*
 pub(super) fn write_checkpoint<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, PS: PersistableOrderProtocol<OPM, SOPM>>(db: &KVDB, checkpoint: Arc<ReadOnly<Checkpoint<D::State>>>) -> Result<()> {
     let mut state = Vec::new();
 
@@ -388,7 +390,7 @@ pub(super) fn write_checkpoint<D: ApplicationData, OPM: OrderingProtocolMessage,
 
     Ok(())
 }
-
+*/
 pub(super) fn write_dec_log<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, PS: PersistableOrderProtocol<OPM, SOPM>>(db: &KVDB, dec_log: &DecLog<SOPM>) -> Result<()> {
     write_latest_seq_no(db, dec_log.sequence_number())?;
 

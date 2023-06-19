@@ -16,7 +16,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::{Node};
 use atlas_communication::message::{NetworkMessageKind};
 use atlas_communication::metric::REPLICA_RQ_PASSING_TIME_ID;
-use atlas_execution::app::{BatchReplies, Reply, Request, Service, State, UnorderedBatch, UpdateBatch};
+use atlas_execution::app::{BatchReplies, Reply, Request, UnorderedBatch, UpdateBatch};
 use atlas_execution::{ExecutionRequest, ExecutorHandle};
 use atlas_execution::serialize::ApplicationData;
 use atlas_core::messages::{Message, ReplyMessage, SystemMessage};
