@@ -193,6 +193,7 @@ impl<D: SharedData + 'static> TimeoutWorker<D> {
                 }
             }
             TimeoutKind::Cst(rq) => {}
+            TimeoutKind::LogTransfer(rq) => {}
         }
 
         TimeoutPhase::TimedOut(0, Instant::now())
@@ -368,9 +369,7 @@ impl<D: SharedData + 'static> TimeoutWorker<D> {
                             true
                         };
                     }
-                    TimeoutKind::Cst(_) => {
-                        false
-                    }
+                    _ => false
                 }
             });
         }
@@ -392,6 +391,7 @@ impl<D: SharedData + 'static> TimeoutWorker<D> {
                             true
                         };
                     }
+                    _ => {false}
                 }
             });
         }
@@ -409,9 +409,7 @@ impl<D: SharedData + 'static> TimeoutWorker<D> {
                     TimeoutKind::ClientRequestTimeout(_) => {
                         true
                     }
-                    TimeoutKind::Cst(_) => {
-                        false
-                    }
+                    _ => false
                 }
             }).for_each(|timeout| {
                 timeouts_cleared.push(timeout.info);

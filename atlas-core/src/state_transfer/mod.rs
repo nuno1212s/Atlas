@@ -98,52 +98,61 @@ pub enum STTimeoutResult {
 pub type CstM<M: StateTransferMessage> = <M as StateTransferMessage>::StateTransferMessage;
 
 pub trait StateTransferProtocol<S, NT, PL> {
-    
     /// The type which implements StateTransferMessage, to be implemented by the developer
     type Serialization: StateTransferMessage + 'static;
 
     /// Request the latest state from the rest of replicas
-    fn request_latest_state<D, OP, LP>(&mut self) -> Result<()>
+    fn request_latest_state<D, OP, LP, V>(&mut self, view: V) -> Result<()>
         where
             D: SharedData + 'static,
             OP: OrderingProtocolMessage,
             LP: LogTransferMessage,
-            NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
+            NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+            V: NetworkView;
 
     /// Handle a state transfer protocol message that was received while executing the ordering protocol
-    fn handle_off_ctx_message<D, OP, LP>(&mut self,
-                                         message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
-                                         -> Result<()>
+    fn handle_off_ctx_message<D, OP, LP, V>(&mut self,
+                                            view: V,
+                                            message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
+                                            -> Result<()>
         where D: SharedData + 'static,
               OP: OrderingProtocolMessage,
               LP: LogTransferMessage,
-              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
+              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+              V: NetworkView;
 
     /// Process a state transfer protocol message, received from other replicas
     /// We also provide a mutable reference to the stateful ordering protocol, so the
     /// state can be installed (if that's the case)
-    fn process_message<D, OP, LP>(&mut self,
-                                  message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
-                                  -> Result<STResult>
+    fn process_message<D, OP, LP, V>(&mut self,
+                                     view: V,
+                                     message: StoredMessage<StateTransfer<CstM<Self::Serialization>>>)
+                                     -> Result<STResult>
         where D: SharedData + 'static,
               OP: OrderingProtocolMessage,
               LP: LogTransferMessage,
-              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
+              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+              V: NetworkView;
 
     /// Handle the replica wanting to request a state from the application
     /// The state transfer protocol then sees if the conditions are met to receive it
     /// (We could still be waiting for a previous checkpoint, for example)
-    fn handle_app_state_requested<D, OP, LP>(&mut self,
-                                             seq: SeqNo) -> Result<ExecutionResult>
+    fn handle_app_state_requested<D, OP, LP, V>(&mut self,
+                                                view: V,
+                                                seq: SeqNo) -> Result<ExecutionResult>
         where D: SharedData + 'static,
               OP: OrderingProtocolMessage,
               LP: LogTransferMessage,
-              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
+              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+              V: NetworkView;
 
     /// Handle a timeout being received from the timeout layer
-    fn handle_timeout<D, OP, LP>(&mut self, timeout: Vec<RqTimeout>) -> Result<STTimeoutResult>
+    fn handle_timeout<D, OP, LP, V>(&mut self,
+                                    view: V,
+                                    timeout: Vec<RqTimeout>) -> Result<STTimeoutResult>
         where D: SharedData + 'static,
               OP: OrderingProtocolMessage,
               LP: LogTransferMessage,
-              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>;
+              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+              V: NetworkView;
 }

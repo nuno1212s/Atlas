@@ -1,6 +1,6 @@
 pub mod serialize;
 
-use atlas_common::ordering::SeqNo;
+use atlas_common::ordering::{Orderable, SeqNo};
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
@@ -14,7 +14,7 @@ pub struct LTMessage<V, P, DL> {
 pub enum LogTransferMessageKind<V, P, DL> {
     RequestLogState,
     ReplyLogState(V, Option<(SeqNo, (SeqNo, P))>),
-    RequestLogParts(Vec<SeqNo>),
+    RequestProofs(Vec<SeqNo>),
     ReplyLogParts(V, Vec<(SeqNo, P)>),
     RequestLog,
     ReplyLog(V, DL)
@@ -30,7 +30,17 @@ impl<V, P, DL> LTMessage<V, P, DL> {
     pub fn kind(&self) -> &LogTransferMessageKind<V, P, DL> {
         &self.kind
     }
+    
+    pub fn into_kind(self) -> LogTransferMessageKind<V, P, DL> {
+        self.kind
+    }
 
+}
+
+impl<V, P, DL> Orderable for LTMessage<V, P, DL> {
+    fn sequence_number(&self) -> SeqNo {
+        self.seq
+    }
 }
 
 ///Debug for LogTransferMessage
@@ -43,7 +53,7 @@ impl<V, P, DL> std::fmt::Debug for LTMessage<V, P, DL> {
             LogTransferMessageKind::ReplyLogState(_ ,opt ) => {
                 write!(f, "Reply log state {:?}", opt.as_ref().map(|(seq, (last, _))| (*seq, *last)).unwrap_or((SeqNo::ZERO, SeqNo::ZERO)))
             }
-            LogTransferMessageKind::RequestLogParts(_) => {
+            LogTransferMessageKind::RequestProofs(_) => {
                 write!(f, "Request log parts")
             }
             LogTransferMessageKind::ReplyLogParts(_, _) => {

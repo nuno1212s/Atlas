@@ -15,7 +15,7 @@ pub mod capnp;
 
 
 /// The basic methods needed for a view
-pub trait NetworkView: Orderable {
+pub trait NetworkView: Orderable + Clone {
     fn primary(&self) -> NodeId;
 
     fn quorum(&self) -> usize;
@@ -28,7 +28,6 @@ pub trait NetworkView: Orderable {
 pub trait OrderProtocolLog: Orderable {
 
     // At the moment I only need orderable, but I might need more in the future
-
     fn first_seq(&self) -> Option<SeqNo>;
 
 }

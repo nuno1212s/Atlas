@@ -3,7 +3,7 @@ use std::time::Instant;
 use log::error;
 use atlas_common::error::*;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
-use atlas_common::ordering::SeqNo;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{channel, threadpool};
 use atlas_common::globals::ReadOnly;
 use atlas_communication::Node;
@@ -109,6 +109,7 @@ impl<S, A, OP, ST, LT, NT, PL> MonReplica<S, A, OP, ST, LT, NT, PL>
     fn receive_digested_checkpoints(&mut self) -> Result<()>{
         while let Ok(checkpoint) = self.digested_state.1.try_recv() {
             self.state_transfer_protocol.handle_state_received_from_app(checkpoint)?;
+            self.inner_replica.ordering_protocol.checkpointed(checkpoint.sequence_number())?;
         }
 
         Ok(())
@@ -117,7 +118,7 @@ impl<S, A, OP, ST, LT, NT, PL> MonReplica<S, A, OP, ST, LT, NT, PL>
     fn execution_finished_with_appstate(&mut self, seq: SeqNo, appstate: S) -> Result<()> {
         let return_tx = self.digested_state.0.clone();
 
-// Digest the app state before passing it on to the ordering protocols
+        // Digest the app state before passing it on to the ordering protocols
         threadpool::execute(move || {
             let result = atlas_execution::serialize::digest_state::<S>(&appstate);
 

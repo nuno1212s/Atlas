@@ -14,7 +14,6 @@ pub type Request<S> = <<S as Service>::Data as SharedData>::Request;
 /// Reply type of the `Service`.
 pub type Reply<S> = <<S as Service>::Data as SharedData>::Reply;
 
-
 /// An application for a state machine replication protocol.
 pub trait Application<S> {
     

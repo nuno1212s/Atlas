@@ -106,6 +106,10 @@ impl<D, P, ST, LT> SystemMessage<D, P, ST, LT> where D: SharedData {
     pub fn from_state_transfer_message(msg: ST) -> Self {
         SystemMessage::StateTransferMessage(StateTransfer::new(msg))
     }
+    
+    pub fn from_log_transfer_message(msg: LT) -> Self {
+        SystemMessage::LogTransferMessage(LogTransfer::new(msg))
+    }
 
     pub fn from_fwd_protocol_message(msg: StoredMessage<Protocol<P>>) -> Self {
         SystemMessage::ForwardedProtocolMessage(ForwardedProtocolMessage::new(msg))

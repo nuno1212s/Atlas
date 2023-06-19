@@ -5,7 +5,7 @@ use atlas_communication::message::StoredMessage;
 use atlas_communication::Node;
 use atlas_execution::serialize::SharedData;
 use crate::messages::{LogTransfer, StateTransfer};
-use crate::ordering_protocol::{OrderingProtocol, OrderingProtocolArgs, View};
+use crate::ordering_protocol::{OrderingProtocol, OrderingProtocolArgs, SerProof, View};
 use crate::persistent_log::{StatefulOrderingProtocolLog, StateTransferProtocolLog};
 use crate::serialize::{LogTransferMessage, ServiceMsg, StatefulOrderProtocolMessage, StateTransferMessage};
 use crate::timeouts::{RqTimeout, Timeouts};
@@ -43,6 +43,9 @@ pub trait StatefulOrderProtocol<D: SharedData + 'static, NT, PL>: OrderingProtoc
     /// meaning it can now be garbage collected
     fn checkpointed(&mut self, seq: SeqNo) -> Result<()>
         where PL: StatefulOrderingProtocolLog<Self::Serialization, Self::StateSerialization>;
+
+    /// Get the proof for a given consensus instance
+    fn get_proof(&self, seq: SeqNo) -> Result<Option<SerProof<Self::Serialization>>>;
 }
 
 /// The result of processing a message in the log transfer protocol
@@ -53,6 +56,7 @@ pub enum LTResult<D: SharedData> {
     /// The log transfer protocol has finished and the ordering protocol should now
     /// be proceeded. The requests contained are requests that must be executed by the application
     /// in order to reach the state that corresponds to the decision log
+    /// FirstSeq and LastSeq of the installed log downloaded from other replicas and the requests that should be executed
     LTPFinished(SeqNo, SeqNo, Vec<D::Request>),
 }
 

@@ -159,6 +159,14 @@ impl Timeouts {
         })).expect("Failed to contact timeout thread");
     }
 
+    pub fn timeout_lt_request(&self, timeout: Duration, requests_needed: u32, seq_no: SeqNo) {
+        self.handle.send(TimeoutMessage::TimeoutRequest(RqTimeoutMessage {
+            timeout,
+            notifications_needed: requests_needed,
+            timeout_info: vec![TimeoutKind::LogTransfer(seq_no)],
+        })).expect("Failed to contact timeout thread");
+    }
+
     /// Handle having received a cst request
     pub fn received_cst_request(&self, from: NodeId, seq_no: SeqNo) {
         self.handle.send(TimeoutMessage::MessagesReceived(
@@ -247,6 +255,9 @@ impl<WP, D> TimeoutOrchestrator<WP, D> {
                 TimeoutKind::Cst(_) => {
                     separated_vecs[0].push(timeout);
                 }
+                TimeoutKind::LogTransfer(_) => {
+                    separated_vecs[0].push(timeout);
+                }
             }
         }
 
@@ -326,6 +337,9 @@ impl PartialEq for TimeoutKind {
                 return client_1 == client_2;
             }
             (Self::Cst(seq_no_1), Self::Cst(seq_no_2)) => {
+                return seq_no_1 == seq_no_2;
+            }
+            (Self::LogTransfer(seq_no_1), Self::LogTransfer(seq_no_2)) => {
                 return seq_no_1 == seq_no_2;
             }
             (_, _) => {
