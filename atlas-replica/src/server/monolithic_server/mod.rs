@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 use log::error;
 use atlas_common::error::*;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
@@ -14,8 +15,10 @@ use atlas_core::state_transfer::{Checkpoint, StateTransferProtocol};
 use atlas_execution::serialize::SharedData;
 use atlas_execution::state::monolithic_state::{AppStateMessage, InstallStateMessage};
 use atlas_execution::state::monolithic_state::MonolithicState;
+use atlas_metrics::metrics::metric_duration;
 use crate::config::MonolithicStateReplicaConfig;
 use crate::executable::monolithic_executor::MonolithicExecutor;
+use crate::metric::RUN_LATENCY_TIME_ID;
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::client_replier::Replier;
 use crate::server::Replica;
@@ -80,6 +83,21 @@ impl<S, A, OP, ST, LT, NT, PL> MonReplica<S, A, OP, ST, LT, NT, PL>
         replica.state_transfer_protocol.request_latest_state()?;
 
         Ok(replica)
+    }
+
+    fn run(&mut self) -> Result<()> {
+        let mut last_loop = Instant::now();
+
+        loop {
+            self.receive_checkpoints();
+            self.receive_digested_checkpoints()?;
+
+            self.inner_replica.run(&mut self.state_transfer_protocol)?;
+
+            metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());
+
+            last_loop = Instant::now();
+        }
     }
 
     fn receive_checkpoints(&mut self) {

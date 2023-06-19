@@ -209,189 +209,183 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
     }
 
     pub fn run(&mut self, state_transfer: &mut ST) -> Result<()> {
-        let mut last_loop = Instant::now();
+        let now = Instant::now();
 
-        loop {
-            let now = Instant::now();
+        self.receive_internal(state_transfer)?;
 
-            self.receive_internal(state_transfer)?;
+        metric_duration(REPLICA_INTERNAL_PROCESS_TIME_ID, now.elapsed());
 
-            metric_duration(REPLICA_INTERNAL_PROCESS_TIME_ID, now.elapsed());
+        match &mut self.replica_phase {
+            ReplicaPhase::OrderingProtocol => {
+                let poll_res = self.ordering_protocol.poll();
 
-            match &mut self.replica_phase {
-                ReplicaPhase::OrderingProtocol => {
-                    let poll_res = self.ordering_protocol.poll();
+                trace!("{:?} // Polling ordering protocol with result {:?}", self.node.id(), poll_res);
 
-                    trace!("{:?} // Polling ordering protocol with result {:?}", self.node.id(), poll_res);
-
-                    match poll_res {
-                        OrderProtocolPoll::RePoll => {
-                            //Continue
-                        }
-                        OrderProtocolPoll::ReceiveFromReplicas => {
-                            let start = Instant::now();
-
-                            let network_message = self.node.node_incoming_rq_handling().receive_from_replicas(Some(REPLICA_WAIT_TIME)).unwrap();
-
-                            metric_duration(REPLICA_TAKE_FROM_NETWORK_ID, start.elapsed());
-
-                            let start = Instant::now();
-
-                            if let Some(network_message) = network_message {
-                                let (header, message) = network_message.into_inner();
-
-                                let message = message.into_system();
-
-                                match message {
-                                    SystemMessage::ProtocolMessage(protocol) => {
-                                        let start = Instant::now();
-
-                                        match self.ordering_protocol.process_message(StoredMessage::new(header, protocol))? {
-                                            OrderProtocolExecResult::Success => {
-                                                //Continue execution
-                                            }
-                                            OrderProtocolExecResult::RunCst => {
-                                                self.run_all_state_transfer(state_transfer)?;
-                                            }
-                                            OrderProtocolExecResult::Decided(decisions) => {
-                                                self.execute_decisions(state_transfer, decisions)?;
-                                            }
-                                        }
-                                    }
-                                    SystemMessage::StateTransferMessage(state_transfer_msg) => {
-                                        state_transfer.handle_off_ctx_message(StoredMessage::new(header, state_transfer_msg))?;
-                                    }
-                                    SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
-// Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
-                                        self.rq_pre_processor.send(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
-                                    }
-                                    SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
-                                        match self.ordering_protocol.process_message(fwd_protocol.into_inner())? {
-                                            OrderProtocolExecResult::Success => {
-//Continue execution
-                                            }
-                                            OrderProtocolExecResult::RunCst => {
-                                                self.run_all_state_transfer(state_transfer)?;
-                                            }
-                                            OrderProtocolExecResult::Decided(decisions) => {
-                                                self.execute_decisions(state_transfer, decisions)?;
-                                            }
-                                        }
-                                    }
-                                    SystemMessage::LogTransferMessage(log_transfer) => {
-                                        self.log_transfer_protocol.handle_off_ctx_message(&mut self.ordering_protocol, StoredMessage::new(header, log_transfer)).unwrap();
-                                    }
-                                    _ => {
-                                        error!("{:?} // Received unsupported message {:?}", self.node.id(), message);
-                                    }
-                                }
-                            } else {
-                                // Receive timeouts in the beginning of the next iteration
-                                continue;
-                            }
-
-                            metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
-                            metric_increment(REPLICA_ORDERED_RQS_PROCESSED_ID, Some(1));
-                        }
-                        OrderProtocolPoll::Exec(message) => {
-                            let start = Instant::now();
-
-                            match self.ordering_protocol.process_message(message)? {
-                                OrderProtocolExecResult::Success => {
-// Continue execution
-                                }
-                                OrderProtocolExecResult::RunCst => {
-                                    self.run_all_state_transfer(state_transfer)?;
-                                }
-                                OrderProtocolExecResult::Decided(decided) => {
-                                    self.execute_decisions(state_transfer, decided)?;
-                                }
-                            }
-
-                            metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
-                            metric_increment(REPLICA_ORDERED_RQS_PROCESSED_ID, Some(1));
-                        }
-                        OrderProtocolPoll::RunCst => {
-                            self.run_state_transfer_protocol(state_transfer)?;
-                        }
-                        OrderProtocolPoll::Decided(decisions) => {
-                            for decision in decisions {}
-                        }
+                match poll_res {
+                    OrderProtocolPoll::RePoll => {
+                        //Continue
                     }
-                }
-                ReplicaPhase::StateTransferProtocol { state_transfer: st_transfer_done, log_transfer: log_transfer_done } => {
-                    let message = self.node.node_incoming_rq_handling().receive_from_replicas(Some(REPLICA_WAIT_TIME)).unwrap();
+                    OrderProtocolPoll::ReceiveFromReplicas => {
+                        let start = Instant::now();
 
-                    if let Some(message) = message {
-                        let (header, message) = message.into_inner();
+                        let network_message = self.node.node_incoming_rq_handling().receive_from_replicas(Some(REPLICA_WAIT_TIME)).unwrap();
 
-                        let message = message.into_system();
+                        metric_duration(REPLICA_TAKE_FROM_NETWORK_ID, start.elapsed());
 
-                        match message {
-                            SystemMessage::ProtocolMessage(protocol) => {
-                                self.ordering_protocol.handle_off_ctx_message(StoredMessage::new(header, protocol));
-                            }
-                            SystemMessage::StateTransferMessage(state_transfer_msg) => {
-                                let start = Instant::now();
+                        let start = Instant::now();
 
-                                let result = state_transfer.process_message(StoredMessage::new(header, state_transfer_msg))?;
+                        if let Some(network_message) = network_message {
+                            let (header, message) = network_message.into_inner();
 
-                                match result {
-                                    STResult::StateTransferRunning => {}
-                                    STResult::StateTransferReady => {
-                                        self.executor_handle.poll_state_channel()?;
-                                    }
-                                    STResult::StateTransferFinished(seq_no) => {
-                                        info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", self.node.id());
+                            let message = message.into_system();
 
-                                        self.executor_handle.poll_state_channel()?;
+                            match message {
+                                SystemMessage::ProtocolMessage(protocol) => {
+                                    let start = Instant::now();
 
-                                        *st_transfer_done = Some(seq_no);
-                                    }
-                                    STResult::StateTransferNotNeeded(curr_seq) => {
-                                        *st_transfer_done = Some(curr_seq);
-                                    }
-                                    STResult::RunStateTransfer => {
-                                        self.run_state_transfer_protocol(state_transfer)?;
+                                    match self.ordering_protocol.process_message(StoredMessage::new(header, protocol))? {
+                                        OrderProtocolExecResult::Success => {
+                                            //Continue execution
+                                        }
+                                        OrderProtocolExecResult::RunCst => {
+                                            self.run_all_state_transfer(state_transfer)?;
+                                        }
+                                        OrderProtocolExecResult::Decided(decisions) => {
+                                            self.execute_decisions(state_transfer, decisions)?;
+                                        }
                                     }
                                 }
-
-                                metric_duration(STATE_TRANSFER_PROCESS_TIME_ID, start.elapsed());
-                            }
-                            SystemMessage::LogTransferMessage(log_transfer) => {
-                                let start = Instant::now();
-
-                                let result = self.log_transfer_protocol.process_message(&mut self.ordering_protocol, StoredMessage::new(header, log_transfer))?;
-
-                                match result {
-                                    LTResult::RunLTP => {
-                                        self.run_log_transfer_protocol(state_transfer)?;
-                                    }
-                                    LTResult::Running => {}
-                                    LTResult::NotNeeded => {
-                                        let log = self.ordering_protocol.current_log()?;
-
-                                        *log_transfer_done = Some((log.first_seq().unwrap_or(SeqNo::ZERO), log.sequence_number(), Vec::new()));
-                                    }
-                                    LTResult::LTPFinished(first_seq, last_seq, requests_to_execute) => {
-                                        info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", self.node.id());
-
-                                        *log_transfer_done = Some((first_seq, last_seq, requests_to_execute));
+                                SystemMessage::StateTransferMessage(state_transfer_msg) => {
+                                    state_transfer.handle_off_ctx_message(StoredMessage::new(header, state_transfer_msg))?;
+                                }
+                                SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
+// Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
+                                    self.rq_pre_processor.send(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
+                                }
+                                SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
+                                    match self.ordering_protocol.process_message(fwd_protocol.into_inner())? {
+                                        OrderProtocolExecResult::Success => {
+//Continue execution
+                                        }
+                                        OrderProtocolExecResult::RunCst => {
+                                            self.run_all_state_transfer(state_transfer)?;
+                                        }
+                                        OrderProtocolExecResult::Decided(decisions) => {
+                                            self.execute_decisions(state_transfer, decisions)?;
+                                        }
                                     }
                                 }
-
-                                metric_duration(LOG_TRANSFER_PROCESS_TIME_ID, start.elapsed());
+                                SystemMessage::LogTransferMessage(log_transfer) => {
+                                    self.log_transfer_protocol.handle_off_ctx_message(&mut self.ordering_protocol, StoredMessage::new(header, log_transfer)).unwrap();
+                                }
+                                _ => {
+                                    error!("{:?} // Received unsupported message {:?}", self.node.id(), message);
+                                }
                             }
-                            _ => {}
+                        } else {
+                            // Receive timeouts in the beginning of the next iteration
+                            return Ok(());
                         }
+
+                        metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
+                        metric_increment(REPLICA_ORDERED_RQS_PROCESSED_ID, Some(1));
+                    }
+                    OrderProtocolPoll::Exec(message) => {
+                        let start = Instant::now();
+
+                        match self.ordering_protocol.process_message(message)? {
+                            OrderProtocolExecResult::Success => {
+// Continue execution
+                            }
+                            OrderProtocolExecResult::RunCst => {
+                                self.run_all_state_transfer(state_transfer)?;
+                            }
+                            OrderProtocolExecResult::Decided(decided) => {
+                                self.execute_decisions(state_transfer, decided)?;
+                            }
+                        }
+
+                        metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
+                        metric_increment(REPLICA_ORDERED_RQS_PROCESSED_ID, Some(1));
+                    }
+                    OrderProtocolPoll::RunCst => {
+                        self.run_state_transfer_protocol(state_transfer)?;
+                    }
+                    OrderProtocolPoll::Decided(decisions) => {
+                        for decision in decisions {}
                     }
                 }
             }
+            ReplicaPhase::StateTransferProtocol { state_transfer: st_transfer_done, log_transfer: log_transfer_done } => {
+                let message = self.node.node_incoming_rq_handling().receive_from_replicas(Some(REPLICA_WAIT_TIME)).unwrap();
 
-            metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());
+                if let Some(message) = message {
+                    let (header, message) = message.into_inner();
 
-            last_loop = Instant::now();
+                    let message = message.into_system();
+
+                    match message {
+                        SystemMessage::ProtocolMessage(protocol) => {
+                            self.ordering_protocol.handle_off_ctx_message(StoredMessage::new(header, protocol));
+                        }
+                        SystemMessage::StateTransferMessage(state_transfer_msg) => {
+                            let start = Instant::now();
+
+                            let result = state_transfer.process_message(StoredMessage::new(header, state_transfer_msg))?;
+
+                            match result {
+                                STResult::StateTransferRunning => {}
+                                STResult::StateTransferReady => {
+                                    self.executor_handle.poll_state_channel()?;
+                                }
+                                STResult::StateTransferFinished(seq_no) => {
+                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", self.node.id());
+
+                                    self.executor_handle.poll_state_channel()?;
+
+                                    *st_transfer_done = Some(seq_no);
+                                }
+                                STResult::StateTransferNotNeeded(curr_seq) => {
+                                    *st_transfer_done = Some(curr_seq);
+                                }
+                                STResult::RunStateTransfer => {
+                                    self.run_state_transfer_protocol(state_transfer)?;
+                                }
+                            }
+
+                            metric_duration(STATE_TRANSFER_PROCESS_TIME_ID, start.elapsed());
+                        }
+                        SystemMessage::LogTransferMessage(log_transfer) => {
+                            let start = Instant::now();
+
+                            let result = self.log_transfer_protocol.process_message(&mut self.ordering_protocol, StoredMessage::new(header, log_transfer))?;
+
+                            match result {
+                                LTResult::RunLTP => {
+                                    self.run_log_transfer_protocol(state_transfer)?;
+                                }
+                                LTResult::Running => {}
+                                LTResult::NotNeeded => {
+                                    let log = self.ordering_protocol.current_log()?;
+
+                                    *log_transfer_done = Some((log.first_seq().unwrap_or(SeqNo::ZERO), log.sequence_number(), Vec::new()));
+                                }
+                                LTResult::LTPFinished(first_seq, last_seq, requests_to_execute) => {
+                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", self.node.id());
+
+                                    *log_transfer_done = Some((first_seq, last_seq, requests_to_execute));
+                                }
+                            }
+
+                            metric_duration(LOG_TRANSFER_PROCESS_TIME_ID, start.elapsed());
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
+
+        Ok(())
     }
 
     fn execute_decisions(&mut self, state_transfer: &mut ST, decisions: Vec<ProtocolConsensusDecision<Request<S>>>) -> Result<()> {

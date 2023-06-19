@@ -41,6 +41,8 @@ pub enum TimeoutKind {
     /// for each own node to know to what messages the peers are responding to.
     Cst(SeqNo),
 
+    /// As for LTP messages, they are also not particularly ordered, similarly to the 
+    /// messages sent by the state transfer protocol
     LogTransfer(SeqNo),
 }
 
