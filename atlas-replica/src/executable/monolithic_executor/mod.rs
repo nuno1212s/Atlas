@@ -28,13 +28,14 @@ pub struct MonolithicExecutor<S, A, NT>
     state_rx: ChannelSyncRx<InstallStateMessage<S>>,
     checkpoint_tx: ChannelSyncTx<AppStateMessage<S>>,
 
-    reply_worker: ReplyHandle<A>,
+    reply_worker: ReplyHandle<A::AppData>,
     send_node: Arc<NT>,
 }
 
 impl<S, A, NT> MonolithicExecutor<S, A, NT>
-    where S: MonolithicState + 'static, 
-          A: Application<S> + 'static, NT: 'static {
+    where S: MonolithicState + 'static,
+          A: Application<S> + 'static + Send,
+          NT: 'static {
     pub fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>) {
         let (tx, rx) = channel::new_bounded_sync(EXECUTING_BUFFER);
 
@@ -42,7 +43,7 @@ impl<S, A, NT> MonolithicExecutor<S, A, NT>
     }
 
     pub fn init<OP, ST, LT, T>(
-        reply_worker: ReplyHandle<A>,
+        reply_worker: ReplyHandle<A::AppData>,
         handle: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
         initial_state: Option<(S, Vec<Request<A, S>>)>,
         mut service: A,
@@ -90,7 +91,7 @@ impl<S, A, NT> MonolithicExecutor<S, A, NT>
                         }
                         ExecutionRequest::CatchUp(requests) => {
                             for req in requests {
-                                executor.service.update(&mut executor.state, req);
+                                executor.application.update(&mut executor.state, req);
                             }
                         }
                         ExecutionRequest::Update((batch, instant)) => {
@@ -101,7 +102,7 @@ impl<S, A, NT> MonolithicExecutor<S, A, NT>
                             let start = Instant::now();
 
                             let reply_batch =
-                                executor.service.update_batch(&mut exec.state, batch);
+                                executor.application.update_batch(&mut executor.state, batch);
 
                             metric_duration(EXECUTION_TIME_TAKEN_ID, start.elapsed());
 
@@ -116,7 +117,7 @@ impl<S, A, NT> MonolithicExecutor<S, A, NT>
                             let start = Instant::now();
 
                             let reply_batch =
-                                executor.service.update_batch(&mut exec.state, batch);
+                                executor.application.update_batch(&mut executor.state, batch);
 
                             metric_duration(EXECUTION_TIME_TAKEN_ID, start.elapsed());
 
@@ -131,7 +132,7 @@ impl<S, A, NT> MonolithicExecutor<S, A, NT>
                         }
                         ExecutionRequest::ExecuteUnordered(batch) => {
                             let reply_batch =
-                                executor.service.unordered_batched_execution(&exec.state, batch);
+                                executor.application.unordered_batched_execution(&executor.state, batch);
 
                             executor.execution_finished::<OP, ST, LT, T>(None, reply_batch);
                         }

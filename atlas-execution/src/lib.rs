@@ -41,7 +41,7 @@ impl<D: ApplicationData> ExecutorHandle<D>
     }
 
     /// Sets the current state of the execution layer to the given value.
-    pub fn poll_state_chanel(&self) -> Result<()> {
+    pub fn poll_state_channel(&self) -> Result<()> {
         self.e_tx
             .send(ExecutionRequest::PollStateChannel)
             .simple(ErrorKind::Executable)

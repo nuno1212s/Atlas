@@ -5,43 +5,44 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::node_id::NodeId;
 use atlas_communication::{Node};
 use atlas_communication::message::{NetworkMessageKind, System};
-use atlas_execution::app::{BatchReplies, Reply, Service};
+use atlas_execution::app::{BatchReplies, Reply};
 use atlas_core::messages::{ReplyMessage, SystemMessage};
-use atlas_core::serialize::{OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
+use atlas_core::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
+use atlas_execution::serialize::ApplicationData;
 
 type RepliesType<S> = BatchReplies<S>;
 
 ///Dedicated thread to reply to clients
 /// This is currently not being used (we are currently using the thread pool)
-pub struct Replier<S, NT> where S: Service + 'static {
+pub struct Replier<D, NT> where D: ApplicationData + 'static {
     node_id: NodeId,
-    channel: ChannelSyncRx<RepliesType<Reply<S>>>,
+    channel: ChannelSyncRx<RepliesType<D::Reply>>,
     send_node: Arc<NT>,
 }
 
-pub struct ReplyHandle<S> where S: Service {
-    inner: ChannelSyncTx<RepliesType<Reply<S>>>,
+pub struct ReplyHandle<D> where D: ApplicationData {
+    inner: ChannelSyncTx<RepliesType<D::Reply>>,
 }
 
 const REPLY_CHANNEL_SIZE: usize = 1024;
 
-impl<S> ReplyHandle<S> where S: Service {
-    pub fn new(replier: ChannelSyncTx<RepliesType<Reply<S>>>) -> Self {
+impl<D> ReplyHandle<D> where D: ApplicationData {
+    pub fn new(replier: ChannelSyncTx<RepliesType<D::Reply>>) -> Self {
         Self {
             inner: replier
         }
     }
 }
 
-impl<S> Deref for ReplyHandle<S> where S: Service {
-    type Target = ChannelSyncTx<RepliesType<Reply<S>>>;
+impl<D> Deref for ReplyHandle<D> where D: ApplicationData {
+    type Target = ChannelSyncTx<RepliesType<D::Reply>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<S> Clone for ReplyHandle<S> where S: Service {
+impl<D> Clone for ReplyHandle<D> where D: ApplicationData {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone()
@@ -49,8 +50,8 @@ impl<S> Clone for ReplyHandle<S> where S: Service {
     }
 }
 
-impl<S, NT: 'static> Replier<S, NT> where S: Service + 'static {
-    pub fn new(node_id: NodeId, send_node: Arc<NT>) -> ReplyHandle<S> {
+impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
+    pub fn new(node_id: NodeId, send_node: Arc<NT>) -> ReplyHandle<D> {
         let (ch_tx, ch_rx) = channel::new_bounded_sync(REPLY_CHANNEL_SIZE);
 
         let reply_task = Self {
@@ -66,9 +67,10 @@ impl<S, NT: 'static> Replier<S, NT> where S: Service + 'static {
         handle
     }
 
-    pub fn start<OP, ST>(mut self) where OP: OrderingProtocolMessage + 'static,
-                                         ST: StateTransferMessage + 'static,
-                                         NT: Node<ServiceMsg<S::Data, OP, ST>> {
+    pub fn start<OP, ST, LP>(mut self) where OP: OrderingProtocolMessage + 'static,
+                                             ST: StateTransferMessage + 'static,
+                                             LP: LogTransferMessage + 'static,
+                                             NT: Node<ServiceMsg<D, OP, ST, LP>> {
         std::thread::Builder::new().name(format!("{:?} // Reply thread", self.node_id))
             .spawn(move || {
                 loop {

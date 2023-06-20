@@ -17,7 +17,10 @@ use crate::server::client_replier::ReplyHandle;
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
 
-pub struct DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'static, A: Application<S> + 'static {
+pub struct DivisibleStateExecutor<S, A, NT>
+    where S: DivisibleState + 'static,
+          A: Application<S> + 'static,
+          NT: 'static {
     application: A,
     state: S,
 
@@ -25,13 +28,15 @@ pub struct DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'static, A
     state_rx: ChannelSyncRx<InstallStateMessage<S>>,
     checkpoint_tx: ChannelSyncTx<AppStateMessage<S>>,
 
-    reply_worker: ReplyHandle<A>,
+    reply_worker: ReplyHandle<A::AppData>,
     send_node: Arc<NT>,
 
     last_checkpoint_descriptor: S::StateDescriptor,
 }
 
-impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'static, A: Application<S> + 'static {
+impl<S, A, NT> DivisibleStateExecutor<S, A, NT>
+    where S: DivisibleState + 'static + Send,
+          A: Application<S> + 'static + Send {
     pub fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>) {
         let (tx, rx) = channel::new_bounded_sync(EXECUTING_BUFFER);
 
@@ -39,7 +44,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
     }
 
     pub fn init<OP, ST, LT, T>(
-        reply_worker: ReplyHandle<A>,
+        reply_worker: ReplyHandle<A::AppData>,
         handle: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
         initial_state: Option<(S, Vec<Request<A, S>>)>,
         mut service: A,
@@ -49,7 +54,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
               ST: StateTransferMessage + 'static,
               LT: LogTransferMessage + 'static,
               T: ExecutorReplier + 'static,
-              NT: Node<ServiceMsg<A::AppData, OP, ST, LT>> {
+              NT: Node<ServiceMsg<A::AppData, OP, ST, LT>> + 'static {
         let (state, requests) = if let Some(state) = initial_state {
             state
         } else {
@@ -60,6 +65,8 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
 
         let (checkpoint_tx, checkpoint_rx) = channel::new_bounded_sync(STATE_BUFFER);
 
+        let descriptor = state.get_descriptor().clone();
+
         let mut executor = DivisibleStateExecutor {
             application: service,
             state,
@@ -68,7 +75,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
             checkpoint_tx,
             reply_worker,
             send_node,
-            last_checkpoint_descriptor: state.get_descriptor(),
+            last_checkpoint_descriptor: descriptor,
         };
 
         for request in requests {
@@ -93,7 +100,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
                         }
                         ExecutionRequest::CatchUp(requests) => {
                             for req in requests {
-                                executor.service.update(&mut executor.state, req);
+                                executor.application.update(&mut executor.state, req);
                             }
                         }
                         ExecutionRequest::Update((batch, instant)) => {
@@ -104,7 +111,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
                             let start = Instant::now();
 
                             let reply_batch =
-                                executor.service.update_batch(&mut exec.state, batch);
+                                executor.application.update_batch(&mut executor.state, batch);
 
                             metric_duration(EXECUTION_TIME_TAKEN_ID, start.elapsed());
 
@@ -119,7 +126,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
                             let start = Instant::now();
 
                             let reply_batch =
-                                executor.service.update_batch(&mut exec.state, batch);
+                                executor.application.update_batch(&mut executor.state, batch);
 
                             metric_duration(EXECUTION_TIME_TAKEN_ID, start.elapsed());
 
@@ -134,7 +141,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
                         }
                         ExecutionRequest::ExecuteUnordered(batch) => {
                             let reply_batch =
-                                executor.service.unordered_batched_execution(&exec.state, batch);
+                                executor.application.unordered_batched_execution(&executor.state, batch);
 
                             executor.execution_finished::<OP, ST, LT, T>(None, reply_batch);
                         }
@@ -149,9 +156,9 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
     ///Clones the current state and delivers it to the application
     /// Takes a sequence number, which corresponds to the last executed consensus instance before we performed the checkpoint
     fn deliver_checkpoint_state(&mut self, seq: SeqNo) {
-        let current_state = self.state.prepare_checkpoint().expect("Failed to prepare state checkpoint");
+        let current_state = self.state.prepare_checkpoint().expect("Failed to prepare state checkpoint").clone();
 
-        let diff = self.last_checkpoint_descriptor.compare_descriptors(current_state);
+        let diff = self.last_checkpoint_descriptor.compare_descriptors(&current_state);
 
         let parts = self.state.get_parts(&diff).expect("Failed to get necessary parts");
 
@@ -162,7 +169,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT> where S: DivisibleState + 'stati
         where OP: OrderingProtocolMessage + 'static,
               ST: StateTransferMessage + 'static,
               LT: LogTransferMessage + 'static,
-              NT: Node<ServiceMsg<A::AppData, OP, ST, LT>>,
+              NT: Node<ServiceMsg<A::AppData, OP, ST, LT>> + 'static,
               T: ExecutorReplier + 'static {
         let send_node = self.send_node.clone();
 

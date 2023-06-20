@@ -7,7 +7,7 @@ use atlas_common::error::*;
 use atlas_execution::ExecutorHandle;
 use atlas_persistent_log::{PersistentLog, PersistentLogModeTrait};
 
-pub trait SMRPersistentLog<D, OPM, SOPM>: OrderingProtocolLog<OPM> + StatefulOrderingProtocolLog<OPM, SOPM> + StateTransferProtocolLog<OPM, SOPM, D>
+pub trait SMRPersistentLog<D, OPM, SOPM>: OrderingProtocolLog<OPM> + StatefulOrderingProtocolLog<OPM, SOPM>
     where D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static {

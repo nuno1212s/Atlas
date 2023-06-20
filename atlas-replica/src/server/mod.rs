@@ -1,5 +1,6 @@
 //! Contains the server side core protocol logic of `febft`.
 
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use futures_timer::Delay;
@@ -25,7 +26,7 @@ use atlas_core::ordering_protocol::OrderProtocolPoll;
 use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, WriteMode};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
-use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ServiceMsg};
+use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ServiceMsg, StateTransferMessage};
 use atlas_core::state_transfer::{Checkpoint, StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::state_transfer::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult, StatefulOrderProtocol};
 use atlas_core::timeouts::{RqTimeout, TimedOut, Timeout, TimeoutKind, Timeouts};
@@ -45,13 +46,13 @@ pub mod follower_handling;
 pub mod monolithic_server;
 // pub mod rq_finalizer;
 
-
+const REPLICA_MESSAGE_CHANNEL: usize = 1024;
 pub const REPLICA_WAIT_TIME: Duration = Duration::from_millis(1000);
 
 pub type StateTransferDone = Option<SeqNo>;
 pub type LogTransferDone<D: ApplicationData> = Option<(SeqNo, SeqNo, Vec<D::Request>)>;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) enum ReplicaPhase<D> where D: ApplicationData {
     // The replica is currently executing the ordering protocol
     OrderingProtocol,
@@ -62,11 +63,11 @@ pub(crate) enum ReplicaPhase<D> where D: ApplicationData {
     },
 }
 
-pub struct Replica<D, OP, ST, LT, NT, PL> where D: ApplicationData + 'static,
-                                                OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
-                                                ST: StateTransferProtocol<D, NT, PL> + PersistableStateTransferProtocol + 'static,
-                                                LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
-                                                PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static, {
+pub struct Replica<S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'static,
+                                                   OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
+                                                   LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
+                                                   ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
+                                                   PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static, {
     replica_phase: ReplicaPhase<D>,
     // The ordering protocol, responsible for ordering requests
     ordering_protocol: OP,
@@ -82,15 +83,19 @@ pub struct Replica<D, OP, ST, LT, NT, PL> where D: ApplicationData + 'static,
     // THe handle for processed timeouts
     processed_timeout: (ChannelSyncTx<(Vec<RqTimeout>, Vec<RqTimeout>)>, ChannelSyncRx<(Vec<RqTimeout>, Vec<RqTimeout>)>),
     persistent_log: PL,
+
+    st: PhantomData<(S, ST)>,
 }
 
-impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: Application<S> + 'static,
-                                                                             OP: StatefulOrderProtocol<A::AppData, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send,
-                                                                             ST: StateTransferProtocol<A::AppData, NT, PL> + 'static + PersistableStateTransferProtocol + Send,
-                                                                             LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
-                                                                             NT: Node<ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static,
-                                                                             PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + 'static, {
-    pub async fn bootstrap(cfg: ReplicaConfig<S, A, OP, ST, LT, NT, PL>, executor: ExecutorHandle<A::AppData>) -> Result<Self> {
+impl<S, D, OP, ST, LT, NT, PL> Replica<S, D, OP, ST, LT, NT, PL>
+    where
+        D: ApplicationData + 'static,
+        OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send + 'static,
+        LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
+        ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
+        NT: Node<ServiceMsg<D, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static,
+        PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static, {
+    pub async fn bootstrap(cfg: ReplicaConfig<S, D, OP, ST, LT, NT, PL>, executor: ExecutorHandle<D>) -> Result<Self> {
         let ReplicaConfig {
             id: log_node_id,
             n,
@@ -102,6 +107,7 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
             lt_config,
             pl_config,
             node: node_config,
+            p,
         } = cfg;
 
         debug!("{:?} // Bootstrapping replica, starting with networking", log_node_id);
@@ -110,14 +116,16 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
 
         debug!("{:?} // Initializing timeouts", log_node_id);
 
+        let (exec_tx, exec_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
+
         let (rq_pre_processor, batch_input) = initialize_request_pre_processor
-            ::<WDRoundRobin, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, NT>(4, node.clone());
+            ::<WDRoundRobin, D, OP::Serialization, ST::Serialization, LT::Serialization, NT>(4, node.clone());
 
         let default_timeout = Duration::from_secs(3);
 
         // start timeouts handler
-        let timeouts = Timeouts::new::<A::AppData>(log_node_id.clone(), Duration::from_millis(1),
-                                                   default_timeout, exec_tx.clone());
+        let timeouts = Timeouts::new::<D>(log_node_id.clone(), Duration::from_millis(1),
+                                          default_timeout, exec_tx.clone());
 
         let persistent_log = PL::init_log::<String, NoPersistentLog, OP, ST>(executor.clone(), db_path)?;
 
@@ -135,9 +143,6 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
         };
 
         let log_transfer_protocol = LT::initialize(lt_config, timeouts.clone(), node.clone(), persistent_log.clone())?;
-
-        // Check with the order protocol to see if there were no stored states
-        let state = None;
 
         info!("{:?} // Connecting to other replicas.", log_node_id);
 
@@ -198,6 +203,7 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
             execution_tx: exec_tx,
             processed_timeout: timeout_channel,
             persistent_log,
+            st: Default::default(),
         };
 
         info!("{:?} // Requesting state", log_node_id);
@@ -387,7 +393,7 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
         Ok(())
     }
 
-    fn execute_decisions(&mut self, state_transfer: &mut ST, decisions: Vec<ProtocolConsensusDecision<Request<A, S>>>) -> Result<()> {
+    fn execute_decisions(&mut self, state_transfer: &mut ST, decisions: Vec<ProtocolConsensusDecision<D::Request>>) -> Result<()> {
         for decision in decisions {
             if let Some(decided) = decision.batch_info() {
                 if let Err(err) = self.rq_pre_processor.send(PreProcessorMessage::DecidedBatch(decided.client_requests().clone())) {
@@ -577,7 +583,7 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
             ReplicaPhase::StateTransferProtocol { state_transfer, .. } => {
                 *state_transfer = None;
 
-                state_transfer_p.request_latest_state()?;
+                state_transfer_p.request_latest_state(self.ordering_protocol.view())?;
             }
         }
 
@@ -591,3 +597,13 @@ impl<S, A, OP, ST, LT, NT, PL> Replica<A::AppData, OP, ST, LT, NT, PL> where A: 
 /// and a new log checkpoint is initiated.
 /// TODO: Move this to an env variable as it can be highly dependent on the service implemented on top of it
 pub const CHECKPOINT_PERIOD: u32 = 50000;
+
+impl<D> PartialEq for ReplicaPhase<D> where D: ApplicationData {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ReplicaPhase::OrderingProtocol, ReplicaPhase::OrderingProtocol) => true,
+            (ReplicaPhase::StateTransferProtocol { .. }, ReplicaPhase::StateTransferProtocol { .. }) => true,
+            (_, _) => false
+        }
+    }
+}

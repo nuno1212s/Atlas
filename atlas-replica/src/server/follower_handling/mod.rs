@@ -6,11 +6,11 @@ use atlas_common::globals::ReadOnly;
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{NetworkMessageKind, StoredMessage, System};
 use atlas_communication::{Node};
-use atlas_execution::app::{Request, Service};
+use atlas_execution::app::{Request};
 use atlas_execution::serialize::ApplicationData;
 use atlas_core::followers::{FollowerChannelMsg, FollowerEvent, FollowerHandle};
 use atlas_core::messages::{Protocol, SystemMessage};
-use atlas_core::serialize::{OrderingProtocolMessage, ServiceMsg, StateTransferMessage, NetworkView};
+use atlas_core::serialize::{OrderingProtocolMessage, ServiceMsg, StateTransferMessage, NetworkView, LogTransferMessage};
 
 /// Store information of the current followers of the quorum
 /// This information will be used to calculate which replicas have to send the
@@ -31,10 +31,11 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     NT: Send + Sync + 'static {
     /// Starts the follower handling thread and returns a cloneable handle that
     /// can be used to deliver messages to it.
-    pub fn init_follower_handling<D, ST>(id: NodeId, node: &Arc<NT>) -> FollowerHandle<OP>
+    pub fn init_follower_handling<D, ST, LP>(id: NodeId, node: &Arc<NT>) -> FollowerHandle<OP>
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
-              NT: Node<ServiceMsg<D, OP, ST>>  {
+              LP: LogTransferMessage + 'static,
+              NT: Node<ServiceMsg<D, OP, ST, LP>> {
         let (tx, rx) = channel::new_bounded_sync(1024);
 
         let follower_handling = Self {
@@ -44,29 +45,31 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
             rx,
         };
 
-        Self::start_thread::<D, ST>(follower_handling);
+        Self::start_thread::<D, ST, LP>(follower_handling);
 
         FollowerHandle::new(tx)
     }
 
-    fn start_thread<D, ST>(self) where D: ApplicationData + 'static,
-                                       ST: StateTransferMessage + 'static,
-                                       NT: Node<ServiceMsg<D, OP, ST>> {
+    fn start_thread<D, ST, LP>(self) where D: ApplicationData + 'static,
+                                           ST: StateTransferMessage + 'static,
+                                           LP: LogTransferMessage + 'static,
+                                           NT: Node<ServiceMsg<D, OP, ST, LP>> {
         std::thread::Builder::new()
             .name(format!(
                 "Follower Handling Thread for node {:?}",
                 self.own_id
             ))
             .spawn(move || {
-                self.run::<D, ST>();
+                self.run::<D, ST, LP>();
             })
             .expect("Failed to launch follower handling thread!");
     }
 
-    fn run<D, ST>(mut self)
+    fn run<D, ST, LP>(mut self)
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
-              NT: Node<ServiceMsg<D, OP, ST>> {
+              LP: LogTransferMessage + 'static,
+              NT: Node<ServiceMsg<D, OP, ST, LP>> {
         loop {
             let message = self.rx.recv().unwrap();
 
@@ -75,7 +78,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
                     todo!()
                 }
                 FollowerEvent::ReceivedViewChangeMsg(view_change_msg) => {
-                    self.handle_sync_msg::<D, ST>(view_change_msg)
+                    self.handle_sync_msg::<D, ST, LP>(view_change_msg)
                 }
             }
         }
@@ -132,13 +135,14 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     }
 
     /// Handle when we have received a preprepare message
-    fn handle_preprepare_msg_rcvd<D, ST>(
+    fn handle_preprepare_msg_rcvd<D, ST, LP>(
         &mut self,
         view: &OP::ViewInfo,
         message: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
-            NT: Node<ServiceMsg<D, OP, ST>> {
+            LP: LogTransferMessage + 'static,
+            NT: Node<ServiceMsg<D, OP, ST, LP>> {
         if view.primary() == self.own_id {
             //Leaders don't send pre_prepares to followers in order to save bandwidth
             //as they already have to send the to all of the replicas
@@ -161,12 +165,13 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     /// and prepare/commit are handled on sending, this is because we don't want the leader
     /// to have to send the pre prepare to all followers but since these messages are very small,
     /// it's fine for all replicas to broadcast it to followers)
-    fn handle_prepare_msg<D, ST>(
+    fn handle_prepare_msg<D, ST, LP>(
         &mut self,
         prepare: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
-            NT: Node<ServiceMsg<D, OP, ST>> {
+            LP: LogTransferMessage + 'static,
+            NT: Node<ServiceMsg<D, OP, ST, LP>> {
         if prepare.header().from() != self.own_id {
             //We only broadcast our own prepare messages, not other peoples
             return;
@@ -187,12 +192,13 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     /// and prepare/commit are handled on sending, this is because we don't want the leader
     /// to have to send the pre prepare to all followers but since these messages are very small,
     /// it's fine for all replicas to broadcast it to followers)
-    fn handle_commit_msg<D, ST>(
+    fn handle_commit_msg<D, ST, LP>(
         &mut self,
         commit: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
-            NT: Node<ServiceMsg<D, OP, ST>> {
+            LP: LogTransferMessage + 'static,
+            NT: Node<ServiceMsg<D, OP, ST, LP>> {
         if commit.header().from() != self.own_id {
             //Like with prepares, we only broadcast our own commit messages
             return;
@@ -208,10 +214,11 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     }
 
     ///
-    fn handle_sync_msg<D, ST>(&mut self, msg: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>)
+    fn handle_sync_msg<D, ST, LP>(&mut self, msg: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>)
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
-              NT: Node<ServiceMsg<D, OP, ST>> {
+        LP: LogTransferMessage + 'static,
+              NT: Node<ServiceMsg<D, OP, ST, LP>> {
         let header = msg.header().clone();
         let message = msg.message().clone();
 

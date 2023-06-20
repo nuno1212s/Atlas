@@ -49,6 +49,8 @@ impl<S> AppStateMessage<S> where S: MonolithicState {
     pub fn state(&self) -> &S {
         &self.state
     }
+
+    pub fn into_state(self) -> S {self.state}
 }
 
 impl<S> InstallStateMessage<S> where S: MonolithicState {
