@@ -1,5 +1,9 @@
 pub mod serialize;
 
+use std::fmt::Debug;
+#[cfg(feature = "serialize_serde")]
+use serde::{Serialize, Deserialize};
+
 use atlas_common::ordering::{Orderable, SeqNo};
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
@@ -11,6 +15,8 @@ pub struct LTMessage<V, P, DL> {
     kind: LogTransferMessageKind<V, P, DL>,
 }
 
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone)]
 pub enum LogTransferMessageKind<V, P, DL> {
     RequestLogState,
     ReplyLogState(V, Option<(SeqNo, (SeqNo, P))>),
@@ -44,7 +50,7 @@ impl<V, P, DL> Orderable for LTMessage<V, P, DL> {
 }
 
 ///Debug for LogTransferMessage
-impl<V, P, DL> std::fmt::Debug for LTMessage<V, P, DL> {
+impl<V, P, DL> Debug for LTMessage<V, P, DL> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
             LogTransferMessageKind::RequestLogState => {

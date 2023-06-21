@@ -96,7 +96,7 @@ impl<S, A, OP, ST, LT, NT, PL> MonReplica<S, A, OP, ST, LT, NT, PL>
         Ok(replica)
     }
 
-    fn run(&mut self) -> Result<()> {
+    pub fn run(&mut self) -> Result<()> {
         let mut last_loop = Instant::now();
 
         loop {

@@ -62,6 +62,9 @@ impl Context {
 }
 
 impl Digest {
+    
+    const BLANK_DIGEST : [u8; Self::LENGTH] = [0; Self::LENGTH];
+    
     /// The length of the `Digest` in bytes.
     pub const LENGTH: usize = {
         #[cfg(feature = "crypto_hash_ring_sha2")]
@@ -81,6 +84,10 @@ impl Digest {
                 { blake3_blake3::Digest::from_bytes(raw_bytes) }
         }?;
         Ok(Digest { inner })
+    }
+    
+    pub fn blank() -> Self {
+        Digest::from_bytes(&Self::BLANK_DIGEST).unwrap()
     }
 
     /// Hashes this `Digest` with the given `nonce`.

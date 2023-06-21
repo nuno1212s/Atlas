@@ -51,8 +51,11 @@ enum LogTransferState<V, P, D> {
     FetchingLog(usize, FetchSeqNo, Option<D>),
 }
 
+pub type Serialization<LT: LogTransferProtocol<D, OP, NT, PL>, D, OP, NT, PL> = <LT as LogTransferProtocol<D, OP, NT, PL>>::Serialization;
+
 pub struct CollabLogTransfer<D, OP, NT, PL>
-    where D: ApplicationData + 'static, OP: StatefulOrderProtocol<D, NT, PL>
+    where D: ApplicationData + 'static,
+          OP: StatefulOrderProtocol<D, NT, PL> + 'static
 {
     // The current sequence number of the log transfer protocol
     curr_seq: SeqNo,
@@ -72,7 +75,7 @@ pub struct CollabLogTransfer<D, OP, NT, PL>
 
 impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
     where D: ApplicationData + 'static,
-          OP: StatefulOrderProtocol<D, NT, PL> {
+          OP: StatefulOrderProtocol<D, NT, PL> + 'static {
     fn curr_seq(&self) -> SeqNo {
         self.curr_seq
     }
@@ -83,21 +86,27 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
         self.curr_seq
     }
 
-    fn request_entire_log(&mut self, order_protocol: &OP, fetch_data: FetchSeqNoData<View<OP::Serialization>, SerProof<OP::Serialization>>) -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, OP::StateSerialization, Self::Serialization>> {
+    fn request_entire_log<ST>(&mut self, order_protocol: &OP, fetch_data: FetchSeqNoData<View<OP::Serialization>, SerProof<OP::Serialization>>) -> Result<()>
+        where
+            ST: StateTransferMessage + 'static,
+            NT: Node<ServiceMsg<D, OP::Serialization, ST, Serialization<Self, D, OP, NT, PL>>> {
         let next_seq = self.next_seq();
         let message = LTMessage::new(next_seq, LogTransferMessageKind::RequestLog);
 
         let view = order_protocol.view();
 
         self.node.broadcast(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(message)), NodeId::targets(0..view.n()));
+
+        Ok(())
     }
 
-    fn process_log_state_req(&self, order_protocol: &mut OP,
-                             header: Header,
-                             message: LTMessage<View<OP::Serialization>, SerProof<OP::Serialization>, DecLog<OP::StateSerialization>>)
-                             -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, OP::StateSerialization, Self::Serialization>> {
+    fn process_log_state_req<ST>(&self, order_protocol: &mut OP,
+                                 header: Header,
+                                 message: LTMessage<View<OP::Serialization>, SerProof<OP::Serialization>, DecLog<OP::StateSerialization>>)
+                                 -> Result<()>
+        where ST: StateTransferMessage + 'static,
+              NT: Node<ServiceMsg<D, OP::Serialization, ST, Serialization<Self, D, OP, NT, PL>>>,
+              PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
         let log = order_protocol.current_log()?;
 
         let first_seq = log.first_seq();
@@ -112,14 +121,18 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
         let message = LTMessage::new(message.sequence_number(), response_msg);
 
-        self.node.send(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(message)), header.from());
+        self.node.send(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(message)), header.from(), true);
+
+        Ok(())
     }
 
-    fn process_log_parts_request(&self, order_protocol: &mut OP,
-                                 header: Header,
-                                 message: LTMessage<View<OP::Serialization>, SerProof<OP::Serialization>, DecLog<OP::StateSerialization>>)
-                                 -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, OP::StateSerialization, Self::Serialization>> {
+    fn process_log_parts_request<ST>(&self, order_protocol: &mut OP,
+                                     header: Header,
+                                     message: LTMessage<View<OP::Serialization>, SerProof<OP::Serialization>, DecLog<OP::StateSerialization>>)
+                                     -> Result<()>
+        where ST: StateTransferMessage + 'static,
+              NT: Node<ServiceMsg<D, OP::Serialization, ST, Serialization<Self, D, OP, NT, PL>>>,
+              PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
         match message.kind() {
             LogTransferMessageKind::RequestProofs(log_parts) => {
                 let mut parts = Vec::with_capacity(log_parts.len());
@@ -136,7 +149,7 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
                 let response_msg = LTMessage::new(message.sequence_number(), message_kind);
 
-                self.node.send(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(response_msg)), header.from());
+                self.node.send(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(response_msg)), header.from(), true);
             }
             _ => { unreachable!() }
         }
@@ -144,18 +157,21 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
         Ok(())
     }
 
-    fn process_log_request(&self, order_protocol: &mut OP,
-                           header: Header,
-                           message: LTMessage<View<OP::Serialization>, SerProof<OP::Serialization>, DecLog<OP::StateSerialization>>)
-                           -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, OP::StateSerialization, Self::Serialization>> {
+    fn process_log_request<ST>(&self, order_protocol: &mut OP,
+                               header: Header,
+                               message: LTMessage<View<OP::Serialization>, SerProof<OP::Serialization>, DecLog<OP::StateSerialization>>)
+                               -> Result<()>
+        where
+            ST: StateTransferMessage + 'static,
+            NT: Node<ServiceMsg<D, OP::Serialization, ST, Serialization<Self, D, OP, NT, PL>>>,
+            PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
         let (view, decision_log) = order_protocol.snapshot_log()?;
 
         let message_kind = LogTransferMessageKind::ReplyLog(view, decision_log);
 
         let message = LTMessage::new(message.sequence_number(), message_kind);
 
-        self.node.send(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(message)), header.from());
+        self.node.send(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(message)), header.from(), true);
 
         Ok(())
     }
@@ -178,7 +194,7 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
 impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, OP, NT, PL>
     where D: ApplicationData + 'static,
-          OP: StatefulOrderProtocol<D, NT, PL> {
+          OP: StatefulOrderProtocol<D, NT, PL> + 'static {
     type Serialization = LTMsg<D, OP::Serialization, OP::StateSerialization>;
     type Config = LogTransferConfig;
 
@@ -199,7 +215,10 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
         Ok(log_transfer)
     }
 
-    fn request_latest_log<ST>(&mut self, order_protocol: &mut OP) -> Result<()> where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>, ST: StateTransferMessage, PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
+    fn request_latest_log<ST>(&mut self, order_protocol: &mut OP) -> Result<()>
+        where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
+              ST: StateTransferMessage + 'static,
+              PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
         self.log_transfer_state = LogTransferState::FetchingSeqNo(0, FetchSeqNoData::new());
 
         let lg_seq = self.next_seq();
@@ -211,11 +230,16 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
         let targets = NodeId::targets(0..view.n());
 
         self.node.broadcast(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(message)), targets);
+
+        Ok(())
     }
 
-    fn handle_off_ctx_message<ST>(&mut self, order_protocol: &mut OP, message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>) -> Result<()> where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>, ST: StateTransferMessage, PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
+    fn handle_off_ctx_message<ST>(&mut self, order_protocol: &mut OP, message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>) -> Result<()>
+        where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
+              ST: StateTransferMessage + 'static,
+              PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
         let (header, message) = message.into_inner();
-        debug!("{:?} // Off context Log Transfer Message {:?} from {:?} with seq {:?}", self.node.id(),message, header.from(), message.sequence_number());
+        debug!("{:?} // Off context Log Transfer Message {:?} from {:?} with seq {:?}", self.node.id(),message.payload(), header.from(), message.sequence_number());
 
         match message.payload().kind() {
             LogTransferMessageKind::RequestLogState => {
@@ -261,7 +285,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
     fn process_message<ST>(&mut self, order_protocol: &mut OP, message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
                            -> Result<LTResult<D>>
         where
-            ST: StateTransferMessage,
+            ST: StateTransferMessage + 'static,
             NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
             PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
         let (header, message) = message.into_inner();
@@ -292,22 +316,22 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
         match &mut self.log_transfer_state {
             LogTransferState::Init => {
                 // Nothing is being done and this isn't a request, so ignore it
-                debug!("{:?} // Received log transfer message {:?} in Init state", self.node.id(), message);
+                debug!("{:?} // Received log transfer message {:?} in Init state", self.node.id(), message.payload());
 
                 return Ok(LTResult::NotNeeded);
             }
             LogTransferState::FetchingSeqNo(i, curr_state) => {
-                match message.into_kind() {
+                match message.into_inner().into_kind() {
                     LogTransferMessageKind::ReplyLogState(view, data) => {
                         if let Some((first_seq, (last_seq, last_seq_proof))) = data {
-                            if order_protocol.verify_sequence_number(*last_seq, &last_seq_proof)? {
-                                let current_count = curr_state.received_initial_seq.entry(*first_seq).or_insert_with(|| 0);
+                            if order_protocol.verify_sequence_number(last_seq, &last_seq_proof)? {
+                                let current_count = curr_state.received_initial_seq.entry(first_seq).or_insert_with(|| 0);
 
                                 *current_count += 1;
 
-                                match *last_seq.cmp(*curr_state.last_seq) {
+                                match last_seq.cmp(&curr_state.last_seq) {
                                     Ordering::Greater => {
-                                        curr_state.last_seq = *last_seq;
+                                        curr_state.last_seq = last_seq;
                                         curr_state.last_seq_proof = Some(last_seq_proof);
                                     }
                                     Ordering::Equal | Ordering::Less => {}
@@ -330,12 +354,13 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
 
                 if *i == order_protocol.view().quorum() {
                     if curr_state.last_seq > order_protocol.sequence_number() {
-                        let data = FetchSeqNo::from(curr_state);
+                        let data = FetchSeqNo::from(&*curr_state);
 
                         let prev = std::mem::replace(&mut self.log_transfer_state, LogTransferState::FetchingLog(0, data, None));
 
                         match prev {
                             LogTransferState::FetchingSeqNo(_, data) => {
+                                let seq = data.last_seq;
                                 debug!("{:?} // Installing sequence number and requesting state {:?}", self.node.id(), seq);
 
                                 // this step will allow us to ignore any messages
@@ -362,7 +387,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
                 }
             }
             LogTransferState::FetchingLog(i, data, current_log) => {
-                match message.kind() {
+                match message.into_inner().into_kind() {
                     LogTransferMessageKind::ReplyLog(view, log) => {
                         //FIXME: Unwraping this first seq is not really the correct thing to do
                         // as the log of the other replica might be empty because he has just checkpointed.
@@ -375,7 +400,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
 
                         if data.first_seq <= first_log_seq {
                             if last_log_seq >= data.last_seq {
-                                *current_log = Some(log);
+
                                 info!("{:?} // Received log with sequence number {:?} and first sequence number {:?} from {:?} in view {:?}. Accepting log.",
                                         self.node.id(), log.sequence_number(), log.first_seq(), header.from(), view);
 
@@ -409,7 +434,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
     }
 
     fn handle_timeout<ST>(&mut self, timeout: Vec<RqTimeout>) -> Result<LTTimeoutResult>
-        where ST: StateTransferMessage,
+        where ST: StateTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
         for lt_seq in timeout {
@@ -420,7 +445,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
             }
         }
 
-        Ok(LTTimeoutResult::CstNotNeeded)
+        Ok(LTTimeoutResult::NotNeeded)
     }
 }
 

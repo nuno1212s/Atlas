@@ -15,10 +15,11 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::persistentdb::KVDB;
 use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::{ProtocolConsensusDecision, ProtocolMessage, SerProof, SerProofMetadata, View};
-use atlas_core::persistent_log::{OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, WriteMode};
+use atlas_core::persistent_log::{MonolithicStateLog, OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, WriteMode};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
 use atlas_core::state_transfer::{Checkpoint};
 use atlas_core::state_transfer::log_transfer::DecLog;
+use atlas_execution::state::monolithic_state::MonolithicState;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
 use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, read_latest_state, write_latest_seq_no, write_latest_view, write_message, write_proof, write_proof_metadata, write_state};
 
@@ -450,6 +451,17 @@ impl<D, OPM, SOPM, STM> StatefulOrderingProtocolLog<OPM, SOPM> for PersistentLog
                 Ok(())
             }
         }
+    }
+}
+
+impl<S, D, OPM, SOPM, STM> MonolithicStateLog<S> for PersistentLog<D, OPM, SOPM, STM>
+    where S: MonolithicState,
+          D: ApplicationData + 'static,
+          OPM: OrderingProtocolMessage + 'static,
+          SOPM: StatefulOrderProtocolMessage + 'static,
+          STM: StateTransferMessage + 'static {
+    fn write_checkpoint(&self, write_mode: WriteMode, checkpoint: Arc<ReadOnly<Checkpoint<S>>>) -> Result<()> {
+        todo!()
     }
 }
 
