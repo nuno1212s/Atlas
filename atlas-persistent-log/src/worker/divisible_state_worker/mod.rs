@@ -110,7 +110,11 @@ impl<S, D, OPM, SOPM, POP, PSP> DivStatePersistentLogWorker<S, D, OPM, SOPM, POP
                 }
             }
 
-            self.worker.work();
+            if let Err(err) = self.worker.work_iteration() {
+                error!("Failed to execute persistent log request because {:?}", err);
+
+                break
+            }
         }
     }
 

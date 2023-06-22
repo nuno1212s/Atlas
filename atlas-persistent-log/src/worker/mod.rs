@@ -156,35 +156,51 @@ impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
         Self { request_rx, response_txs, db, phantom: Default::default() }
     }
 
-    pub(super) fn work(mut self) {
-        loop {
-            let (request, callback) = match self.request_rx.recv() {
-                Ok((request, callback)) => (request, callback),
-                Err(err) => {
-                    error!("{:?}", err);
-                    break;
-                }
-            };
+    fn work_iteration(&mut self) -> Result<()>{
+        let (request, callback) = match self.request_rx.recv() {
+            Ok((request, callback)) => (request, callback),
+            Err(err) => {
+                error!("{:?}", err);
 
-            let response = self.exec_req(request);
+                return Err(Error::wrapped(ErrorKind::MsgLog, err));
+            }
+        };
 
-            if let Some(callback) = callback {
-                //If we have a callback to call with the response, then call it
-                // (callback)(response);
-            } else {
-                //If not, then deliver it down the response_txs
-                match response {
-                    Ok(response) => {
-                        for ele in &self.response_txs {
-                            if let Err(err) = ele.send(response.clone()) {
-                                error!("Failed to deliver response to log. {:?}", err);
-                            }
+        let response = self.exec_req(request);
+
+        if let Some(callback) = callback {
+            //If we have a callback to call with the response, then call it
+            // (callback)(response);
+        } else {
+            //If not, then deliver it down the response_txs
+            match response {
+                Ok(response) => {
+                    for ele in &self.response_txs {
+                        if let Err(err) = ele.send(response.clone()) {
+                            error!("Failed to deliver response to log. {:?}", err);
+
+                            return Err(Error::wrapped(ErrorKind::MsgLog, err));
                         }
                     }
-                    Err(err) => {
-                        error!("Failed to execute persistent log request because {:?}", err);
-                    }
                 }
+                Err(err) => {
+                    error!("Failed to execute persistent log request because {:?}", err);
+
+                    return Err(Error::wrapped(ErrorKind::MsgLog, err));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Work loop of this worker
+    pub(super) fn work(mut self) {
+        loop {
+            if let Err(err) = self.work_iteration() {
+                error!("Failed to execute persistent log request because {:?}", err);
+
+                break
             }
         }
     }

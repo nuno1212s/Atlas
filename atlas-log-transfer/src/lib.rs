@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use log::{debug, error, info, warn};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
@@ -15,12 +15,15 @@ use atlas_core::serialize::{NetworkView, OrderingProtocolMessage, OrderProtocolL
 use atlas_core::state_transfer::log_transfer::{DecLog, LogTM, LogTransferProtocol, LTResult, LTTimeoutResult, StatefulOrderProtocol};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 use atlas_execution::serialize::ApplicationData;
+use atlas_metrics::metrics::metric_duration;
 use crate::config::LogTransferConfig;
 use crate::messages::{LogTransferMessageKind, LTMessage};
 use crate::messages::serialize::LTMsg;
+use crate::metrics::{LOG_TRANSFER_LOG_CLONE_TIME_ID, LOG_TRANSFER_PROOFS_CLONE_TIME_ID};
 
 pub mod messages;
 pub mod config;
+pub mod metrics;
 
 #[derive(Clone)]
 struct FetchSeqNoData<V, P> {
@@ -137,6 +140,8 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
             LogTransferMessageKind::RequestProofs(log_parts) => {
                 let mut parts = Vec::with_capacity(log_parts.len());
 
+                let start = Instant::now();
+
                 for part_seq in log_parts {
                     if let Some(part) = order_protocol.get_proof(*part_seq)? {
                         parts.push((*part_seq, part))
@@ -144,6 +149,8 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
                         error!("Request for log part {:?} failed as we do not possess it", *part_seq);
                     }
                 }
+
+                metric_duration(LOG_TRANSFER_PROOFS_CLONE_TIME_ID, start.elapsed());
 
                 let message_kind = LogTransferMessageKind::ReplyLogParts(order_protocol.view(), parts);
 
@@ -165,7 +172,12 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
             ST: StateTransferMessage + 'static,
             NT: Node<ServiceMsg<D, OP::Serialization, ST, Serialization<Self, D, OP, NT, PL>>>,
             PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
+
+        let start = Instant::now();
+
         let (view, decision_log) = order_protocol.snapshot_log()?;
+
+        metric_duration(LOG_TRANSFER_LOG_CLONE_TIME_ID, start.elapsed());
 
         let message_kind = LogTransferMessageKind::ReplyLog(view, decision_log);
 
@@ -238,6 +250,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
         where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               ST: StateTransferMessage + 'static,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
+
         let (header, message) = message.into_inner();
         debug!("{:?} // Off context Log Transfer Message {:?} from {:?} with seq {:?}", self.node.id(),message.payload(), header.from(), message.sequence_number());
 

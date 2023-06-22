@@ -105,6 +105,12 @@ impl<S, D, OPM, SOPM, POP, PSP> MonStatePersistentLogWorker<S, D, OPM, SOPM, POP
                     }
                 }
             }
+
+            if let Err(err) = self.inner_worker.work_iteration() {
+                error!("Failed to execute persistent log request because {:?}", err);
+
+                break
+            }
         }
     }
 
