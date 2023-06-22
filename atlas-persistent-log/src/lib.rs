@@ -19,6 +19,7 @@ use atlas_core::persistent_log::{MonolithicStateLog, OrderingProtocolLog, Persis
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
 use atlas_core::state_transfer::{Checkpoint};
 use atlas_core::state_transfer::log_transfer::DecLog;
+use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
 use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, read_latest_state, write_latest_seq_no, write_latest_view, write_message, write_proof, write_proof_metadata, write_state};
@@ -26,6 +27,7 @@ use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, P
 pub mod serialize;
 pub mod backlog;
 mod worker;
+pub mod metrics;
 
 /// The general type for a callback.
 /// Callbacks are optional and can be used when you want to
@@ -112,7 +114,7 @@ pub struct PersistentLog<D: ApplicationData,
     persistency_mode: PersistentLogMode<D>,
 
     // A handle for the persistent log workers (each with his own thread)
-    worker_handle: Arc<PersistentLogWorkerHandle<D, OPM, SOPM>>,
+    worker_handle: Arc<PersistentLogWorkerHandle<OPM, SOPM>>,
 
     p: PhantomData<STM>,
     ///The persistent KV-DB to be used
@@ -128,7 +130,7 @@ pub type InstallState<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolM
 );
 
 /// Work messages for the persistent log workers
-pub enum PWMessage<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
+pub enum PWMessage<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
     //Persist a new view into the persistent storage
     View(View<OPM>),
 
@@ -141,9 +143,6 @@ pub enum PWMessage<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: State
     //Persist a given message into storage
     Message(Arc<ReadOnly<StoredMessage<ProtocolMessage<OPM>>>>),
 
-    //Persist a given state into storage.
-    Checkpoint(PhantomData<D>),
-
     //Remove all associated stored messages for this given seq number
     Invalidate(SeqNo),
 
@@ -155,6 +154,20 @@ pub enum PWMessage<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: State
 
     /// Register a new receiver for messages sent by the persistency workers
     RegisterCallbackReceiver(ChannelSyncTx<ResponseMessage>),
+}
+
+/// The message containing the information necessary to persist the most recently received
+/// Monolithic state
+pub struct MonolithicStateMessage<S: MonolithicState> {
+    checkpoint: Arc<ReadOnly<Checkpoint<S>>>,
+}
+
+/// The message containing the information necessary to persist the most recently received
+/// State parts
+pub enum DivisibleStateMessage<S: DivisibleState> {
+    Parts(Vec<S::StatePart>),
+    Descriptor(S::StateDescriptor),
+    PartsAndDescriptor(Vec<S::StatePart>, S::StateDescriptor),
 }
 
 /// Messages sent by the persistency workers to notify the registered receivers
@@ -182,6 +195,12 @@ pub enum ResponseMessage {
 
     /// Notifies that the given checkpoint was persisted into the database
     Checkpointed(SeqNo),
+    /*
+    WroteParts(Vec<Digest>),
+
+    WroteDescriptor(SeqNo),
+
+    WrotePartsAndDescriptor(SeqNo, Vec<Digest>),*/
 
     // Stored the proof with the given sequence
     Proof(SeqNo),
@@ -190,7 +209,7 @@ pub enum ResponseMessage {
 }
 
 /// Messages that are sent to the logging thread to log specific requests
-pub(crate) type ChannelMsg<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> = (PWMessage<D, OPM, SOPM>, Option<CallbackType>);
+pub(crate) type ChannelMsg<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> = (PWMessage<OPM, SOPM>, Option<CallbackType>);
 
 pub fn initialize_persistent_log<D, K, T, OPM, SOPM, STM, POP, PSP>(executor: ExecutorHandle<D>, db_path: K)
                                                                     -> Result<PersistentLog<D, OPM, SOPM, STM>>
@@ -461,6 +480,21 @@ impl<S, D, OPM, SOPM, STM> MonolithicStateLog<S> for PersistentLog<D, OPM, SOPM,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static {
     fn write_checkpoint(&self, write_mode: WriteMode, checkpoint: Arc<ReadOnly<Checkpoint<S>>>) -> Result<()> {
+        match self.persistency_mode {
+            PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
+                match write_mode {
+                    WriteMode::NonBlockingSync(callback) => {
+                        self.worker_handle.queue_checkpoint(checkpoint, callback)
+                    }
+                    WriteMode::BlockingSync => {
+                        todo!()
+                    }
+                }
+            }
+            PersistentLogMode::None => {
+                Ok(())
+            }
+        }
         todo!()
     }
 }

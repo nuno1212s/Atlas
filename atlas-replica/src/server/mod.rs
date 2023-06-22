@@ -44,6 +44,7 @@ use crate::server::client_replier::Replier;
 pub mod client_replier;
 pub mod follower_handling;
 pub mod monolithic_server;
+mod divisible_state_server;
 // pub mod rq_finalizer;
 
 const REPLICA_MESSAGE_CHANNEL: usize = 1024;
@@ -95,7 +96,7 @@ impl<S, D, OP, ST, LT, NT, PL> Replica<S, D, OP, ST, LT, NT, PL>
         ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
         NT: Node<ServiceMsg<D, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static,
         PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static, {
-    pub async fn bootstrap(cfg: ReplicaConfig<S, D, OP, ST, LT, NT, PL>, executor: ExecutorHandle<D>) -> Result<Self> {
+    async fn bootstrap(cfg: ReplicaConfig<S, D, OP, ST, LT, NT, PL>, executor: ExecutorHandle<D>) -> Result<Self> {
         let ReplicaConfig {
             id: log_node_id,
             n,
@@ -264,13 +265,13 @@ impl<S, D, OP, ST, LT, NT, PL> Replica<S, D, OP, ST, LT, NT, PL>
                                     state_transfer.handle_off_ctx_message(self.ordering_protocol.view(), StoredMessage::new(header, state_transfer_msg))?;
                                 }
                                 SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
-// Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
+                                    // Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
                                     self.rq_pre_processor.send(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
                                 }
                                 SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
                                     match self.ordering_protocol.process_message(fwd_protocol.into_inner())? {
                                         OrderProtocolExecResult::Success => {
-//Continue execution
+                                            //Continue execution
                                         }
                                         OrderProtocolExecResult::RunCst => {
                                             self.run_all_state_transfer(state_transfer)?;
@@ -300,7 +301,7 @@ impl<S, D, OP, ST, LT, NT, PL> Replica<S, D, OP, ST, LT, NT, PL>
 
                         match self.ordering_protocol.process_message(message)? {
                             OrderProtocolExecResult::Success => {
-// Continue execution
+                                // Continue execution
                             }
                             OrderProtocolExecResult::RunCst => {
                                 self.run_all_state_transfer(state_transfer)?;
