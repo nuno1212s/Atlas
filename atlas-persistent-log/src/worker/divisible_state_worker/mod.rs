@@ -1,8 +1,10 @@
 use std::ops::Deref;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use log::error;
 use atlas_common::error::*;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, SendError, TryRecvError};
+use atlas_common::globals::ReadOnly;
 use atlas_common::persistentdb::KVDB;
 use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
@@ -23,6 +25,14 @@ pub struct PersistentDivStateHandle<S: DivisibleState> {
 }
 
 impl<S> PersistentDivStateHandle<S> where S: DivisibleState {
+
+    pub(crate) fn new(tx: Vec<PersistentDivStateStub<S>>) -> Self {
+        Self {
+            round_robin_counter: AtomicUsize::new(0),
+            tx,
+        }
+    }
+
     /// Employ a simple round robin load distribution
     fn next_worker(&self) -> &PersistentDivStateStub<S> {
         let counter = self.round_robin_counter.fetch_add(1, Ordering::Relaxed);
@@ -47,14 +57,14 @@ impl<S> PersistentDivStateHandle<S> where S: DivisibleState {
         Self::translate_error(self.next_worker().send(state_message))
     }
 
-    pub fn queue_state_parts(&self, parts: Vec<S::StatePart>) -> Result<()> {
-        let state_message = DivisibleStateMessage::StateParts(parts);
+    pub fn queue_state_parts(&self, parts: Vec<Arc<ReadOnly<S::StatePart>>>) -> Result<()> {
+        let state_message = DivisibleStateMessage::Parts(parts);
 
         Self::translate_error(self.next_worker().send(state_message))
     }
 
-    pub fn queue_descriptor_and_parts(&self, descriptor: S::StateDescriptor, parts: Vec<S::StatePart>) -> Result<()> {
-        let state_message = DivisibleStateMessage::DescriptorAndStateParts(descriptor, parts);
+    pub fn queue_descriptor_and_parts(&self, descriptor: S::StateDescriptor, parts: Vec<Arc<ReadOnly<S::StatePart>>>) -> Result<()> {
+        let state_message = DivisibleStateMessage::PartsAndDescriptor(parts, descriptor);
 
         Self::translate_error(self.next_worker().send(state_message))
     }

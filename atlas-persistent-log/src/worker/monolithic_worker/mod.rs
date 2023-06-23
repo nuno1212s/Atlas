@@ -27,6 +27,14 @@ pub struct PersistentMonolithicStateHandle<S: MonolithicState> {
 }
 
 impl<S> PersistentMonolithicStateHandle<S> where S: MonolithicState {
+
+    pub(crate) fn new(tx: Vec<PersistentMonolithicStateStub<S>>) -> Self {
+        Self {
+            round_robin_counter: Default::default(),
+            tx,
+        }
+    }
+
     /// Employ a simple round robin load distribution
     fn next_worker(&self) -> &PersistentMonolithicStateStub<S> {
         let counter = self.round_robin_counter.fetch_add(1, Ordering::Relaxed);

@@ -109,11 +109,11 @@ pub trait DivisibleStateLog<S> where S: DivisibleState {
 
     fn write_descriptor(&self,
                         write_mode: WriteMode,
-                        checkpoint: Arc<ReadOnly<S::StateDescriptor>>,) -> Result<()>;
+                        checkpoint: S::StateDescriptor,) -> Result<()>;
     
     fn write_part(&self,
                   write_mode: WriteMode,
-                  checkpoint: Arc<ReadOnly<S::StatePart>>,) -> Result<()>;
+                  parts: Vec<Arc<ReadOnly<S::StatePart>>>,) -> Result<()>;
     
     fn delete_part(&self, write_mode: WriteMode, part: S::StateDescriptor) -> Result<()>;
     

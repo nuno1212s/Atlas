@@ -1,5 +1,5 @@
-mod monolithic_worker;
-mod divisible_state_worker;
+pub(super) mod monolithic_worker;
+pub(super) mod divisible_state_worker;
 
 use std::marker::PhantomData;
 use std::ops::Deref;
@@ -156,7 +156,7 @@ impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
         Self { request_rx, response_txs, db, phantom: Default::default() }
     }
 
-    fn work_iteration(&mut self) -> Result<()>{
+    fn work_iteration(&mut self) -> Result<()> {
         let (request, callback) = match self.request_rx.recv() {
             Ok((request, callback)) => (request, callback),
             Err(err) => {
@@ -200,7 +200,7 @@ impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
             if let Err(err) = self.work_iteration() {
                 error!("Failed to execute persistent log request because {:?}", err);
 
-                break
+                break;
             }
         }
     }
