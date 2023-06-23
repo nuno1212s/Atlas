@@ -50,6 +50,14 @@ impl<S> Checkpoint<S> {
         }))
     }
 
+    pub fn new_simple(seq:SeqNo, app_state: S, digest: Digest) -> Self {
+        Self {
+            seq,
+            app_state,
+            digest,
+        }
+    }
+
     /// The last sequence no represented in this checkpoint
     pub fn last_seq(&self) -> &SeqNo {
         &self.seq

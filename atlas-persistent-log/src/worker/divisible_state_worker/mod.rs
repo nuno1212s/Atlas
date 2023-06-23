@@ -11,7 +11,7 @@ use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessag
 use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::divisible_state::{DivisibleState, StatePart};
 use crate::{DivisibleStateMessage, ResponseMessage};
-use crate::serialize::{serialize_state_descriptor, serialize_state_part, serialize_state_part_descriptor};
+use crate::serialize::{deserialize_state_descriptor, deserialize_state_part, serialize_state_descriptor, serialize_state_part, serialize_state_part_descriptor};
 use crate::worker::{COLUMN_FAMILY_STATE, PersistentLogWorker};
 
 #[derive(Clone)]
@@ -25,7 +25,6 @@ pub struct PersistentDivStateHandle<S: DivisibleState> {
 }
 
 impl<S> PersistentDivStateHandle<S> where S: DivisibleState {
-
     pub(crate) fn new(tx: Vec<PersistentDivStateStub<S>>) -> Self {
         Self {
             round_robin_counter: AtomicUsize::new(0),
@@ -65,6 +64,12 @@ impl<S> PersistentDivStateHandle<S> where S: DivisibleState {
 
     pub fn queue_descriptor_and_parts(&self, descriptor: S::StateDescriptor, parts: Vec<Arc<ReadOnly<S::StatePart>>>) -> Result<()> {
         let state_message = DivisibleStateMessage::PartsAndDescriptor(parts, descriptor);
+
+        Self::translate_error(self.next_worker().send(state_message))
+    }
+
+    pub fn queue_delete_part(&self, part_descriptor: S::PartDescription) -> Result<()> {
+        let state_message = DivisibleStateMessage::DeletePart(part_descriptor);
 
         Self::translate_error(self.next_worker().send(state_message))
     }
@@ -108,7 +113,7 @@ impl<S, D, OPM, SOPM, POP, PSP> DivStatePersistentLogWorker<S, D, OPM, SOPM, POP
                     let result = self.exec_req(message);
 
                     // Try to receive more messages if possible
-                    continue
+                    continue;
                 }
                 Err(err) => {
                     match err {
@@ -123,7 +128,7 @@ impl<S, D, OPM, SOPM, POP, PSP> DivStatePersistentLogWorker<S, D, OPM, SOPM, POP
             if let Err(err) = self.worker.work_iteration() {
                 error!("Failed to execute persistent log request because {:?}", err);
 
-                break
+                break;
             }
         }
     }
@@ -160,6 +165,34 @@ impl<S> Deref for PersistentDivStateStub<S> where S: DivisibleState {
 }
 
 const LATEST_STATE_DESCRIPTOR: &str = "latest_state_descriptor";
+
+pub(crate) fn read_latest_descriptor<S: DivisibleState>(db: &KVDB) -> Result<Option<S::StateDescriptor>> {
+    let result = db.get(COLUMN_FAMILY_STATE, LATEST_STATE_DESCRIPTOR)?;
+
+    if let Some(mut descriptor) = result {
+        let state_descriptor = deserialize_state_descriptor::<[u8], S>(&mut descriptor.as_slice())?;
+
+        Ok(Some(state_descriptor))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) fn read_state_part<S: DivisibleState>(db: &KVDB, part: &S::PartDescription) -> Result<Option<S::StatePart>> {
+    let mut key = Vec::new();
+
+    serialize_state_part_descriptor::<Vec<u8>, S>(&mut key, part)?;
+
+    let result = db.get(COLUMN_FAMILY_STATE, key)?;
+
+    if let Some(mut value) = result {
+        let state_part = deserialize_state_part::<[u8], S>(&mut value.as_slice())?;
+
+        Ok(Some(state_part))
+    } else {
+        Ok(None)
+    }
+}
 
 fn write_state_parts<S: DivisibleState>(
     db: &KVDB,

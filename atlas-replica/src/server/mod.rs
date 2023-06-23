@@ -23,7 +23,7 @@ use atlas_core::messages::SystemMessage;
 use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
 use atlas_core::ordering_protocol::OrderProtocolExecResult;
 use atlas_core::ordering_protocol::OrderProtocolPoll;
-use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, WriteMode};
+use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, OperationMode};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ServiceMsg, StateTransferMessage};
@@ -130,7 +130,7 @@ impl<S, D, OP, ST, LT, NT, PL> Replica<S, D, OP, ST, LT, NT, PL>
 
         let persistent_log = PL::init_log::<String, NoPersistentLog, OP, ST>(executor.clone(), db_path)?;
 
-        let log = persistent_log.read_state(WriteMode::BlockingSync)?;
+        let log = persistent_log.read_state(OperationMode::BlockingSync)?;
 
         let op_args = OrderingProtocolArgs(executor.clone(), timeouts.clone(),
                                            rq_pre_processor.clone(),

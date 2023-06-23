@@ -224,15 +224,6 @@ impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
 
                 ResponseMessage::WroteMessage(seq, msg.header().digest().clone())
             }
-            PWMessage::Checkpoint(checkpoint) => {
-                /*let seq = checkpoint.sequence_number();
-
-                write_checkpoint::<D, OPM, SOPM, PS>(&self.db, checkpoint)?;
-
-                ResponseMessage::Checkpointed(seq)
-                 */
-                ResponseMessage::Checkpointed(SeqNo::ZERO)
-            }
             PWMessage::Invalidate(seq) => {
                 invalidate_seq::<OPM, SOPM, PS>(&self.db, seq)?;
 

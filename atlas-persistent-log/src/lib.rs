@@ -16,7 +16,7 @@ use atlas_common::persistentdb::KVDB;
 use atlas_common::socket::init;
 use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::{ProtocolConsensusDecision, ProtocolMessage, SerProof, SerProofMetadata, View};
-use atlas_core::persistent_log::{DivisibleStateLog, MonolithicStateLog, OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, WriteMode};
+use atlas_core::persistent_log::{DivisibleStateLog, MonolithicStateLog, OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, OperationMode};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
 use atlas_core::state_transfer::{Checkpoint};
 use atlas_core::state_transfer::log_transfer::DecLog;
@@ -25,7 +25,7 @@ use atlas_execution::state::monolithic_state::MonolithicState;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
 use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentDivisibleStateStub, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, read_latest_state, write_latest_seq_no, write_latest_view, write_message, write_proof, write_proof_metadata, write_state};
 use crate::worker::divisible_state_worker::{DivStatePersistentLogWorker, PersistentDivStateHandle, PersistentDivStateStub};
-use crate::worker::monolithic_worker::{MonStatePersistentLogWorker, PersistentMonolithicStateHandle, PersistentMonolithicStateStub};
+use crate::worker::monolithic_worker::{MonStatePersistentLogWorker, PersistentMonolithicStateHandle, PersistentMonolithicStateStub, read_mon_state};
 
 pub mod serialize;
 pub mod backlog;
@@ -189,6 +189,7 @@ pub enum DivisibleStateMessage<S: DivisibleState> {
     Parts(Vec<Arc<ReadOnly<S::StatePart>>>),
     Descriptor(S::StateDescriptor),
     PartsAndDescriptor(Vec<Arc<ReadOnly<S::StatePart>>>, S::StateDescriptor),
+    DeletePart(S::PartDescription),
 }
 
 /// Messages sent by the persistency workers to notify the registered receivers
@@ -345,14 +346,14 @@ impl<D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for PersistentLog<D, OPM, SOPM,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static {
-    fn write_committed_seq_no(&self, write_mode: WriteMode, seq: SeqNo) -> Result<()> {
+    fn write_committed_seq_no(&self, write_mode: OperationMode, seq: SeqNo) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
+                    OperationMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_committed(seq, callback)
                     }
-                    WriteMode::BlockingSync => write_latest_seq_no(&self.db, seq),
+                    OperationMode::BlockingSync => write_latest_seq_no(&self.db, seq),
                 }
             }
             PersistentLogMode::None => {
@@ -361,14 +362,14 @@ impl<D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for PersistentLog<D, OPM, SOPM,
         }
     }
 
-    fn write_view_info(&self, write_mode: WriteMode, view_seq: View<OPM>) -> Result<()> {
+    fn write_view_info(&self, write_mode: OperationMode, view_seq: View<OPM>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
+                    OperationMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_view_number(view_seq, callback)
                     }
-                    WriteMode::BlockingSync => {
+                    OperationMode::BlockingSync => {
                         todo!()
                     }
                 }
@@ -379,14 +380,14 @@ impl<D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for PersistentLog<D, OPM, SOPM,
         }
     }
 
-    fn write_message(&self, write_mode: WriteMode, msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<OPM>>>>) -> Result<()> {
+    fn write_message(&self, write_mode: OperationMode, msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<OPM>>>>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
+                    OperationMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_message(msg, callback)
                     }
-                    WriteMode::BlockingSync => {
+                    OperationMode::BlockingSync => {
                         todo!()
                     }
                 }
@@ -397,14 +398,14 @@ impl<D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for PersistentLog<D, OPM, SOPM,
         }
     }
 
-    fn write_proof_metadata(&self, write_mode: WriteMode, metadata: SerProofMetadata<OPM>) -> Result<()> {
+    fn write_proof_metadata(&self, write_mode: OperationMode, metadata: SerProofMetadata<OPM>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
+                    OperationMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_proof_metadata(metadata, callback)
                     }
-                    WriteMode::BlockingSync => {
+                    OperationMode::BlockingSync => {
                         todo!()
                     }
                 }
@@ -415,14 +416,14 @@ impl<D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for PersistentLog<D, OPM, SOPM,
         }
     }
 
-    fn write_proof(&self, write_mode: WriteMode, proof: SerProof<OPM>) -> Result<()> {
+    fn write_proof(&self, write_mode: OperationMode, proof: SerProof<OPM>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
+                    OperationMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_proof(proof, callback)
                     }
-                    WriteMode::BlockingSync => {
+                    OperationMode::BlockingSync => {
                         todo!()
                     }
                 }
@@ -433,14 +434,14 @@ impl<D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for PersistentLog<D, OPM, SOPM,
         }
     }
 
-    fn write_invalidate(&self, write_mode: WriteMode, seq: SeqNo) -> Result<()> {
+    fn write_invalidate(&self, write_mode: OperationMode, seq: SeqNo) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
+                    OperationMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_invalidate(seq, callback)
                     }
-                    WriteMode::BlockingSync => {
+                    OperationMode::BlockingSync => {
                         todo!()
                     }
                 }
@@ -457,7 +458,7 @@ impl<D, OPM, SOPM, STM> StatefulOrderingProtocolLog<OPM, SOPM> for PersistentLog
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static {
-    fn read_state(&self, write_mode: WriteMode) -> Result<Option<(View<OPM>, DecLog<SOPM>)>> {
+    fn read_state(&self, write_mode: OperationMode) -> Result<Option<(View<OPM>, DecLog<SOPM>)>> {
         match self.kind() {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 todo!();
@@ -475,14 +476,14 @@ impl<D, OPM, SOPM, STM> StatefulOrderingProtocolLog<OPM, SOPM> for PersistentLog
         }
     }
 
-    fn write_install_state(&self, write_mode: WriteMode, view: View<OPM>, dec_log: DecLog<SOPM>) -> Result<()> {
+    fn write_install_state(&self, write_mode: OperationMode, view: View<OPM>, dec_log: DecLog<SOPM>) -> Result<()> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
+                    OperationMode::NonBlockingSync(callback) => {
                         self.worker_handle.queue_install_state((view, dec_log), callback)
                     }
-                    WriteMode::BlockingSync => {
+                    OperationMode::BlockingSync => {
                         todo!()
                     }
                 }
@@ -569,14 +570,25 @@ impl<S, D, OPM, SOPM, STM> MonolithicStateLog<S> for MonStatePersistentLog<S, D,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static {
-    fn write_checkpoint(&self, write_mode: WriteMode, checkpoint: Arc<ReadOnly<Checkpoint<S>>>) -> Result<()> {
+    fn read_checkpoint(&self) -> Result<Option<Checkpoint<S>>> {
+        match self.inner_log.persistency_mode {
+            PersistentLogMode::Strict(_)  | PersistentLogMode::Optimistic=> {
+                read_mon_state(&self.inner_log.db)
+            }
+            PersistentLogMode::None => {
+                Ok(None)
+            }
+        }
+    }
+
+    fn write_checkpoint(&self, write_mode: OperationMode, checkpoint: Arc<ReadOnly<Checkpoint<S>>>) -> Result<()> {
         match self.inner_log.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
+                    OperationMode::NonBlockingSync(callback) => {
                         self.request_tx.queue_state(checkpoint).unwrap();
                     }
-                    WriteMode::BlockingSync => {
+                    OperationMode::BlockingSync => {
                         todo!()
                     }
                 }
@@ -596,27 +608,27 @@ impl<S, D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for MonStatePersistentLog<S,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static {
-    fn write_committed_seq_no(&self, write_mode: WriteMode, seq: SeqNo) -> Result<()> {
+    fn write_committed_seq_no(&self, write_mode: OperationMode, seq: SeqNo) -> Result<()> {
         self.inner_log.write_committed_seq_no(write_mode, seq)
     }
 
-    fn write_view_info(&self, write_mode: WriteMode, view_seq: View<OPM>) -> Result<()> {
+    fn write_view_info(&self, write_mode: OperationMode, view_seq: View<OPM>) -> Result<()> {
         self.inner_log.write_view_info(write_mode, view_seq)
     }
 
-    fn write_message(&self, write_mode: WriteMode, msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<OPM>>>>) -> Result<()> {
+    fn write_message(&self, write_mode: OperationMode, msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<OPM>>>>) -> Result<()> {
         self.inner_log.write_message(write_mode, msg)
     }
 
-    fn write_proof_metadata(&self, write_mode: WriteMode, metadata: SerProofMetadata<OPM>) -> Result<()> {
+    fn write_proof_metadata(&self, write_mode: OperationMode, metadata: SerProofMetadata<OPM>) -> Result<()> {
         self.inner_log.write_proof_metadata(write_mode, metadata)
     }
 
-    fn write_proof(&self, write_mode: WriteMode, proof: SerProof<OPM>) -> Result<()> {
+    fn write_proof(&self, write_mode: OperationMode, proof: SerProof<OPM>) -> Result<()> {
         self.inner_log.write_proof(write_mode, proof)
     }
 
-    fn write_invalidate(&self, write_mode: WriteMode, seq: SeqNo) -> Result<()> {
+    fn write_invalidate(&self, write_mode: OperationMode, seq: SeqNo) -> Result<()> {
         self.inner_log.write_invalidate(write_mode, seq)
     }
 }
@@ -627,11 +639,11 @@ impl<S, D, OPM, SOPM, STM> StatefulOrderingProtocolLog<OPM, SOPM> for MonStatePe
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static {
-    fn read_state(&self, write_mode: WriteMode) -> Result<Option<(View<OPM>, DecLog<SOPM>)>> {
+    fn read_state(&self, write_mode: OperationMode) -> Result<Option<(View<OPM>, DecLog<SOPM>)>> {
         self.inner_log.read_state(write_mode)
     }
 
-    fn write_install_state(&self, write_mode: WriteMode, view: View<OPM>, dec_log: DecLog<SOPM>) -> Result<()> {
+    fn write_install_state(&self, write_mode: OperationMode, view: View<OPM>, dec_log: DecLog<SOPM>) -> Result<()> {
         self.inner_log.write_install_state(write_mode, view, dec_log)
     }
 }
@@ -707,6 +719,54 @@ impl<S, D, OPM, SOPM, STM> DivisibleStatePersistentLog<S, D, OPM, SOPM, STM>
     }
 }
 
+impl<S, D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for DivisibleStatePersistentLog<S, D, OPM, SOPM, STM>
+    where S: DivisibleState + 'static,
+          D: ApplicationData + 'static,
+          OPM: OrderingProtocolMessage + 'static,
+          SOPM: StatefulOrderProtocolMessage + 'static,
+          STM: StateTransferMessage + 'static
+{
+    fn write_committed_seq_no(&self, write_mode: OperationMode, seq: SeqNo) -> Result<()> {
+        self.inner_log.write_committed_seq_no(write_mode, seq)
+    }
+
+    fn write_view_info(&self, write_mode: OperationMode, view_seq: View<OPM>) -> Result<()> {
+        self.inner_log.write_view_info(write_mode, view_seq)
+    }
+
+    fn write_message(&self, write_mode: OperationMode, msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<OPM>>>>) -> Result<()> {
+        self.inner_log.write_message(write_mode, msg)
+    }
+
+    fn write_proof_metadata(&self, write_mode: OperationMode, metadata: SerProofMetadata<OPM>) -> Result<()> {
+        self.inner_log.write_proof_metadata(write_mode, metadata)
+    }
+
+    fn write_proof(&self, write_mode: OperationMode, proof: SerProof<OPM>) -> Result<()> {
+        self.write_proof(write_mode, proof)
+    }
+
+    fn write_invalidate(&self, write_mode: OperationMode, seq: SeqNo) -> Result<()> {
+        self.write_invalidate(write_mode, seq)
+    }
+}
+
+impl<S, D, OPM, SOPM, STM> StatefulOrderingProtocolLog<OPM, SOPM> for DivisibleStatePersistentLog<S, D, OPM, SOPM, STM>
+    where S: DivisibleState + 'static,
+          D: ApplicationData + 'static,
+          OPM: OrderingProtocolMessage + 'static,
+          SOPM: StatefulOrderProtocolMessage + 'static,
+          STM: StateTransferMessage + 'static
+{
+    fn read_state(&self, write_mode: OperationMode) -> Result<Option<(View<OPM>, DecLog<SOPM>)>> {
+        self.inner_log.read_state(write_mode)
+    }
+
+    fn write_install_state(&self, write_mode: OperationMode, view: View<OPM>, dec_log: DecLog<SOPM>) -> Result<()> {
+        self.inner_log.write_install_state(write_mode, view, dec_log)
+    }
+}
+
 impl<S, D, OPM, SOPM, STM> DivisibleStateLog<S> for DivisibleStatePersistentLog<S, D, OPM, SOPM, STM>
     where S: DivisibleState + 'static,
           D: ApplicationData + 'static,
@@ -714,14 +774,14 @@ impl<S, D, OPM, SOPM, STM> DivisibleStateLog<S> for DivisibleStatePersistentLog<
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static
 {
-    fn write_descriptor(&self, write_mode: WriteMode, checkpoint: S::StateDescriptor) -> Result<()> {
+    fn write_descriptor(&self, write_mode: OperationMode, checkpoint: S::StateDescriptor) -> Result<()> {
         match self.inner_log.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
-                        self.request_tx.queue_descriptor(checkpoint).unwrap();
+                    OperationMode::NonBlockingSync(callback) => {
+                        self.request_tx.queue_descriptor(checkpoint)?;
                     }
-                    WriteMode::BlockingSync => {
+                    OperationMode::BlockingSync => {
                         todo!()
                     }
                 }
@@ -734,14 +794,34 @@ impl<S, D, OPM, SOPM, STM> DivisibleStateLog<S> for DivisibleStatePersistentLog<
         Ok(())
     }
 
-    fn write_part(&self, write_mode: WriteMode, parts: Vec<Arc<ReadOnly<S::StatePart>>>) -> Result<()> {
+    fn delete_part(&self, write_mode: OperationMode, part: S::PartDescription) -> Result<()> {
         match self.inner_log.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
+                    OperationMode::NonBlockingSync(callback) => {
+                        self.request_tx.queue_delete_part(part)?;
+                    }
+                    OperationMode::BlockingSync => {
+                        todo!()
+                    }
+                }
+            }
+            PersistentLogMode::None => {
+                Ok(())
+            }
+        }
+
+        Ok(())
+    }
+
+    fn write_parts(&self, write_mode: OperationMode, parts: Vec<Arc<ReadOnly<S::StatePart>>>) -> Result<()> {
+        match self.inner_log.persistency_mode {
+            PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
+                match write_mode {
+                    OperationMode::NonBlockingSync(callback) => {
                         self.request_tx.queue_state_parts(parts).unwrap();
                     }
-                    WriteMode::BlockingSync => {
+                    OperationMode::BlockingSync => {
                         todo!()
                     }
                 }
@@ -754,24 +834,44 @@ impl<S, D, OPM, SOPM, STM> DivisibleStateLog<S> for DivisibleStatePersistentLog<
         Ok(())
     }
 
-    fn delete_part(&self, write_mode: WriteMode, part: S::StateDescriptor) -> Result<()> {
+    fn write_parts_and_descriptor(&self, write_mode: OperationMode, descriptor: S::StateDescriptor, parts: Vec<Arc<ReadOnly<S::StatePart>>>) -> Result<()> {
         match self.inner_log.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 match write_mode {
-                    WriteMode::NonBlockingSync(callback) => {
-                        //self.request_tx.queue_descriptor(checkpoint).unwrap();
+                    OperationMode::NonBlockingSync(callback) => {
+                        self.request_tx.queue_descriptor_and_parts(descriptor, parts).unwrap();
                     }
-                    WriteMode::BlockingSync => {
+                    OperationMode::BlockingSync => {
                         todo!()
                     }
                 }
             }
-            PersistentLogMode::None => {
-                Ok(())
-            }
+            PersistentLogMode::None => {}
         }
 
         Ok(())
+    }
+
+    fn read_local_descriptor(&self) -> Result<Option<S::StateDescriptor>> {
+        match self.inner_log.persistency_mode {
+            PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
+                worker::divisible_state_worker::read_latest_descriptor(&self.inner_log.db)
+            }
+            PersistentLogMode::None => {
+                Ok(None)
+            }
+        }
+    }
+
+    fn read_local_part(&self, part: S::PartDescription) -> Result<Option<S::StatePart>> {
+        match self.inner_log.persistency_mode {
+            PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
+                worker::divisible_state_worker::read_state_part(&self.inner_log.db, part)
+            }
+            PersistentLogMode::None => {
+                Ok(None)
+            }
+        }
     }
 }
 
