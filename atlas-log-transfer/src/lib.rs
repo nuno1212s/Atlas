@@ -57,8 +57,6 @@ enum LogTransferState<V, P, D> {
     FetchingLog(usize, FetchSeqNo, Option<D>),
 }
 
-pub enum LogTransferResult {}
-
 pub type Serialization<LT: LogTransferProtocol<D, OP, NT, PL>, D, OP, NT, PL> = <LT as LogTransferProtocol<D, OP, NT, PL>>::Serialization;
 
 pub struct CollabLogTransfer<D, OP, NT, PL>
@@ -256,6 +254,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
         where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               ST: StateTransferMessage + 'static,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
+
         let (header, message) = message.into_inner();
 
         debug!("{:?} // Off context Log Transfer Message {:?} from {:?} with seq {:?}", self.node.id(),message.payload(), header.from(), message.sequence_number());
