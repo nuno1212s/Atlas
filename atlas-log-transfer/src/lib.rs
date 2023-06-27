@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use log::{debug, error, info, warn};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
@@ -15,12 +15,15 @@ use atlas_core::serialize::{NetworkView, OrderingProtocolMessage, OrderProtocolL
 use atlas_core::state_transfer::log_transfer::{DecLog, LogTM, LogTransferProtocol, LTResult, LTTimeoutResult, StatefulOrderProtocol};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 use atlas_execution::serialize::ApplicationData;
+use atlas_metrics::metrics::metric_duration;
 use crate::config::LogTransferConfig;
 use crate::messages::{LogTransferMessageKind, LTMessage};
 use crate::messages::serialize::LTMsg;
+use crate::metrics::{LOG_TRANSFER_LOG_CLONE_TIME_ID, LOG_TRANSFER_PROOFS_CLONE_TIME_ID};
 
 pub mod messages;
 pub mod config;
+pub mod metrics;
 
 #[derive(Clone)]
 struct FetchSeqNoData<V, P> {
@@ -36,6 +39,9 @@ struct FetchSeqNo {
     last_seq: SeqNo,
 }
 
+///FIXME: this should copy as it will copy all know proofs everytime
+/// This is fine atm since we aren't using this but we should fix it
+#[derive(Clone)]
 struct FetchingLogData<P> {
     first_seq: SeqNo,
     last_seq: SeqNo,
@@ -50,6 +56,8 @@ enum LogTransferState<V, P, D> {
     FetchingLogParts(usize, FetchingLogData<P>),
     FetchingLog(usize, FetchSeqNo, Option<D>),
 }
+
+pub enum LogTransferResult {}
 
 pub type Serialization<LT: LogTransferProtocol<D, OP, NT, PL>, D, OP, NT, PL> = <LT as LogTransferProtocol<D, OP, NT, PL>>::Serialization;
 
@@ -137,6 +145,8 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
             LogTransferMessageKind::RequestProofs(log_parts) => {
                 let mut parts = Vec::with_capacity(log_parts.len());
 
+                let start = Instant::now();
+
                 for part_seq in log_parts {
                     if let Some(part) = order_protocol.get_proof(*part_seq)? {
                         parts.push((*part_seq, part))
@@ -144,6 +154,8 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
                         error!("Request for log part {:?} failed as we do not possess it", *part_seq);
                     }
                 }
+
+                metric_duration(LOG_TRANSFER_PROOFS_CLONE_TIME_ID, start.elapsed());
 
                 let message_kind = LogTransferMessageKind::ReplyLogParts(order_protocol.view(), parts);
 
@@ -165,7 +177,11 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
             ST: StateTransferMessage + 'static,
             NT: Node<ServiceMsg<D, OP::Serialization, ST, Serialization<Self, D, OP, NT, PL>>>,
             PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
+        let start = Instant::now();
+
         let (view, decision_log) = order_protocol.snapshot_log()?;
+
+        metric_duration(LOG_TRANSFER_LOG_CLONE_TIME_ID, start.elapsed());
 
         let message_kind = LogTransferMessageKind::ReplyLog(view, decision_log);
 
@@ -225,6 +241,8 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
         let view = order_protocol.view();
         let message = LTMessage::new(lg_seq, LogTransferMessageKind::RequestLogState);
 
+        info!("{:?} // Requesting latest consensus seq no with seq {:?}", self.node.id(), lg_seq);
+
         self.timeouts.timeout_lt_request(self.default_timeout, view.quorum() as u32, message.sequence_number());
 
         let targets = NodeId::targets(0..view.n());
@@ -239,6 +257,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
               ST: StateTransferMessage + 'static,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
         let (header, message) = message.into_inner();
+
         debug!("{:?} // Off context Log Transfer Message {:?} from {:?} with seq {:?}", self.node.id(),message.payload(), header.from(), message.sequence_number());
 
         match message.payload().kind() {
@@ -272,10 +291,10 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
         )?;
 
         match status {
-            LTResult::NotNeeded => (),
+            LTResult::NotNeeded | LTResult::Running => (),
             // should not happen...
             _ => {
-                return Err("Invalid state reached!").wrapped(ErrorKind::CoreServer);
+                return Err(format!("Invalid state reached while processing log transfer message! {:?}", status)).wrapped(ErrorKind::CoreServer);
             }
         }
 
@@ -313,18 +332,24 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
             return Ok(LTResult::Running);
         }
 
-        match &mut self.log_transfer_state {
+        let lt_state = std::mem::replace(&mut self.log_transfer_state, LogTransferState::Init);
+
+        match lt_state {
             LogTransferState::Init => {
                 // Nothing is being done and this isn't a request, so ignore it
                 debug!("{:?} // Received log transfer message {:?} in Init state", self.node.id(), message.payload());
 
+                self.log_transfer_state = LogTransferState::Init;
+
                 return Ok(LTResult::NotNeeded);
             }
-            LogTransferState::FetchingSeqNo(i, curr_state) => {
+            LogTransferState::FetchingSeqNo(i, mut curr_state) => {
                 match message.into_inner().into_kind() {
                     LogTransferMessageKind::ReplyLogState(view, data) => {
                         if let Some((first_seq, (last_seq, last_seq_proof))) = data {
                             if order_protocol.verify_sequence_number(last_seq, &last_seq_proof)? {
+                                info!("{:?} // Received vote for sequence number range {:?} - {:?}", self.node.id(), first_seq, last_seq);
+
                                 let current_count = curr_state.received_initial_seq.entry(first_seq).or_insert_with(|| 0);
 
                                 *current_count += 1;
@@ -346,43 +371,46 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
                     }
                     _ => {
                         // Drop messages that are not relevant to us at this time
+
+                        self.log_transfer_state = LogTransferState::FetchingSeqNo(i, curr_state);
+
                         return Ok(LTResult::Running);
                     }
                 }
 
-                *i += 1;
+                let i = i + 1;
 
-                if *i == order_protocol.view().quorum() {
+                if i == order_protocol.view().quorum() {
                     if curr_state.last_seq > order_protocol.sequence_number() {
-                        let data = FetchSeqNo::from(&*curr_state);
+                        let seq = curr_state.last_seq;
 
-                        let prev = std::mem::replace(&mut self.log_transfer_state, LogTransferState::FetchingLog(0, data, None));
+                        debug!("{:?} // Installing sequence number and requesting decision log {:?}", self.node.id(), seq);
 
-                        match prev {
-                            LogTransferState::FetchingSeqNo(_, data) => {
-                                let seq = data.last_seq;
-                                debug!("{:?} // Installing sequence number and requesting state {:?}", self.node.id(), seq);
+                        let data = FetchSeqNo::from(&curr_state);
 
-                                // this step will allow us to ignore any messages
-                                // for older consensus instances we may have had stored;
-                                //
-                                // after we receive the latest recovery state, we
-                                // need to install the then latest sequence no;
-                                // this is done with the function
-                                // `install_recovery_state` from cst
-                                order_protocol.install_seq_no(seq)?;
+                        // this step will allow us to ignore any messages
+                        // for older consensus instances we may have had stored;
+                        //
+                        // after we receive the latest recovery state, we
+                        // need to install the then latest sequence no;
+                        // this is done with the function
+                        // `install_recovery_state` from cst
+                        order_protocol.install_seq_no(seq)?;
 
-                                self.request_entire_log(order_protocol, data)?;
-                            }
-                            _ => unreachable!()
-                        }
+                        self.request_entire_log(order_protocol, curr_state)?;
+
+                        self.log_transfer_state = LogTransferState::FetchingLog(0, data, None);
 
                         return Ok(LTResult::Running);
                     } else {
+                        self.log_transfer_state = LogTransferState::FetchingSeqNo(i, curr_state);
+
                         debug!("{:?} // No need to request log state, we are up to date", self.node.id());
                         return Ok(LTResult::LTPFinished(order_protocol.current_log()?.first_seq().unwrap_or(SeqNo::ZERO), order_protocol.sequence_number(), Vec::new()));
                     }
                 } else {
+                    self.log_transfer_state = LogTransferState::FetchingSeqNo(i, curr_state);
+
                     return Ok(LTResult::Running);
                 }
             }
@@ -400,11 +428,12 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
 
                         if data.first_seq <= first_log_seq {
                             if last_log_seq >= data.last_seq {
-
                                 info!("{:?} // Received log with sequence number {:?} and first sequence number {:?} from {:?} in view {:?}. Accepting log.",
                                         self.node.id(), log.sequence_number(), log.first_seq(), header.from(), view);
 
                                 let requests_to_execute = order_protocol.install_state(view, log)?;
+
+                                self.log_transfer_state = LogTransferState::Init;
 
                                 return Ok(LTResult::LTPFinished(first_log_seq, last_log_seq, requests_to_execute));
                             } else {
@@ -415,21 +444,27 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
                         }
                     }
                     _ => {
+                        self.log_transfer_state = LogTransferState::FetchingLog(i, data, current_log);
+
                         // Drop messages that are not relevant to us at this time
                         return Ok(LTResult::Running);
                     }
                 }
 
-                *i += 1;
+                let i = i + 1;
 
-                if *i == order_protocol.view().quorum() {
+                return if i == order_protocol.view().quorum() {
+                    self.log_transfer_state = LogTransferState::FetchingLog(i, data, current_log);
+
                     // If we get quorum messages and still haven't received a correct log, we need to request it again
-                    return Ok(LTResult::RunLTP);
-                }
+                    Ok(LTResult::RunLTP)
+                } else {
+                    self.log_transfer_state = LogTransferState::FetchingLog(i, data, current_log);
 
-                return Ok(LTResult::Running);
+                    Ok(LTResult::Running)
+                };
             }
-            LogTransferState::FetchingLogParts(i, curr_state) => { todo!() }
+            LogTransferState::FetchingLogParts(_, _) => todo!()
         }
     }
 

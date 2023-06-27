@@ -19,7 +19,7 @@ use crate::state_transfer::log_transfer::DecLog;
 ///How should the data be written and response delivered?
 /// If Sync is chosen the function will block on the call and return the result of the operation
 /// If Async is chosen the function will not block and will return the response as a message to a channel
-pub enum WriteMode {
+pub enum OperationMode {
     //When writing in async mode, you have the option of having the response delivered on a function
     //Of your choice
     //Note that this function will be executed on the persistent logging thread, so keep it short and
@@ -62,42 +62,46 @@ pub trait PersistableStateTransferProtocol {}
 /// Does not have any methods for proofs or decided logs since in theory there is no need for them
 pub trait OrderingProtocolLog<OP>: Clone where OP: OrderingProtocolMessage {
     /// Write to the persistent log the latest committed sequence number
-    fn write_committed_seq_no(&self, write_mode: WriteMode, seq: SeqNo) -> Result<()>;
+    fn write_committed_seq_no(&self, write_mode: OperationMode, seq: SeqNo) -> Result<()>;
 
     /// Write to the persistent log the latest View information
-    fn write_view_info(&self, write_mode: WriteMode, view_seq: View<OP>) -> Result<()>;
+    fn write_view_info(&self, write_mode: OperationMode, view_seq: View<OP>) -> Result<()>;
 
     /// Write a given message to the persistent log
-    fn write_message(&self, write_mode: WriteMode, msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<OP>>>>) -> Result<()>;
+    fn write_message(&self, write_mode: OperationMode, msg: Arc<ReadOnly<StoredMessage<ProtocolMessage<OP>>>>) -> Result<()>;
 
     /// Write the metadata for a given proof to the persistent log
     /// This in combination with the messages for that sequence number should form a valid proof
-    fn write_proof_metadata(&self, write_mode: WriteMode, metadata: SerProofMetadata<OP>) -> Result<()>;
+    fn write_proof_metadata(&self, write_mode: OperationMode, metadata: SerProofMetadata<OP>) -> Result<()>;
 
     /// Write a given proof to the persistent log
-    fn write_proof(&self, write_mode: WriteMode, proof: SerProof<OP>) -> Result<()>;
+    fn write_proof(&self, write_mode: OperationMode, proof: SerProof<OP>) -> Result<()>;
 
     /// Invalidate all messages with sequence number equal to the given one
-    fn write_invalidate(&self, write_mode: WriteMode, seq: SeqNo) -> Result<()>;
+    fn write_invalidate(&self, write_mode: OperationMode, seq: SeqNo) -> Result<()>;
 }
 
 /// Complements the default [`OrderingProtocolLog`] with methods for proofs and decided logs
 pub trait StatefulOrderingProtocolLog<OPM, SOPM>: OrderingProtocolLog<OPM>
     where OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage {
-    fn read_state(&self, write_mode: WriteMode) -> Result<Option<(View<OPM>, DecLog<SOPM>)>>;
+    fn read_state(&self, write_mode: OperationMode) -> Result<Option<(View<OPM>, DecLog<SOPM>)>>;
 
     /// Write a given decision log to the persistent log
-    fn write_install_state(&self, write_mode: WriteMode, view: View<OPM>, dec_log: DecLog<SOPM>) -> Result<()>;
+    fn write_install_state(&self, write_mode: OperationMode, view: View<OPM>, dec_log: DecLog<SOPM>) -> Result<()>;
 }
 
 ///
 /// The trait necessary for a logging protocol capable of handling monolithic states.
 /// 
 pub trait MonolithicStateLog<S> where S: MonolithicState {
+
+    /// Read the local checkpoint from the persistent log
+    fn read_checkpoint(&self) -> Result<Option<Checkpoint<S>>>;
+
     /// Write a checkpoint to the persistent log
     fn write_checkpoint(
         &self,
-        write_mode: WriteMode,
+        write_mode: OperationMode,
         checkpoint: Arc<ReadOnly<Checkpoint<S>>>,
     ) -> Result<()>;
 }
@@ -107,14 +111,27 @@ pub trait MonolithicStateLog<S> where S: MonolithicState {
 /// 
 pub trait DivisibleStateLog<S> where S: DivisibleState {
 
+    /// Read the descriptor of the local state
+    fn read_local_descriptor(&self) -> Result<Option<S::StateDescriptor>>;
+
+    /// Read a part from the local state log
+    fn read_local_part(&self, part: S::PartDescription) -> Result<Option<S::StatePart>>;
+
+    /// Write the descriptor of a state
     fn write_descriptor(&self,
-                        write_mode: WriteMode,
-                        checkpoint: Arc<ReadOnly<S::StateDescriptor>>,) -> Result<()>;
-    
-    fn write_part(&self,
-                  write_mode: WriteMode,
-                  checkpoint: Arc<ReadOnly<S::StatePart>>,) -> Result<()>;
-    
-    fn delete_part(&self, write_mode: WriteMode, part: S::StateDescriptor) -> Result<()>;
+                        write_mode: OperationMode,
+                        checkpoint: S::StateDescriptor,) -> Result<()>;
+
+    /// Write a given set of parts to the log
+    fn write_parts(&self,
+                   write_mode: OperationMode,
+                   parts: Vec<Arc<ReadOnly<S::StatePart>>>,) -> Result<()>;
+
+    /// Write a given set of parts and the descriptor of the state
+    fn write_parts_and_descriptor(&self, write_mode: OperationMode, descriptor: S::StateDescriptor,
+                                  parts: Vec<Arc<ReadOnly<S::StatePart>>>) -> Result<()>;
+
+    /// Delete a given part from the log
+    fn delete_part(&self, write_mode: OperationMode, part: S::PartDescription) -> Result<()>;
     
 }

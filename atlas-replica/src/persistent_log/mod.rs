@@ -5,7 +5,8 @@ use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessag
 use atlas_execution::serialize::ApplicationData;
 use atlas_common::error::*;
 use atlas_execution::ExecutorHandle;
-use atlas_persistent_log::{PersistentLog, PersistentLogModeTrait};
+use atlas_execution::state::monolithic_state::MonolithicState;
+use atlas_persistent_log::{MonStatePersistentLog, PersistentLog, PersistentLogModeTrait};
 
 pub trait SMRPersistentLog<D, OPM, SOPM>: OrderingProtocolLog<OPM> + StatefulOrderingProtocolLog<OPM, SOPM>
     where D: ApplicationData + 'static,
@@ -26,8 +27,9 @@ pub trait SMRPersistentLog<D, OPM, SOPM>: OrderingProtocolLog<OPM> + StatefulOrd
     fn wait_for_batch_persistency_and_execute(&self, batch: ProtocolConsensusDecision<D::Request>) -> Result<Option<ProtocolConsensusDecision<D::Request>>>;
 }
 
-impl<D, OPM, SOPM, STM> SMRPersistentLog<D, OPM, SOPM> for PersistentLog<D, OPM, SOPM, STM>
-    where D: ApplicationData + 'static,
+impl<S, D, OPM, SOPM, STM> SMRPersistentLog<D, OPM, SOPM> for MonStatePersistentLog<S, D, OPM, SOPM, STM>
+    where S: MonolithicState + 'static,
+          D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static,
           STM: StateTransferMessage + 'static {
@@ -38,7 +40,7 @@ impl<D, OPM, SOPM, STM> SMRPersistentLog<D, OPM, SOPM> for PersistentLog<D, OPM,
               POS: PersistableOrderProtocol<OPM, SOPM> + Send + 'static,
               PSP: PersistableStateTransferProtocol + Send + 'static,
               Self: Sized {
-        atlas_persistent_log::initialize_persistent_log::<D, K, T, OPM, SOPM, STM, POS, PSP>(executor, db_path)
+        atlas_persistent_log::initialize_mon_persistent_log::<S, D, K, T, OPM, SOPM, STM, POS, PSP>(executor, db_path)
     }
 
     fn wait_for_proof_persistency_and_execute(&self, batch: ProtocolConsensusDecision<D::Request>) -> Result<Option<ProtocolConsensusDecision<D::Request>>> {

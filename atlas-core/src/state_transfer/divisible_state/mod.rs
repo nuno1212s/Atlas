@@ -24,7 +24,7 @@ pub trait DivisibleStateTransfer<S, NT, PL>: StateTransferProtocol<S, NT, PL>
     /// you should also notify the ordering protocol that the state has been received
     /// and processed, so he is now safe to delete the state (Maybe this should be handled by the replica?)
     fn handle_state_received_from_app<D, OP, LP>(&mut self,
-                                                 descriptor: Vec<S::StateDescriptor>,
+                                                 descriptor: S::StateDescriptor,
                                                  state: Vec<S::StatePart>) -> Result<()>
         where D: ApplicationData + 'static,
               OP: OrderingProtocolMessage + 'static,

@@ -12,9 +12,8 @@ use atlas_core::persistent_log::{MonolithicStateLog, PersistableOrderProtocol, P
 use atlas_core::serialize::ServiceMsg;
 use atlas_core::state_transfer::log_transfer::{LogTransferProtocol, StatefulOrderProtocol};
 use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
-use atlas_core::state_transfer::{Checkpoint, StateTransferProtocol};
+use atlas_core::state_transfer::{Checkpoint};
 use atlas_execution::app::Application;
-use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::monolithic_state::{AppStateMessage, digest_state, InstallStateMessage};
 use atlas_execution::state::monolithic_state::MonolithicState;
 use atlas_metrics::metrics::metric_duration;

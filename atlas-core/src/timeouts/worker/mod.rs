@@ -323,7 +323,7 @@ impl TimeoutWorker {
             }
             ReceivedRequest::Cst(sender, message) => {
                 for timeout_requests in self.pending_timeouts.values_mut() {
-                    timeout_requests.drain_filter(|timeout_rq| {
+                    timeout_requests.extract_if(|timeout_rq| {
                         if let TimeoutKind::Cst(cst_rq) = &timeout_rq.info {
                             if *cst_rq == message {
                                 return timeout_rq.register_received_from(sender.clone());
@@ -362,7 +362,7 @@ impl TimeoutWorker {
     /// Remove all of the timeouts that are present in the given list (or all timeouts if there is no list)
     fn handle_clear_client_rqs(&mut self, requests: Option<Vec<ClientRqInfo>>) {
         for timeouts in self.pending_timeouts.values_mut() {
-            timeouts.drain_filter(|rq| {
+            timeouts.extract_if(|rq| {
                 match &rq.info {
                     TimeoutKind::ClientRequestTimeout(rq_info) => {
                         return if let Some(requests) = &requests {
@@ -381,7 +381,7 @@ impl TimeoutWorker {
     /// Remove all CST timeout requests that match the given sequence number (or all timeouts if there is no sequence number)
     fn handle_clear_cst_rqs(&mut self, seq_no: Option<SeqNo>) {
         for timeout_rqs in self.pending_timeouts.values_mut() {
-            timeout_rqs.drain_filter(|rq| {
+            timeout_rqs.extract_if(|rq| {
                 match &rq.info {
                     TimeoutKind::ClientRequestTimeout(_) => {
                         false
@@ -407,7 +407,7 @@ impl TimeoutWorker {
 
         //Clear all of the pending timeouts
         for timeouts in self.pending_timeouts.values_mut() {
-            timeouts.drain_filter(|rq| {
+            timeouts.extract_if(|rq| {
                 match &rq.info {
                     TimeoutKind::ClientRequestTimeout(_) => {
                         true

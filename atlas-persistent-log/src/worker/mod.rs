@@ -1,3 +1,6 @@
+pub(super) mod monolithic_worker;
+pub(super) mod divisible_state_worker;
+
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -12,10 +15,12 @@ use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::ordering_protocol::{ProtocolMessage, SerProof, SerProofMetadata, View};
 use atlas_core::state_transfer::{Checkpoint};
 use atlas_execution::serialize::ApplicationData;
-use crate::{CallbackType, ChannelMsg, InstallState, PWMessage, ResponseMessage, serialize};
+use crate::{CallbackType, ChannelMsg, DivisibleStateMessage, InstallState, MonolithicStateMessage, PWMessage, ResponseMessage, serialize};
 use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_core::state_transfer::log_transfer::DecLog;
+use atlas_execution::state::divisible_state::DivisibleState;
+use atlas_execution::state::monolithic_state::MonolithicState;
 
 
 ///Latest checkpoint made by the execution
@@ -31,39 +36,47 @@ const LATEST_VIEW_SEQ: &str = "latest_view_seq";
 /// The default column family for the persistent logging
 pub(super) const COLUMN_FAMILY_OTHER: &str = "other";
 pub(super) const COLUMN_FAMILY_PROOFS: &str = "proof_metadata";
+pub(super) const COLUMN_FAMILY_STATE: &str = "state";
 
 
 /// A handle for all of the persistent workers.
 /// Handles task distribution and load balancing across the
 /// workers
-pub struct PersistentLogWorkerHandle<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
+pub struct PersistentLogWorkerHandle<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
     round_robin_counter: AtomicUsize,
-    tx: Vec<PersistentLogWriteStub<D, OPM, SOPM>>,
+    tx: Vec<PersistentLogWriteStub<OPM, SOPM>>,
 }
+
 
 ///A stub that is only useful for writing to the persistent log
 #[derive(Clone)]
-pub struct PersistentLogWriteStub<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
-    pub(crate) tx: ChannelSyncTx<ChannelMsg<D, OPM, SOPM>>,
+pub struct PersistentLogWriteStub<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> {
+    pub(crate) tx: ChannelSyncTx<ChannelMsg<OPM, SOPM>>,
 }
 
-impl<D, OPM, SOPM> PersistentLogWorkerHandle<D, OPM, SOPM>
-    where D: ApplicationData + 'static,
-          OPM: OrderingProtocolMessage + 'static,
+/// A writing stub for divisible state objects
+#[derive(Clone)]
+pub struct PersistentDivisibleStateStub<S: DivisibleState> {
+    pub(crate) tx: ChannelSyncTx<DivisibleStateMessage<S>>,
+}
+
+impl<OPM, SOPM> PersistentLogWorkerHandle<OPM, SOPM>
+    where OPM: OrderingProtocolMessage + 'static,
           SOPM: StatefulOrderProtocolMessage + 'static {
-    pub fn new(tx: Vec<PersistentLogWriteStub<D, OPM, SOPM>>) -> Self {
+    pub fn new(tx: Vec<PersistentLogWriteStub<OPM, SOPM>>) -> Self {
         Self { round_robin_counter: AtomicUsize::new(0), tx }
     }
 }
 
 
 ///A worker for the persistent logging
-pub struct PersistentLogWorker<D, OPM, SOPM, POP, PSP> where D: ApplicationData + 'static,
-                                                             OPM: OrderingProtocolMessage + 'static,
-                                                             SOPM: StatefulOrderProtocolMessage + 'static,
-                                                             POP: PersistableOrderProtocol<OPM, SOPM> + 'static,
-                                                             PSP: PersistableStateTransferProtocol + 'static {
-    request_rx: ChannelSyncRx<ChannelMsg<D, OPM, SOPM>>,
+pub struct PersistentLogWorker<D, OPM, SOPM, POP, PSP>
+    where D: ApplicationData + 'static,
+          OPM: OrderingProtocolMessage + 'static,
+          SOPM: StatefulOrderProtocolMessage + 'static,
+          POP: PersistableOrderProtocol<OPM, SOPM> + 'static,
+          PSP: PersistableStateTransferProtocol + 'static {
+    request_rx: ChannelSyncRx<ChannelMsg<OPM, SOPM>>,
 
     response_txs: Vec<ChannelSyncTx<ResponseMessage>>,
 
@@ -73,9 +86,9 @@ pub struct PersistentLogWorker<D, OPM, SOPM, POP, PSP> where D: ApplicationData 
 }
 
 
-impl<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> PersistentLogWorkerHandle<D, OPM, SOPM> {
+impl<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> PersistentLogWorkerHandle<OPM, SOPM> {
     /// Employ a simple round robin load distribution
-    fn next_worker(&self) -> &PersistentLogWriteStub<D, OPM, SOPM> {
+    fn next_worker(&self) -> &PersistentLogWriteStub<OPM, SOPM> {
         let counter = self.round_robin_counter.fetch_add(1, Ordering::Relaxed);
 
         self.tx.get(counter % self.tx.len()).unwrap()
@@ -121,10 +134,6 @@ impl<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtoc
         Self::translate_error(self.next_worker().send((PWMessage::Message(message), callback)))
     }
 
-    /*pub(super) fn queue_state(&self, state: Arc<ReadOnly<Checkpoint<D::State>>>, callback: Option<CallbackType>) -> Result<()> {
-        //Self::translate_error(self.next_worker().send((PWMessage::Checkpoint(state), callback)))
-    }*/
-
     pub(super) fn queue_install_state(&self, install_state: InstallState<OPM, SOPM>, callback: Option<CallbackType>) -> Result<()> {
         Self::translate_error(self.next_worker().send((PWMessage::InstallState(install_state), callback)))
     }
@@ -141,46 +150,62 @@ impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
           SOPM: StatefulOrderProtocolMessage + 'static,
           PS: PersistableOrderProtocol<OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static {
-    pub fn new(request_rx: ChannelSyncRx<ChannelMsg<D, OPM, SOPM>>,
+    pub fn new(request_rx: ChannelSyncRx<ChannelMsg<OPM, SOPM>>,
                response_txs: Vec<ChannelSyncTx<ResponseMessage>>,
                db: KVDB) -> Self {
         Self { request_rx, response_txs, db, phantom: Default::default() }
     }
 
-    pub(super) fn work(mut self) {
-        loop {
-            let (request, callback) = match self.request_rx.recv() {
-                Ok((request, callback)) => (request, callback),
-                Err(err) => {
-                    error!("{:?}", err);
-                    break;
-                }
-            };
+    fn work_iteration(&mut self) -> Result<()> {
+        let (request, callback) = match self.request_rx.recv() {
+            Ok((request, callback)) => (request, callback),
+            Err(err) => {
+                error!("{:?}", err);
 
-            let response = self.exec_req(request);
+                return Err(Error::wrapped(ErrorKind::MsgLog, err));
+            }
+        };
 
-            if let Some(callback) = callback {
-                //If we have a callback to call with the response, then call it
-                // (callback)(response);
-            } else {
-                //If not, then deliver it down the response_txs
-                match response {
-                    Ok(response) => {
-                        for ele in &self.response_txs {
-                            if let Err(err) = ele.send(response.clone()) {
-                                error!("Failed to deliver response to log. {:?}", err);
-                            }
+        let response = self.exec_req(request);
+
+        if let Some(callback) = callback {
+            //If we have a callback to call with the response, then call it
+            // (callback)(response);
+        } else {
+            //If not, then deliver it down the response_txs
+            match response {
+                Ok(response) => {
+                    for ele in &self.response_txs {
+                        if let Err(err) = ele.send(response.clone()) {
+                            error!("Failed to deliver response to log. {:?}", err);
+
+                            return Err(Error::wrapped(ErrorKind::MsgLog, err));
                         }
                     }
-                    Err(err) => {
-                        error!("Failed to execute persistent log request because {:?}", err);
-                    }
                 }
+                Err(err) => {
+                    error!("Failed to execute persistent log request because {:?}", err);
+
+                    return Err(Error::wrapped(ErrorKind::MsgLog, err));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Work loop of this worker
+    pub(super) fn work(mut self) {
+        loop {
+            if let Err(err) = self.work_iteration() {
+                error!("Failed to execute persistent log request because {:?}", err);
+
+                break;
             }
         }
     }
 
-    fn exec_req(&mut self, message: PWMessage<D, OPM, SOPM>) -> Result<ResponseMessage> {
+    fn exec_req(&mut self, message: PWMessage<OPM, SOPM>) -> Result<ResponseMessage> {
         Ok(match message {
             PWMessage::View(view) => {
                 write_latest_view::<OPM>(&self.db, &view)?;
@@ -198,15 +223,6 @@ impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
                 let seq = msg.message().sequence_number();
 
                 ResponseMessage::WroteMessage(seq, msg.header().digest().clone())
-            }
-            PWMessage::Checkpoint(checkpoint) => {
-                /*let seq = checkpoint.sequence_number();
-
-                write_checkpoint::<D, OPM, SOPM, PS>(&self.db, checkpoint)?;
-
-                ResponseMessage::Checkpointed(seq)
-                 */
-                ResponseMessage::Checkpointed(SeqNo::ZERO)
             }
             PWMessage::Invalidate(seq) => {
                 invalidate_seq::<OPM, SOPM, PS>(&self.db, seq)?;
@@ -365,32 +381,7 @@ pub(super) fn write_latest_seq_no(db: &KVDB, seq_no: SeqNo) -> Result<()> {
 
     db.set(COLUMN_FAMILY_OTHER, LATEST_SEQ, &f_seq_no[..])
 }
-/*
-pub(super) fn write_checkpoint<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, PS: PersistableOrderProtocol<OPM, SOPM>>(db: &KVDB, checkpoint: Arc<ReadOnly<Checkpoint<D::State>>>) -> Result<()> {
-    let mut state = Vec::new();
 
-    D::serialize_state(&mut state, checkpoint.state())?;
-
-    db.set(COLUMN_FAMILY_OTHER, LATEST_STATE, state.as_slice())?;
-
-    let seq_no = serialize::make_seq(checkpoint.sequence_number())?;
-
-    //Only remove the previous operations after persisting the checkpoint,
-    //To assert no information can be lost
-    let start = db.get(COLUMN_FAMILY_OTHER, FIRST_SEQ)?.unwrap();
-
-    let start = serialize::read_seq(&start[..])?;
-
-    //Update the first seq number, officially making all of the previous messages useless
-    //And ready to be deleted
-    db.set(COLUMN_FAMILY_OTHER, FIRST_SEQ, seq_no.as_slice())?;
-
-    //TODO: This shouldn't be here. It should be handled by the ordering protocol
-    delete_proofs_between::<OPM, SOPM, PS>(db, start, checkpoint.sequence_number())?;
-
-    Ok(())
-}
-*/
 pub(super) fn write_dec_log<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, PS: PersistableOrderProtocol<OPM, SOPM>>(db: &KVDB, dec_log: &DecLog<SOPM>) -> Result<()> {
     write_latest_seq_no(db, dec_log.sequence_number())?;
 
@@ -485,8 +476,8 @@ fn delete_all_proof_metadata_for_seq(db: &KVDB, seq: SeqNo) -> Result<()> {
 }
 
 
-impl<D: ApplicationData, OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> Deref for PersistentLogWriteStub<D, OPM, SOPM> {
-    type Target = ChannelSyncTx<ChannelMsg<D, OPM, SOPM>>;
+impl<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> Deref for PersistentLogWriteStub<OPM, SOPM> {
+    type Target = ChannelSyncTx<ChannelMsg<OPM, SOPM>>;
 
     fn deref(&self) -> &Self::Target {
         &self.tx

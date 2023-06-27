@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
@@ -110,4 +111,24 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
         where ST: StateTransferMessage + 'static,
               NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+}
+
+
+impl<D: ApplicationData> Debug for LTResult<D> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LTResult::RunLTP => {
+                write!(f, "RunLTP")
+            }
+            LTResult::NotNeeded => {
+                write!(f, "NotNeeded")
+            }
+            LTResult::Running => {
+                write!(f, "Running")
+            }
+            LTResult::LTPFinished(first, last, _) => {
+                write!(f, "LTPFinished({:?}, {:?})", first, last)
+            }
+        }
+    }
 }
