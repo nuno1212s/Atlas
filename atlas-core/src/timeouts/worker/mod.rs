@@ -335,6 +335,20 @@ impl TimeoutWorker {
                 }
 
             }
+            ReceivedRequest::LT(sender, message) => {
+                for timeout_requests in self.pending_timeouts.values_mut() {
+                    timeout_requests.extract_if(|timeout_rq| {
+                        if let TimeoutKind::LogTransfer(cst_rq) = &timeout_rq.info {
+                            if *cst_rq == message {
+                                return timeout_rq.register_received_from(sender.clone());
+                            }
+                        }
+
+                        false
+                    });
+                }
+
+            }
         }
     }
 

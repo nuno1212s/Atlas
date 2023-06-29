@@ -331,6 +331,8 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
             return Ok(LTResult::Running);
         }
 
+        self.timeouts.received_log_request(header.from(), message.sequence_number());
+
         let lt_state = std::mem::replace(&mut self.log_transfer_state, LogTransferState::Init);
 
         match lt_state {

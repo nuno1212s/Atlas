@@ -75,6 +75,8 @@ enum ReceivedRequest {
     //Receive a CST message relating to the following sequence number from the given
     //Node
     Cst(NodeId, SeqNo),
+    // Log transfer message
+    LT(NodeId, SeqNo)
 }
 
 struct RqTimeoutMessage {
@@ -171,6 +173,13 @@ impl Timeouts {
     pub fn received_cst_request(&self, from: NodeId, seq_no: SeqNo) {
         self.handle.send(TimeoutMessage::MessagesReceived(
             ReceivedRequest::Cst(from, seq_no)))
+            .expect("Failed to contact timeout thread");
+    }
+
+    /// Handle having received a cst request
+    pub fn received_log_request(&self, from: NodeId, seq_no: SeqNo) {
+        self.handle.send(TimeoutMessage::MessagesReceived(
+            ReceivedRequest::LT(from, seq_no)))
             .expect("Failed to contact timeout thread");
     }
 

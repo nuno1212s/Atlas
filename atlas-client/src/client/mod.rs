@@ -509,7 +509,7 @@ impl<D, NT> Client<D, NT>
 
         async_runtime::spawn(async move {
             //Timeout delay
-            Delay::new(Duration::from_secs(1)).await;
+            Delay::new(Duration::from_secs(3)).await;
 
             let req_key = get_request_key(session_id, rq_id);
 
@@ -530,8 +530,11 @@ impl<D, NT> Client<D, NT>
                         }
                         ClientAwaker::Async(None) => {
                             //TODO: This has to be handled (should populate the ready with an empty, but timed out ready)
+                            debug!("Weird timeout");
                         }
                     }
+
+                    debug!("Request {:?} of session {:?} timed out", rq_id, session_id);
 
                     /*if let Some(sent_rqs) = &node.sent_rqs {
                         let bucket = &sent_rqs[req_key as usize % sent_rqs.len()];
