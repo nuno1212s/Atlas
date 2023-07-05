@@ -1,3 +1,6 @@
+pub mod reconfigurable_order_protocol;
+pub mod stateful_order_protocol;
+
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use atlas_common::crypto::hash::Digest;

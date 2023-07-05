@@ -114,7 +114,8 @@ pub(crate) fn deserialize_message<M: Serializable + 'static>(header: Header, pay
     rx
 }
 
-pub(crate) fn deserialize_and_push_message<M: Serializable + 'static> (header: Header, payload: BytesMut, connection: Arc<ConnectedPeer<NetworkMessage<M>>>) {
+pub(crate) fn deserialize_and_push_message<M: Serializable + 'static> (header: Header, payload: BytesMut,
+                                                                       connection: Arc<ConnectedPeer<NetworkMessage<M>>>) {
 
     let start = Instant::now();
 
@@ -124,6 +125,17 @@ pub(crate) fn deserialize_and_push_message<M: Serializable + 'static> (header: H
 
         let (message, _) = deserialize_message_no_threadpool::<M>(header.clone(), payload).unwrap();
 
-        connection.push_request(NetworkMessage::new(header, message)).unwrap();
+        match &message {
+            NetworkMessageKind::ReconfigurationMessage(reconf) => {
+
+            }
+            NetworkMessageKind::Ping(_) => {
+
+            }
+            NetworkMessageKind::System(_) => {
+                connection.push_request(NetworkMessage::new(header, message)).unwrap();
+            }
+        }
+
     });
 }

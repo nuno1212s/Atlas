@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use intmap::IntMap;
 use rustls::{ClientConfig, ServerConfig};
-use crate::message::{NetworkMessage, NetworkMessageKind, StoredSerializedNetworkMessage};
+use crate::message::{NetworkMessage, NetworkMessageKind, StoredMessage, StoredSerializedNetworkMessage};
 use crate::serialize::Serializable;
 use atlas_common::error::*;
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use atlas_common::channel::OneShotRx;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::node_id::NodeId;
+use atlas_reconfiguration::message::NetworkConfigurationMessage;
 use crate::config::NodeConfig;
-use crate::message_signing::SignDetached;
 use crate::tcpip::{ConnectionType, NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
 
 pub mod serialize;
@@ -29,6 +29,7 @@ pub mod metric;
 pub mod tcpip;
 pub mod tcp_ip_simplex;
 pub mod mio_tcp;
+pub mod network_reconfiguration;
 
 /// A trait defined that indicates how the connections are managed
 /// Allows us to verify various things about our current connections as well
@@ -57,14 +58,11 @@ pub trait NodeConnections {
 
 pub trait NodePK {
 
-    /// Detached info for signatures
-    fn sign_detached(&self) -> SignDetached;
-
     /// Get the public key for a given node
     fn get_public_key(&self, node: &NodeId) -> Option<PublicKey>;
 
     /// Get our own key pair
-    fn get_key_pair(&self) -> &KeyPair;
+    fn get_key_pair(&self) -> &Arc<KeyPair>;
 
 }
 
@@ -83,6 +81,20 @@ pub trait NodeIncomingRqHandler<T>: Send {
 
 }
 
+/// The trait for the handling of reconfiguration messages (Meant for the quorum only)
+/// Reconfiguration messages related to the network layer are handled by the network layer
+pub trait QuorumReconfigurationHandling {
+
+    /// Attempt to take reconfiguration messages that have been received so they can be processed
+    /// by the correct handler. Returns None if no message is available and does not block
+    fn try_receive_reconfiguration_messages(&self) -> Result<Option<StoredMessage<NetworkConfigurationMessage>>>;
+
+    /// Take reconfiguration messages that have been received so they can be processed
+    /// by the correct handler. Blocks until a message is available
+    fn receive_reconfiguration_messages(&self) -> Result<StoredMessage<NetworkConfigurationMessage>>;
+
+}
+
 /// A network node. Handles all the connections between nodes.
 pub trait Node<M: Serializable + 'static> : Send + Sync {
 
@@ -93,6 +105,8 @@ pub trait Node<M: Serializable + 'static> : Send + Sync {
     type Crypto: NodePK;
 
     type IncomingRqHandler: NodeIncomingRqHandler<NetworkMessage<M>>;
+
+    type ReconfigurationHandling: QuorumReconfigurationHandling;
 
     /// Bootstrap the node
     async fn bootstrap(node_config: Self::Config) -> Result<Arc<Self>>;
@@ -111,6 +125,9 @@ pub trait Node<M: Serializable + 'static> : Send + Sync {
 
     /// Get a reference to the incoming request handling
     fn node_incoming_rq_handling(&self) -> &Arc<Self::IncomingRqHandler>;
+
+    /// Quorum reconfiguration message request handling.
+    fn quorum_reconfig_handling(&self) -> &Arc<Self::ReconfigurationHandling>;
 
     /// Sends a message to a given target.
     /// Does not block on the message sent. Returns a result that is

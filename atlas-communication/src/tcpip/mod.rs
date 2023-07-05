@@ -19,11 +19,12 @@ use atlas_common::node_id::NodeId;
 use atlas_common::prng::ThreadSafePrng;
 use atlas_common::socket::{AsyncListener, SyncListener};
 
+use crate::network_reconfiguration::ReconfigurableNetworkNode;
 use crate::{Node, NodePK};
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::config::{NodeConfig, TlsConfig};
 use crate::message::{NetworkMessage, NetworkMessageKind, StoredSerializedNetworkMessage, WireMessage};
-use crate::message_signing::{NodePKCrypto, NodePKShared, SignDetached};
+use crate::message_signing::{NodePKCrypto, NodePKShared};
 use crate::serialize::{Buf, Serializable};
 use crate::tcpip::connections::{ConnCounts, PeerConnection, PeerConnections};
 
@@ -312,6 +313,8 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
 
     type IncomingRqHandler = PeerIncomingRqHandling<NetworkMessage<M>>;
 
+    type ReconfigurationHandling = ReconfigurableNetworkNode;
+
     async fn bootstrap(cfg: NodeConfig) -> Result<Arc<Self>> {
         let id = cfg.id;
 
@@ -386,6 +389,10 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
     }
 
     fn node_incoming_rq_handling(&self) -> &Arc<PeerIncomingRqHandling<NetworkMessage<M>>> { &self.client_pooling }
+
+    fn quorum_reconfig_handling(&self) -> &Arc<Self::ReconfigurationHandling> {
+        todo!()
+    }
 
     fn send(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> Result<()> {
         let (send_to_me, send_to_others, failed) =
@@ -481,7 +488,7 @@ enum SendToPeer<M: Serializable + 'static> {
 impl<M: Serializable + 'static> SendTo<M> {
     fn value(self, msg: Either<(NetworkMessageKind<M>, Buf, Digest), (Buf, Digest)>) {
         let key_pair = if let Some(node_shared) = &self.shared {
-            Some(node_shared.my_key())
+            Some(&**node_shared.my_key())
         } else {
             None
         };

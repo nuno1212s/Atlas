@@ -18,6 +18,7 @@ use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::crypto::signature::{KeyPair, PublicKey, Signature};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_reconfiguration::message::NetworkConfigurationMessage;
 
 use crate::serialize::{Buf, Serializable};
 
@@ -126,6 +127,7 @@ impl<M> From<(Header, NetworkMessageKind<M>)> for NetworkMessage<M> where M: Ser
 /// that is available.
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum NetworkMessageKind<M> where M: Serializable {
+    ReconfigurationMessage(NetworkConfigurationMessage),
     Ping(PingMessage),
     System(System<M::Message>),
 }
@@ -135,6 +137,7 @@ impl<M> Clone for NetworkMessageKind<M> where M: Serializable {
         match self {
             NetworkMessageKind::Ping(ping) => { NetworkMessageKind::Ping(ping.clone()) }
             NetworkMessageKind::System(sys) => { NetworkMessageKind::System(sys.clone()) }
+            NetworkMessageKind::ReconfigurationMessage(reconfig) => { NetworkMessageKind::ReconfigurationMessage(reconfig.clone()) }
         }
     }
 }
@@ -146,33 +149,33 @@ impl<M> NetworkMessageKind<M> where M: Serializable {
 
     pub fn deref_system(&self) -> &M::Message {
         match self {
-            NetworkMessageKind::Ping(_) => {
-                unreachable!()
-            }
             NetworkMessageKind::System(sys) => {
                 sys
+            }
+            _ => {
+                unreachable!()
             }
         }
     }
 
     pub fn into(self) -> M::Message {
         match self {
-            NetworkMessageKind::Ping(_) => {
-                unreachable!()
-            }
             NetworkMessageKind::System(sys_msg) => {
                 sys_msg.inner
+            }
+            _ => {
+                unreachable!()
             }
         }
     }
 
     pub fn into_system(self) -> M::Message {
         match self {
-            NetworkMessageKind::Ping(_) => {
-                unreachable!()
-            }
             NetworkMessageKind::System(sys_msg) => {
                 sys_msg.inner
+            }
+            _ => {
+                unreachable!()
             }
         }
     }
@@ -192,6 +195,9 @@ impl<M> Debug for NetworkMessageKind<M> where M: Serializable {
             }
             NetworkMessageKind::System(sys) => {
                 write!(f, "System message")
+            }
+            NetworkMessageKind::ReconfigurationMessage(_) => {
+                write!(f, "Reconfiguration message")
             }
         }
     }
@@ -615,7 +621,6 @@ impl WireMessage {
 
 impl Debug for Header {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-
         let version = self.version;
         let length = self.length;
         let signature = self.signature;
@@ -625,7 +630,7 @@ impl Debug for Header {
         let to = self.to;
 
         write!(f, "Header {{ version: {}, length: {}, signature: {:x?}, digest: {:x?}, nonce: {}, from: {}, to: {} }}",
-            version, length, signature, digest, nonce, from, to
+               version, length, signature, digest, nonce, from, to
         )
     }
 }
@@ -634,8 +639,7 @@ impl Debug for Header {
 mod tests {
     use atlas_common::crypto::hash::Digest;
     use atlas_common::crypto::signature::Signature;
-    use crate::bft::communication::message::{WireMessage, Header};
-    use crate::message::{Header, WireMessage};
+    use crate::message::{WireMessage, Header};
 
     #[test]
     fn test_header_serialize() {

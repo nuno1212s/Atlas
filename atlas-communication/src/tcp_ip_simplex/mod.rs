@@ -20,6 +20,7 @@ use crate::config::{NodeConfig, TcpConfig, TlsConfig};
 use crate::message::{NetworkMessage, NetworkMessageKind, StoredSerializedNetworkMessage, WireMessage};
 use crate::message_signing::{NodePKCrypto, NodePKShared};
 use crate::Node;
+use crate::network_reconfiguration::ReconfigurableNetworkNode;
 use crate::serialize::{Buf, Serializable};
 use crate::tcp_ip_simplex::connections::{PeerConnection, SimplexConnections};
 use crate::tcpip::connections::ConnCounts;
@@ -209,8 +210,9 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
     type ConnectionManager = SimplexConnections<M>;
     type Crypto = NodePKCrypto;
     type IncomingRqHandler = PeerIncomingRqHandling<NetworkMessage<M>>;
+    type ReconfigurationHandling = ReconfigurableNetworkNode;
 
-    async fn bootstrap(cfg: Self::Config) -> atlas_common::error::Result<Arc<Self>> {
+    async fn bootstrap(cfg: Self::Config) -> Result<Arc<Self>> {
 
         let id = cfg.id;
 
@@ -288,7 +290,11 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
         &self.client_pooling
     }
 
-    fn send(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> atlas_common::error::Result<()> {
+    fn quorum_reconfig_handling(&self) -> &Arc<Self::ReconfigurationHandling> {
+        todo!()
+    }
+
+    fn send(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> Result<()> {
         let (send_to_me, send_to_others, failed) =
             self.send_tos(None, iter::once(target), flush);
 
@@ -301,7 +307,7 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
         Ok(())
     }
 
-    fn send_signed(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> atlas_common::error::Result<()> {
+    fn send_signed(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> Result<()> {
         let keys = Some(&self.keys);
 
         let (send_to_me, send_to_others, failed) =
@@ -384,7 +390,7 @@ enum SendToPeer<M: Serializable + 'static> {
 impl<M: Serializable + 'static> SendTo<M> {
     fn value(self, msg: Either<(NetworkMessageKind<M>, Buf, Digest), (Buf, Digest)>) {
         let key_pair = if let Some(node_shared) = &self.shared {
-            Some(node_shared.my_key())
+            Some(&**node_shared.my_key())
         } else {
             None
         };

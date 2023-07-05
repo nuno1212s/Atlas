@@ -23,7 +23,6 @@ atlas-communication = { path = "../atlas-communication" }
 atlas-execution = { path = "../atlas-execution" }
 atlas-capnp = { path = "../atlas-capnp", optional = true }
 atlas-metrics = { path = "../atlas-metrics" }
-atlas-reconfiguration = {path = "../atlas-reconfiguration"}
 serde = { version = "*", optional = true }
 crossbeam = "0.8.2"
 intmap = "2.0.0"

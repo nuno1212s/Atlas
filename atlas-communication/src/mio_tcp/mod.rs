@@ -21,6 +21,7 @@ use crate::metric::THREADPOOL_PASS_TIME_ID;
 use crate::mio_tcp::connections::{Connections, PeerConnection};
 use crate::mio_tcp::connections::epoll_group::{init_worker_group_handle, initialize_worker_group};
 use crate::Node;
+use crate::network_reconfiguration::ReconfigurableNetworkNode;
 use crate::serialize::{Buf, Serializable};
 use crate::tcpip::connections::ConnCounts;
 use crate::tcpip::PeerAddr;
@@ -187,6 +188,7 @@ impl<M: Serializable + 'static> Node<M> for MIOTcpNode<M> {
     type ConnectionManager = Connections<M>;
     type Crypto = NodePKCrypto;
     type IncomingRqHandler = PeerIncomingRqHandling<NetworkMessage<M>>;
+    type ReconfigurationHandling = ReconfigurableNetworkNode;
 
     async fn bootstrap(node_config: Self::Config) -> atlas_common::error::Result<Arc<Self>> {
         let MioConfig { node_config: cfg, worker_count } = node_config;
@@ -266,6 +268,10 @@ impl<M: Serializable + 'static> Node<M> for MIOTcpNode<M> {
 
     fn node_incoming_rq_handling(&self) -> &Arc<Self::IncomingRqHandler> {
         &self.client_pooling
+    }
+
+    fn quorum_reconfig_handling(&self) -> &Arc<Self::ReconfigurationHandling> {
+        todo!()
     }
 
 
@@ -363,7 +369,7 @@ enum SendToPeer<M: Serializable + 'static> {
 impl<M: Serializable + 'static> SendTo<M> {
     fn value(self, msg: Either<(NetworkMessageKind<M>, Buf, Digest), (Buf, Digest)>) {
         let key_pair = if let Some(node_shared) = &self.shared {
-            Some(node_shared.my_key())
+            Some(&**node_shared.my_key())
         } else {
             None
         };

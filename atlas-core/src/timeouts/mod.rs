@@ -304,6 +304,12 @@ impl<WP, D> TimeoutOrchestrator<WP, D> {
                         .expect("Failed to send worker message");
                 }
             }
+            ReceivedRequest::LT(sender, seq) => {
+                for work_channel in &self.worker_channel {
+                    work_channel.send(TimeoutWorkerMessage::MessagesReceived(ReceivedRequest::LT(sender, seq)))
+                        .expect("Failed to send worker message");
+                }
+            }
         }
     }
 

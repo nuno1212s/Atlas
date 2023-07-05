@@ -7,47 +7,12 @@ use atlas_communication::Node;
 use atlas_execution::serialize::ApplicationData;
 use crate::messages::{LogTransfer, StateTransfer};
 use crate::ordering_protocol::{OrderingProtocol, OrderingProtocolArgs, SerProof, View};
-use crate::persistent_log::{StatefulOrderingProtocolLog};
+use crate::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
+use crate::persistent_log::StatefulOrderingProtocolLog;
 use crate::serialize::{LogTransferMessage, ServiceMsg, StatefulOrderProtocolMessage, StateTransferMessage};
 use crate::timeouts::{RqTimeout, Timeouts};
 
-pub type DecLog<OP> = <OP as StatefulOrderProtocolMessage>::DecLog;
-
 pub type LogTM<M: LogTransferMessage> = <M as LogTransferMessage>::LogTransferMessage;
-
-/// An order protocol that uses the log transfer protocol to manage its log
-pub trait StatefulOrderProtocol<D: ApplicationData + 'static, NT, PL>: OrderingProtocol<D, NT, PL> {
-    /// The serialization abstraction for ordering protocols with logs, so we can then send it across the network
-    type StateSerialization: StatefulOrderProtocolMessage + 'static;
-
-    fn initialize_with_initial_state(config: Self::Config, args: OrderingProtocolArgs<D, NT, PL>,
-                                     dec_log: DecLog<Self::StateSerialization>) -> Result<Self> where
-        Self: Sized;
-
-    /// Install a state received from other replicas in the system
-    /// Should only alter the necessary things within its own state and
-    /// then should return the state and a list of all requests that should
-    /// then be executed by the application.
-    fn install_state(&mut self, view_info: View<Self::Serialization>,
-                     dec_log: DecLog<Self::StateSerialization>) -> Result<Vec<D::Request>>
-        where PL: StatefulOrderingProtocolLog<Self::Serialization, Self::StateSerialization>;
-
-    /// Snapshot the current log of the replica
-    fn snapshot_log(&mut self) -> Result<(View<Self::Serialization>, DecLog<Self::StateSerialization>)>
-        where PL: StatefulOrderingProtocolLog<Self::Serialization, Self::StateSerialization>;
-
-    /// Get a reference to the current log of this ordering protocol
-    fn current_log(&self) -> Result<&DecLog<Self::StateSerialization>>
-        where PL: StatefulOrderingProtocolLog<Self::Serialization, Self::StateSerialization>;
-
-    /// Notify the consensus protocol that we have a checkpoint at a given sequence number,
-    /// meaning it can now be garbage collected
-    fn checkpointed(&mut self, seq: SeqNo) -> Result<()>
-        where PL: StatefulOrderingProtocolLog<Self::Serialization, Self::StateSerialization>;
-
-    /// Get the proof for a given consensus instance
-    fn get_proof(&self, seq: SeqNo) -> Result<Option<SerProof<Self::Serialization>>>;
-}
 
 /// The result of processing a message in the log transfer protocol
 pub enum LTResult<D: ApplicationData> {
@@ -66,7 +31,7 @@ pub enum LTTimeoutResult {
     NotNeeded,
 }
 
-
+/// The trait which defines the necessary methods for a log transfer protocol
 pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
                                                    OP: StatefulOrderProtocol<D, NT, PL> + 'static {
     /// The type which implements StateTransferMessage, to be implemented by the developer

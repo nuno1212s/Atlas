@@ -1,0 +1,303 @@
+pub mod message;
+mod metrics;
+
+use crate::message::{
+    KnownNodesMessage, NetworkJoinRejectionReason, NetworkJoinResponseMessage, NodeTriple,
+    QuorumEnterRejectionReason, QuorumEnterResponse, QuorumNodeJoinResponse,
+};
+use atlas_common::async_runtime as rt;
+use atlas_common::channel::OneShotRx;
+use atlas_common::crypto::signature::{KeyPair, PublicKey, Signature};
+use atlas_common::node_id::NodeId;
+use atlas_common::ordering::{Orderable, SeqNo};
+use futures::future::join_all;
+#[cfg(feature = "serialize_serde")]
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
+
+/// The reconfiguration module.
+/// Provides various utilities for allowing reconfiguration of the network
+/// Such as message definitions, important types and etc.
+///
+/// This module will then be used by the parts of the system which must be reconfigurable
+/// (For example, the network
+#[derive(Clone)]
+pub enum CurrentNetworkState {
+    JoiningNetwork,
+    Stable,
+    LeavingNetwork,
+}
+
+pub type NetworkPredicate =
+    fn(Arc<NetworkNode>, NodeTriple) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
+
+/// Our current view of the network and the information about our own node
+/// This is the node data for the network information. This does not
+/// directly store information about the quorum, only about the nodes that we
+/// currently know about
+pub struct NetworkNode {
+    node_id: NodeId,
+    key_pair: Arc<KeyPair>,
+
+    address: PeerAddr,
+
+    //This has to be here since ring doesn't allow us to get the bytes from a public key -,-
+    pub_key_bytes: Vec<u8>,
+
+    known_nodes: RwLock<KnownNodes>,
+
+    /// Predicates that must be satisfied for a node to be allowed to join the network
+    predicates: Vec<NetworkPredicate>,
+}
+
+pub type QuorumPredicate =
+    fn(Arc<QuorumNode>, NodeTriple) -> OneShotRx<Option<QuorumEnterRejectionReason>>;
+
+pub struct QuorumNode {
+    node_id: NodeId,
+    current_network_view: NetworkView,
+
+    /// Predicates that must be satisfied for a node to be allowed to join the quorum
+    predicates: Vec<QuorumPredicate>,
+}
+
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct PeerAddr;
+
+/// The map of known nodes in the network, independently of whether they are part of the current
+/// quorum or not
+#[derive(Clone)]
+pub struct KnownNodes {
+    node_keys: BTreeMap<NodeId, PublicKey>,
+    // We have to fucking store the actual bytes separately since ring doesn't fucking allow us to access them
+    // After having parsed the PublicKey. Fucking ridiculous
+    node_key_bytes: BTreeMap<NodeId, Vec<u8>>,
+    node_addrs: BTreeMap<NodeId, PeerAddr>,
+}
+
+/// The current view of nodes in the network, as in which of them
+/// are currently partaking in the consensus
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct NetworkView {
+    sequence_number: SeqNo,
+
+    quorum_members: Vec<NodeId>,
+}
+
+impl Orderable for NetworkView {
+    fn sequence_number(&self) -> SeqNo {
+        self.sequence_number
+    }
+}
+
+impl NetworkNode {
+    pub fn empty_network_node(node_id: NodeId,
+         key_pair: KeyPair,
+         pub_key_bytes: Vec<u8>,
+        address: PeerAddr) -> Self {
+        NetworkNode {
+            node_id,
+            key_pair: Arc::new(key_pair),
+            known_nodes: RwLock::new(KnownNodes::empty()),
+            predicates: vec![],
+            pub_key_bytes,
+            address,
+        }
+    }
+
+    pub fn with_bootstrap_nodes(
+        node_id: NodeId,
+        key_pair: KeyPair,
+        pub_key_bytes: Vec<u8>,
+        address: PeerAddr,
+        bootstrap_nodes: BTreeMap<NodeId, (PeerAddr, Vec<u8>)>,
+    ) -> Self {
+        let node = NetworkNode::empty_network_node(node_id, key_pair, pub_key_bytes, address);
+
+        {
+            let mut write_guard = node.known_nodes.write().unwrap();
+
+            for (node_id, (addr, pk_bytes)) in bootstrap_nodes {
+                let public_key = PublicKey::from_bytes(&pk_bytes[..]).unwrap();
+
+                write_guard.node_key_bytes.insert(node_id, pk_bytes);
+
+                write_guard.node_keys.insert(node_id, public_key);
+                write_guard.node_addrs.insert(node_id, addr);
+            }
+        }
+
+        node
+    }
+
+    pub fn register_join_predicate(&mut self, predicate: NetworkPredicate) {
+        self.predicates.push(predicate)
+    }
+
+    pub fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+
+    /// Handle a node having introduced itself to us by inserting it into our known nodes
+    pub fn handle_node_introduced(&self, node: NodeTriple) {
+        let node_id = node.node_id();
+
+        let mut write_guard = self.known_nodes.write().unwrap();
+
+        if !write_guard.node_keys.contains_key(&node_id) {
+            let public_key = PublicKey::from_bytes(&node.public_key()[..]).unwrap();
+
+            write_guard
+                .node_key_bytes
+                .insert(node_id, node.public_key().clone());
+            write_guard.node_keys.insert(node_id, public_key);
+            write_guard.node_addrs.insert(node_id, node.addr().clone());
+        }
+    }
+
+    pub fn handle_successfull_network_join(&self, known_nodes: KnownNodesMessage) {
+        for node in known_nodes.into_nodes() {
+            self.handle_node_introduced(node);
+        }
+    }
+
+    pub async fn can_introduce_node(
+        self: Arc<Self>,
+        node_id: NodeTriple,
+    ) -> NetworkJoinResponseMessage {
+        let mut results = Vec::with_capacity(self.predicates.len());
+
+        for x in &self.predicates {
+            let rx = x(self.clone(), node_id.clone());
+
+            results.push(rx);
+        }
+
+        let results = join_all(results.into_iter()).await;
+
+        for join_result in results {
+            if let Some(reason) = join_result.unwrap() {
+                return NetworkJoinResponseMessage::Rejected(reason);
+            }
+        }
+
+        self.handle_node_introduced(node_id);
+
+        let read_guard = self.known_nodes.read().unwrap();
+
+        return NetworkJoinResponseMessage::Successful(KnownNodesMessage::from(&*read_guard));
+    }
+
+    pub fn get_pk_for_node(&self, node: &NodeId) -> Option<PublicKey> {
+        self.known_nodes
+            .read()
+            .unwrap()
+            .node_keys
+            .get(node)
+            .cloned()
+    }
+
+    pub fn keypair(&self) -> &Arc<KeyPair> {
+        &self.key_pair
+    }
+
+    pub fn known_nodes(&self) -> Vec<NodeId> {
+        self.known_nodes.read().unwrap().node_addrs.keys().cloned().collect()
+    }
+
+    pub fn node_triple(&self) -> NodeTriple {
+        NodeTriple::new(self.node_id, self.pub_key_bytes.clone(), self.address.clone())
+    }
+}
+
+impl QuorumNode {
+    pub fn empty_quorum_node(node_id: NodeId) -> Self {
+        QuorumNode {
+            node_id,
+            current_network_view: NetworkView::empty(),
+            predicates: vec![],
+        }
+    }
+
+    pub fn install_network_view(&mut self, network_view: NetworkView) {
+        self.current_network_view = network_view;
+    }
+
+    /// Are we a member of the current quorum
+    pub fn is_quorum_member(&self) -> bool {
+        self.current_network_view
+            .quorum_members
+            .contains(&self.node_id)
+    }
+
+    /// Can a given node join the quorum
+    pub async fn can_node_join_quorum(self: Arc<Self>, node_id: NodeTriple) -> QuorumEnterResponse {
+        if !self.is_quorum_member() {
+            return QuorumEnterResponse::Rejected(
+                QuorumEnterRejectionReason::NodeIsNotQuorumParticipant,
+            );
+        }
+
+        let mut results = Vec::with_capacity(self.predicates.len());
+
+        for x in &self.predicates {
+            let rx = x(self.clone(), node_id.clone());
+
+            results.push(rx);
+        }
+
+        let results = join_all(results.into_iter()).await;
+
+        for join_result in results {
+            if let Some(reason) = join_result.unwrap() {
+                return QuorumEnterResponse::Rejected(reason);
+            }
+        }
+
+        return QuorumEnterResponse::Successful(QuorumNodeJoinResponse::new(
+            self.current_network_view.sequence_number(),
+            node_id.node_id(),
+            self.node_id,
+        ));
+    }
+}
+
+impl KnownNodes {
+    fn empty() -> Self {
+        Self {
+            node_keys: BTreeMap::new(),
+            node_addrs: BTreeMap::new(),
+            node_key_bytes: BTreeMap::new(),
+        }
+    }
+
+    pub fn node_keys(&self) -> &BTreeMap<NodeId, PublicKey> {
+        &self.node_keys
+    }
+
+    pub fn node_addrs(&self) -> &BTreeMap<NodeId, PeerAddr> {
+        &self.node_addrs
+    }
+}
+
+impl NetworkView {
+    pub fn empty() -> Self {
+        NetworkView {
+            sequence_number: SeqNo::ZERO,
+            quorum_members: Vec::new(),
+        }
+    }
+}
+
+impl Clone for QuorumNode {
+    fn clone(&self) -> Self {
+        QuorumNode {
+            node_id: self.node_id,
+            current_network_view: self.current_network_view.clone(),
+            predicates: self.predicates.clone(),
+        }
+    }
+}
