@@ -153,10 +153,10 @@ impl From<&KnownNodes> for KnownNodesMessage {
 
         let mut known_nodes = Vec::with_capacity(value.node_keys.len());
 
-        for node_id in value.node_keys().keys() {
+        for (node_id, public_key) in value.node_keys() {
             known_nodes.push(NodeTriple {
                 node_id: *node_id,
-                pub_key: value.node_key_bytes.get(node_id).unwrap().clone(),
+                pub_key: public_key.pk_bytes().to_vec(),
                 addr: value.node_addrs.get(node_id).unwrap().clone(),
             });
         }

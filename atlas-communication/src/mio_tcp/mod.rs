@@ -240,15 +240,18 @@ impl<M: Serializable + 'static> Node<M> for MIOTcpNode<M> {
 
         replica_listener.map(|listener| connections.setup_tcp_server_worker(listener));
 
-
-        Ok(Arc::new(Self {
+        let network_node = Arc::new(Self {
             id,
             first_cli: cfg.first_cli,
             rng,
             connections,
             client_pooling: peers,
-            reconfiguration: reconf_node,
-        }))
+            reconfiguration: reconf_node.clone(),
+        });
+
+        reconf_node.start_bootstrap_process(network_node.clone()).await?;
+
+        Ok(network_node)
     }
 
     fn id(&self) -> NodeId {

@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use atlas_core::ordering_protocol::stateful_order_protocol::DecLog;
 use log::error;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, SendError};
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -18,7 +19,6 @@ use atlas_execution::serialize::ApplicationData;
 use crate::{CallbackType, ChannelMsg, DivisibleStateMessage, InstallState, MonolithicStateMessage, PWMessage, ResponseMessage, serialize};
 use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
-use atlas_core::state_transfer::log_transfer::DecLog;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 

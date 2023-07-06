@@ -3,6 +3,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use futures_timer::Delay;
 
 use log::{debug, error, info, trace};
@@ -28,7 +29,7 @@ use atlas_core::request_pre_processing::{initialize_request_pre_processor, PrePr
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ServiceMsg, StateTransferMessage};
 use atlas_core::state_transfer::{Checkpoint, StateTransferProtocol, STResult, STTimeoutResult};
-use atlas_core::state_transfer::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult, StatefulOrderProtocol};
+use atlas_core::state_transfer::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
 use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::{metric_duration, metric_increment};

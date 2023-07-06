@@ -9,8 +9,6 @@ pub struct ReconfigurableNetworkConfig {
     pub node_id: NodeId,
     // The key pair of this node
     pub key_pair: KeyPair,
-    // The public key bytes, due to not being to extract them from the parsed public key
-    pub pub_key_bytes: Vec<u8>,
     // Our address
     pub our_address: PeerAddr,
     // The nodes that we already know about (Boostrap nodes of the network)

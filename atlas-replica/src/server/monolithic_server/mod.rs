@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
+use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use log::error;
 use atlas_common::error::*;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
@@ -10,7 +11,7 @@ use atlas_common::globals::ReadOnly;
 use atlas_communication::Node;
 use atlas_core::persistent_log::{MonolithicStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::serialize::ServiceMsg;
-use atlas_core::state_transfer::log_transfer::{LogTransferProtocol, StatefulOrderProtocol};
+use atlas_core::state_transfer::log_transfer::{LogTransferProtocol};
 use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_core::state_transfer::{Checkpoint};
 use atlas_execution::app::Application;

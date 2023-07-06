@@ -1,16 +1,17 @@
 use crate::message::{NetworkMessage, NetworkMessageKind, StoredMessage};
 use crate::serialize::Serializable;
-use crate::{Node, NodePK, QuorumReconfigurationHandling};
-use atlas_common::{async_runtime as rt, channel};
+use crate::{Node, NodePK, QuorumReconfigurationHandling, NodeConnections};
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, TryRecvError};
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::peer_addr::PeerAddr;
-use atlas_reconfiguration::NetworkInfo;
+use atlas_common::{async_runtime as rt, channel};
 use atlas_reconfiguration::config::ReconfigurableNetworkConfig;
 use atlas_reconfiguration::message::{NetworkConfigurationMessage, NetworkJoinResponseMessage};
-use log::{error, info};
+use atlas_reconfiguration::NetworkInfo;
+use futures::future::join_all;
+use log::{debug, error, info};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -84,9 +85,7 @@ pub enum BoostrapResult {
 }
 
 impl ReconfigurableNetworkNode {
-
     pub fn initialize(config: ReconfigurableNetworkConfig) -> Self {
-
         let channel = channel::new_bounded_sync(100);
 
         Self {
@@ -100,7 +99,7 @@ impl ReconfigurableNetworkNode {
         self.node_info.get_own_addr()
     }
 
-    pub fn bootstrap_node<NT, M>(&self, node: Arc<NT>) -> Result<BoostrapResult>
+    pub async fn start_bootstrap_process<NT, M>(&self, node: Arc<NT>) -> Result<BoostrapResult>
     where
         M: Serializable + 'static,
         NT: Node<M> + 'static,
@@ -121,6 +120,7 @@ impl ReconfigurableNetworkNode {
         if bootstrap_nodes.len() == 0 {
             // We either know no nodes or we are the only bootstrap node, in which case we are already ready to start
             // Operations.
+            debug!("No bootstrap nodes, ready to start operations. (Or we are the known bootstrap node)");
 
             let mut current_state = self.current_state.lock().unwrap();
 
@@ -129,15 +129,50 @@ impl ReconfigurableNetworkNode {
             return Ok(BoostrapResult::Ready);
         }
 
-        let mut current_state = self.current_state.lock().unwrap();
+        {
+            let mut current_state = self.current_state.lock().unwrap();
 
-        *current_state = CurrentNetworkState::JoiningNetwork(bootstrap_nodes.len(), 0);
+            *current_state = CurrentNetworkState::JoiningNetwork(bootstrap_nodes.len(), 0);
+        }
 
         let our_triple = self.node_info.node_triple();
 
         let nmk = NetworkConfigurationMessage::NetworkJoinRequest(our_triple);
 
-        node.broadcast_signed(
+        let mut result_vec = Vec::new();
+
+        for node_id in &bootstrap_nodes {
+            debug!("Connecting to bootstrap node: {:?}", node_id);
+
+            let conn_results = node.node_connections().connect_to_node(node_id.clone());
+
+            let result = join_all(conn_results);
+
+            result_vec.push(result);
+        }
+
+        let results = join_all(result_vec).await;
+
+        for node_conn_res in results {
+
+            for conn_result in node_conn_res {
+                let conn_res = conn_result.expect("Failed to receive from conn attempt?");
+
+                if let Err(err) = conn_res {
+                    error!("Failed to connect to node: {:?}", err);
+
+                    break
+                }
+            }
+        }
+
+        debug!(
+            "Broadcasting network join request to bootstrap nodes: {:?}",
+            bootstrap_nodes
+        );
+
+        // Ignoring the results atm
+        let _ = node.broadcast_signed(
             NetworkMessageKind::ReconfigurationMessage(nmk),
             bootstrap_nodes.into_iter(),
         );
@@ -175,7 +210,7 @@ impl ReconfigurableNetworkNode {
 
                     let njr = NetworkConfigurationMessage::NetworkJoinResponse(result);
 
-                    node.send_signed(
+                    let _ = node.send_signed(
                         NetworkMessageKind::ReconfigurationMessage(njr),
                         target,
                         true,
@@ -185,7 +220,6 @@ impl ReconfigurableNetworkNode {
             NetworkConfigurationMessage::NetworkJoinResponse(join_response) => {
                 match join_response {
                     NetworkJoinResponseMessage::Successful(network_view) => {
-
                         self.node_info.handle_successfull_network_join(network_view);
 
                         let mut state_guard = self.current_state.lock().unwrap();
@@ -202,7 +236,7 @@ impl ReconfigurableNetworkNode {
                         error!("Failed to join network because of {:?}", rejected_join);
 
                         match &mut *state_guard {
-                            CurrentNetworkState::Init => {},
+                            CurrentNetworkState::Init => {}
                             CurrentNetworkState::JoiningNetwork(
                                 sent_requests,
                                 received_responses,
@@ -218,7 +252,7 @@ impl ReconfigurableNetworkNode {
                             }
                             CurrentNetworkState::LeavingNetwork => {
                                 info!("Received a negative network join response while already leaving the network. Ignoring.");
-                            },
+                            }
                         }
                     }
                 }

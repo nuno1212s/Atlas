@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicUsize;
 use atlas_common::channel;
 use atlas_common::channel::ChannelSyncTx;
 use atlas_common::crypto::hash::Digest;
+use atlas_core::ordering_protocol::stateful_order_protocol::DecLog;
 use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::ApplicationData;
 use atlas_common::error::*;
@@ -19,7 +20,6 @@ use atlas_core::ordering_protocol::{ProtocolConsensusDecision, ProtocolMessage, 
 use atlas_core::persistent_log::{DivisibleStateLog, MonolithicStateLog, OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, OperationMode};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
 use atlas_core::state_transfer::{Checkpoint};
-use atlas_core::state_transfer::log_transfer::DecLog;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};

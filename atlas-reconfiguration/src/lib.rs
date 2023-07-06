@@ -40,9 +40,6 @@ pub struct NetworkInfo {
 
     address: PeerAddr,
 
-    //This has to be here since ring doesn't allow us to get the bytes from a public key -,-
-    pub_key_bytes: Vec<u8>,
-
     // The list of nodes that we currently know in the network
     known_nodes: RwLock<KnownNodes>,
 
@@ -66,9 +63,6 @@ pub struct QuorumNode {
 #[derive(Clone)]
 pub struct KnownNodes {
     node_keys: BTreeMap<NodeId, PublicKey>,
-    // We have to fucking store the actual bytes separately since ring doesn't fucking allow us to access them
-    // After having parsed the PublicKey. Fucking ridiculous
-    node_key_bytes: BTreeMap<NodeId, Vec<u8>>,
     node_addrs: BTreeMap<NodeId, PeerAddr>,
 }
 
@@ -93,7 +87,6 @@ impl NetworkInfo {
         let ReconfigurableNetworkConfig {
             node_id,
             key_pair,
-            pub_key_bytes,
             our_address,
             known_nodes,
         } = config;
@@ -102,7 +95,6 @@ impl NetworkInfo {
             node_id,
             key_pair: Arc::new(key_pair),
             address: our_address,
-            pub_key_bytes,
             known_nodes: RwLock::new(KnownNodes::from_known_list(known_nodes)),
             predicates: Vec::new(),
         }
@@ -111,7 +103,6 @@ impl NetworkInfo {
     pub fn empty_network_node(
         node_id: NodeId,
         key_pair: KeyPair,
-        pub_key_bytes: Vec<u8>,
         address: PeerAddr,
     ) -> Self {
         NetworkInfo {
@@ -119,7 +110,6 @@ impl NetworkInfo {
             key_pair: Arc::new(key_pair),
             known_nodes: RwLock::new(KnownNodes::empty()),
             predicates: vec![],
-            pub_key_bytes,
             address,
         }
     }
@@ -129,19 +119,16 @@ impl NetworkInfo {
     pub fn with_bootstrap_nodes(
         node_id: NodeId,
         key_pair: KeyPair,
-        pub_key_bytes: Vec<u8>,
         address: PeerAddr,
         bootstrap_nodes: BTreeMap<NodeId, (PeerAddr, Vec<u8>)>,
     ) -> Self {
-        let node = NetworkInfo::empty_network_node(node_id, key_pair, pub_key_bytes, address);
+        let node = NetworkInfo::empty_network_node(node_id, key_pair, address);
 
         {
             let mut write_guard = node.known_nodes.write().unwrap();
 
             for (node_id, (addr, pk_bytes)) in bootstrap_nodes {
                 let public_key = PublicKey::from_bytes(&pk_bytes[..]).unwrap();
-
-                write_guard.node_key_bytes.insert(node_id, pk_bytes);
 
                 write_guard.node_keys.insert(node_id, public_key);
                 write_guard.node_addrs.insert(node_id, addr);
@@ -186,9 +173,6 @@ impl NetworkInfo {
         if !write_guard.node_keys.contains_key(&node_id) {
             let public_key = PublicKey::from_bytes(&node.public_key()[..]).unwrap();
 
-            write_guard
-                .node_key_bytes
-                .insert(node_id, node.public_key().clone());
             write_guard.node_keys.insert(node_id, public_key);
             write_guard.node_addrs.insert(node_id, node.addr().clone());
         }
@@ -261,7 +245,7 @@ impl NetworkInfo {
     pub fn node_triple(&self) -> NodeTriple {
         NodeTriple::new(
             self.node_id,
-            self.pub_key_bytes.clone(),
+            self.key_pair.public_key_bytes().to_vec(),
             self.address.clone(),
         )
     }
@@ -324,7 +308,6 @@ impl KnownNodes {
         Self {
             node_keys: BTreeMap::new(),
             node_addrs: BTreeMap::new(),
-            node_key_bytes: BTreeMap::new(),
         }
     }
 
