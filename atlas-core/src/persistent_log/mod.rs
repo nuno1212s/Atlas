@@ -1,19 +1,16 @@
-use std::path::Path;
 use std::sync::Arc;
 #[cfg(feature = "serialize_serde")]
 use ::serde::{Deserialize, Serialize};
-use atlas_execution::ExecutorHandle;
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
-use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::ordering::{SeqNo};
 use atlas_communication::message::StoredMessage;
-use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
-use crate::ordering_protocol::{OrderingProtocol, ProtocolConsensusDecision, ProtocolMessage, SerProof, SerProofMetadata, View};
-use crate::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
-use crate::state_transfer::{Checkpoint, StateTransferProtocol};
-use crate::state_transfer::log_transfer::DecLog;
+use crate::ordering_protocol::stateful_order_protocol::DecLog;
+use crate::ordering_protocol::{ProtocolMessage, SerProof, SerProofMetadata, View};
+use crate::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use crate::state_transfer::{Checkpoint};
 
 
 ///How should the data be written and response delivered?

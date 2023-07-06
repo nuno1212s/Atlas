@@ -1,3 +1,4 @@
+pub mod config;
 pub mod message;
 mod metrics;
 
@@ -7,14 +8,17 @@ use crate::message::{
 };
 use atlas_common::async_runtime as rt;
 use atlas_common::channel::OneShotRx;
-use atlas_common::crypto::signature::{KeyPair, PublicKey, Signature};
+use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::peer_addr::PeerAddr;
+use config::ReconfigurableNetworkConfig;
 use futures::future::join_all;
+use log::debug;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockWriteGuard};
 
 /// The reconfiguration module.
 /// Provides various utilities for allowing reconfiguration of the network
@@ -22,21 +26,15 @@ use std::sync::{Arc, RwLock};
 ///
 /// This module will then be used by the parts of the system which must be reconfigurable
 /// (For example, the network
-#[derive(Clone)]
-pub enum CurrentNetworkState {
-    JoiningNetwork,
-    Stable,
-    LeavingNetwork,
-}
 
 pub type NetworkPredicate =
-    fn(Arc<NetworkNode>, NodeTriple) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
+    fn(Arc<NetworkInfo>, NodeTriple) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
 
 /// Our current view of the network and the information about our own node
 /// This is the node data for the network information. This does not
 /// directly store information about the quorum, only about the nodes that we
 /// currently know about
-pub struct NetworkNode {
+pub struct NetworkInfo {
     node_id: NodeId,
     key_pair: Arc<KeyPair>,
 
@@ -45,6 +43,7 @@ pub struct NetworkNode {
     //This has to be here since ring doesn't allow us to get the bytes from a public key -,-
     pub_key_bytes: Vec<u8>,
 
+    // The list of nodes that we currently know in the network
     known_nodes: RwLock<KnownNodes>,
 
     /// Predicates that must be satisfied for a node to be allowed to join the network
@@ -61,10 +60,6 @@ pub struct QuorumNode {
     /// Predicates that must be satisfied for a node to be allowed to join the quorum
     predicates: Vec<QuorumPredicate>,
 }
-
-#[derive(Clone)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub struct PeerAddr;
 
 /// The map of known nodes in the network, independently of whether they are part of the current
 /// quorum or not
@@ -93,12 +88,33 @@ impl Orderable for NetworkView {
     }
 }
 
-impl NetworkNode {
-    pub fn empty_network_node(node_id: NodeId,
-         key_pair: KeyPair,
-         pub_key_bytes: Vec<u8>,
-        address: PeerAddr) -> Self {
-        NetworkNode {
+impl NetworkInfo {
+    pub fn init_from_config(config: ReconfigurableNetworkConfig) -> Self {
+        let ReconfigurableNetworkConfig {
+            node_id,
+            key_pair,
+            pub_key_bytes,
+            our_address,
+            known_nodes,
+        } = config;
+
+        NetworkInfo {
+            node_id,
+            key_pair: Arc::new(key_pair),
+            address: our_address,
+            pub_key_bytes,
+            known_nodes: RwLock::new(KnownNodes::from_known_list(known_nodes)),
+            predicates: Vec::new(),
+        }
+    }
+
+    pub fn empty_network_node(
+        node_id: NodeId,
+        key_pair: KeyPair,
+        pub_key_bytes: Vec<u8>,
+        address: PeerAddr,
+    ) -> Self {
+        NetworkInfo {
             node_id,
             key_pair: Arc::new(key_pair),
             known_nodes: RwLock::new(KnownNodes::empty()),
@@ -108,6 +124,8 @@ impl NetworkNode {
         }
     }
 
+    /// Initialize a NetworkNode with a list of already known Nodes so we can bootstrap our information
+    /// From them.
     pub fn with_bootstrap_nodes(
         node_id: NodeId,
         key_pair: KeyPair,
@@ -115,7 +133,7 @@ impl NetworkNode {
         address: PeerAddr,
         bootstrap_nodes: BTreeMap<NodeId, (PeerAddr, Vec<u8>)>,
     ) -> Self {
-        let node = NetworkNode::empty_network_node(node_id, key_pair, pub_key_bytes, address);
+        let node = NetworkInfo::empty_network_node(node_id, key_pair, pub_key_bytes, address);
 
         {
             let mut write_guard = node.known_nodes.write().unwrap();
@@ -143,9 +161,27 @@ impl NetworkNode {
 
     /// Handle a node having introduced itself to us by inserting it into our known nodes
     pub fn handle_node_introduced(&self, node: NodeTriple) {
-        let node_id = node.node_id();
+
+        debug!("Received a node introduction message from node {:?}. Handling it", node);
 
         let mut write_guard = self.known_nodes.write().unwrap();
+
+        Self::handle_single_node_introduced(&mut *write_guard, node)
+    }
+
+    /// Handle us having received a successfull network join response, with the list of known nodes
+    pub fn handle_successfull_network_join(&self, known_nodes: KnownNodesMessage) {
+        let mut write_guard = self.known_nodes.write().unwrap();
+
+        debug!("Successfully joined the network. Updating our known nodes list with the received list {:?}", known_nodes);
+
+        for node in known_nodes.into_nodes() {
+            Self::handle_single_node_introduced(&mut *write_guard, node);
+        }
+    }
+
+    fn handle_single_node_introduced(write_guard: &mut KnownNodes, node: NodeTriple) {
+        let node_id = node.node_id();
 
         if !write_guard.node_keys.contains_key(&node_id) {
             let public_key = PublicKey::from_bytes(&node.public_key()[..]).unwrap();
@@ -158,12 +194,7 @@ impl NetworkNode {
         }
     }
 
-    pub fn handle_successfull_network_join(&self, known_nodes: KnownNodesMessage) {
-        for node in known_nodes.into_nodes() {
-            self.handle_node_introduced(node);
-        }
-    }
-
+    /// Can we introduce this node to the network
     pub async fn can_introduce_node(
         self: Arc<Self>,
         node_id: NodeTriple,
@@ -200,16 +231,39 @@ impl NetworkNode {
             .cloned()
     }
 
+    pub fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr> {
+        self.known_nodes
+            .read()
+            .unwrap()
+            .node_addrs
+            .get(node)
+            .cloned()
+    }
+
+    pub fn get_own_addr(&self) -> &PeerAddr {
+        &self.address
+    }
+
     pub fn keypair(&self) -> &Arc<KeyPair> {
         &self.key_pair
     }
 
     pub fn known_nodes(&self) -> Vec<NodeId> {
-        self.known_nodes.read().unwrap().node_addrs.keys().cloned().collect()
+        self.known_nodes
+            .read()
+            .unwrap()
+            .node_addrs
+            .keys()
+            .cloned()
+            .collect()
     }
 
     pub fn node_triple(&self) -> NodeTriple {
-        NodeTriple::new(self.node_id, self.pub_key_bytes.clone(), self.address.clone())
+        NodeTriple::new(
+            self.node_id,
+            self.pub_key_bytes.clone(),
+            self.address.clone(),
+        )
     }
 }
 
@@ -272,6 +326,16 @@ impl KnownNodes {
             node_addrs: BTreeMap::new(),
             node_key_bytes: BTreeMap::new(),
         }
+    }
+
+    fn from_known_list(nodes: Vec<NodeTriple>) -> Self {
+        let mut known_nodes = Self::empty();
+
+        for node in nodes {
+            NetworkInfo::handle_single_node_introduced(&mut known_nodes, node)
+        }
+
+        known_nodes
     }
 
     pub fn node_keys(&self) -> &BTreeMap<NodeId, PublicKey> {

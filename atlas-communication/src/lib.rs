@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use atlas_common::peer_addr::PeerAddr;
 use intmap::IntMap;
 use rustls::{ClientConfig, ServerConfig};
 use crate::message::{NetworkMessage, NetworkMessageKind, StoredMessage, StoredSerializedNetworkMessage};
@@ -67,6 +68,8 @@ pub trait NodePK {
 }
 
 /// Trait for taking requests from the network node
+/// We separate the various sources of requests in order to 
+/// allow for better handling of the requests
 pub trait NodeIncomingRqHandler<T>: Send {
 
     fn rqs_len_from_clients(&self) -> usize;
@@ -84,6 +87,9 @@ pub trait NodeIncomingRqHandler<T>: Send {
 /// The trait for the handling of reconfiguration messages (Meant for the quorum only)
 /// Reconfiguration messages related to the network layer are handled by the network layer
 pub trait QuorumReconfigurationHandling {
+
+    /// Get the address for a given peer (If we currently know about it)
+    fn get_peer_address(&self, peer_id: NodeId) -> Option<PeerAddr>;
 
     /// Attempt to take reconfiguration messages that have been received so they can be processed
     /// by the correct handler. Returns None if no message is available and does not block
@@ -121,7 +127,7 @@ pub trait Node<M: Serializable + 'static> : Send + Sync {
     fn node_connections(&self) -> &Arc<Self::ConnectionManager>;
 
     /// Crypto
-    fn pk_crypto(&self) -> &Self::Crypto;
+    fn pk_crypto(&self) -> &Arc<Self::Crypto>;
 
     /// Get a reference to the incoming request handling
     fn node_incoming_rq_handling(&self) -> &Arc<Self::IncomingRqHandler>;

@@ -47,6 +47,7 @@ pub mod socket;
 pub mod mem_pool;
 pub mod node_id;
 pub mod config_utils;
+pub mod peer_addr;
 
 
 static INITIALIZED: Flag = Flag::new();

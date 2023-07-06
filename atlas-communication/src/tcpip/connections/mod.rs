@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::Instant;
 
+use atlas_common::peer_addr::PeerAddr;
 use dashmap::DashMap;
-use intmap::IntMap;
 use log::{debug, error, warn};
 
 use atlas_common::channel::{ChannelMixedRx, ChannelMixedTx, new_bounded_mixed, new_oneshot_channel, OneShotRx};
@@ -15,10 +15,11 @@ use atlas_common::socket::SecureWriteHalf;
 
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::message::{NetworkMessage, WireMessage};
-use crate::{NodeConnections};
-use crate::config::TcpConfig;
+use crate::network_reconfiguration::ReconfigurableNetworkNode;
+use crate::{NodeConnections, QuorumReconfigurationHandling};
+use crate::config::{TcpConfig};
 use crate::serialize::Serializable;
-use crate::tcpip::{NodeConnectionAcceptor, PeerAddr, TlsNodeAcceptor, TlsNodeConnector};
+use crate::tcpip::{NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
 use crate::tcpip::connections::conn_establish::ConnectionHandler;
 
 mod incoming;
@@ -269,7 +270,7 @@ pub struct PeerConnections<M: Serializable + 'static> {
     id: NodeId,
     first_cli: NodeId,
     concurrent_conn: ConnCounts,
-    address_management: IntMap<PeerAddr>,
+    address_management: Arc<ReconfigurableNetworkNode>,
     connection_map: Arc<DashMap<NodeId, Arc<PeerConnection<M>>>>,
     client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>,
     connection_establisher: Arc<ConnectionHandler>,
@@ -296,7 +297,7 @@ impl<M: Serializable + 'static> NodeConnections for PeerConnections<M> {
 
     /// Connect to a given node
     fn connect_to_node(self: &Arc<Self>, node: NodeId) -> Vec<OneShotRx<Result<()>>> {
-        let option = self.address_management.get(node.0 as u64);
+        let option = self.get_addr_for_node(node);
 
         match option {
             None => {
@@ -336,7 +337,7 @@ impl<M: Serializable + 'static> NodeConnections for PeerConnections<M> {
 impl<M: Serializable + 'static> PeerConnections<M> {
     pub fn new(peer_id: NodeId, first_cli: NodeId,
                conn_counts: ConnCounts,
-               addrs: IntMap<PeerAddr>,
+               node_lookup: Arc<ReconfigurableNetworkNode>,
                node_connector: TlsNodeConnector,
                node_acceptor: TlsNodeAcceptor,
                client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>) -> Arc<Self> {
@@ -347,7 +348,7 @@ impl<M: Serializable + 'static> PeerConnections<M> {
             id: peer_id,
             first_cli,
             concurrent_conn: conn_counts,
-            address_management: addrs,
+            address_management: node_lookup,
             connection_map: Arc::new(DashMap::new()),
             client_pooling,
             connection_establisher: connection_establish,
@@ -356,6 +357,10 @@ impl<M: Serializable + 'static> PeerConnections<M> {
 
     pub(crate) fn id(&self) -> NodeId {
         self.id.clone()
+    }
+
+    fn get_addr_for_node(&self, node: NodeId) -> Option<PeerAddr> {
+        self.address_management.get_peer_address(node)
     }
 
     /// Setup a tcp listener inside this peer connections object.
@@ -413,7 +418,7 @@ impl<M: Serializable + 'static> PeerConnections<M> {
 
         // Attempt to re-establish all of the missing connections
         if remaining_conns < concurrency_level {
-            let addr = self.address_management.get(node.0 as u64).unwrap();
+            let addr = self.get_addr_for_node(node.clone()).unwrap();
 
             for _ in 0..concurrency_level - remaining_conns {
                 self.connection_establisher.connect_to_node(self, node.clone(), addr.clone());

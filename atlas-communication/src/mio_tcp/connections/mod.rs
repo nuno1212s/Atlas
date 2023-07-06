@@ -1,27 +1,29 @@
 mod conn_establish;
 pub mod epoll_group;
 
-use std::net::Shutdown;
-use std::sync::{Arc};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use crossbeam_skiplist::SkipMap;
-use dashmap::DashMap;
-use intmap::IntMap;
-use log::{debug, error, info, warn};
-use mio::{Token, Waker};
+use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
+use crate::message::{NetworkMessage, WireMessage};
+use crate::mio_tcp::connections::conn_establish::ConnectionHandler;
+use crate::mio_tcp::connections::epoll_group::{
+    EpollWorkerGroupHandle, EpollWorkerId, NewConnection,
+};
+use crate::network_reconfiguration::ReconfigurableNetworkNode;
+use crate::serialize::Serializable;
+use crate::tcpip::connections::{Callback, ConnCounts};
+use crate::{NodeConnections, QuorumReconfigurationHandling};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotRx, TryRecvError};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
+use atlas_common::peer_addr::PeerAddr;
 use atlas_common::socket::{MioSocket, SecureSocket, SecureSocketSync, SyncListener};
-use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
-use crate::message::{NetworkMessage, WireMessage};
-use crate::mio_tcp::connections::conn_establish::ConnectionHandler;
-use crate::mio_tcp::connections::epoll_group::{EpollWorkerGroupHandle, EpollWorkerId, NewConnection};
-use crate::NodeConnections;
-use crate::serialize::Serializable;
-use crate::tcpip::connections::{Callback, ConnCounts};
-use crate::tcpip::PeerAddr;
+use crossbeam_skiplist::SkipMap;
+use dashmap::DashMap;
+use log::{debug, error, info, warn};
+use mio::{Token, Waker};
+use std::net::Shutdown;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
 pub type NetworkSerializedMessage = (WireMessage);
 
@@ -33,7 +35,7 @@ pub struct Connections<M: Serializable + 'static> {
     // The map of registered connections
     registered_connections: DashMap<NodeId, Arc<PeerConnection<M>>>,
     // A map of addresses to our known peers
-    address_map: IntMap<PeerAddr>,
+    address_lookup: Arc<ReconfigurableNetworkNode>,
     // A reference to the worker group that handles the epoll workers
     worker_group: EpollWorkerGroupHandle<M>,
     // A reference to the client pooling
@@ -55,7 +57,10 @@ pub struct PeerConnection<M: Serializable + 'static> {
     //The map connecting each connection to a token in the MIO Workers
     connections: SkipMap<u32, Option<ConnHandle>>,
     // Sending messages to the connections
-    to_send: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>),
+    to_send: (
+        ChannelSyncTx<NetworkSerializedMessage>,
+        ChannelSyncRx<NetworkSerializedMessage>,
+    ),
 }
 
 #[derive(Clone)]
@@ -69,7 +74,10 @@ pub struct ConnHandle {
     pub(crate) cancelled: Arc<AtomicBool>,
 }
 
-impl<M> NodeConnections for Connections<M> where M: Serializable + 'static {
+impl<M> NodeConnections for Connections<M>
+where
+    M: Serializable + 'static,
+{
     fn is_connected_to_node(&self, node: &NodeId) -> bool {
         self.registered_connections.contains_key(node)
     }
@@ -79,32 +87,50 @@ impl<M> NodeConnections for Connections<M> where M: Serializable + 'static {
     }
 
     fn connected_nodes(&self) -> Vec<NodeId> {
-        self.registered_connections.iter().map(|entry| entry.key().clone()).collect()
+        self.registered_connections
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// Attempt to connect to a given node
-    fn connect_to_node(self: &Arc<Self>, node: NodeId) -> Vec<OneShotRx<atlas_common::error::Result<()>>> {
-        let addr = self.address_map.get(node.into());
+    fn connect_to_node(
+        self: &Arc<Self>,
+        node: NodeId,
+    ) -> Vec<OneShotRx<atlas_common::error::Result<()>>> {
+        let addr = self.get_addr_for_node(&node);
 
         if addr.is_none() {
-            todo!()
+            error!("No address found for node {:?}", node);
+
+            return vec![];
         }
 
         let addr = addr.unwrap();
 
-        let current_connections = self.registered_connections.get(&node)
-            .map(|entry| {
-                entry.value().concurrent_connection_count()
-            }).unwrap_or(0);
+        let current_connections = self
+            .registered_connections
+            .get(&node)
+            .map(|entry| entry.value().concurrent_connection_count())
+            .unwrap_or(0);
 
-        let connections = self.conn_counts.get_connections_to_node(self.id, node, self.first_cli);
+        let connections = self
+            .conn_counts
+            .get_connections_to_node(self.id, node, self.first_cli);
 
-        let connections = if current_connections > connections { 0 } else { connections - current_connections };
+        let connections = if current_connections > connections {
+            0
+        } else {
+            connections - current_connections
+        };
 
         let mut result_vec = Vec::with_capacity(connections);
 
         for _ in 0..connections {
-            result_vec.push(self.conn_handler.connect_to_node(Arc::clone(self), node, addr.clone()))
+            result_vec.push(
+                self.conn_handler
+                    .connect_to_node(Arc::clone(self), node, addr.clone()),
+            )
         }
 
         result_vec
@@ -119,7 +145,8 @@ impl<M> NodeConnections for Connections<M> where M: Serializable + 'static {
                     let worker_id = conn.epoll_worker_id;
                     let conn_token = conn.token;
 
-                    self.worker_group.disconnect_connection_from_worker(worker_id, conn_token)?;
+                    self.worker_group
+                        .disconnect_connection_from_worker(worker_id, conn_token)?;
                 }
             }
         }
@@ -128,16 +155,29 @@ impl<M> NodeConnections for Connections<M> where M: Serializable + 'static {
     }
 }
 
-impl<M> Connections<M> where M: Serializable + 'static {
-    pub(super) fn initialize_connections(id: NodeId, first_cli: NodeId, addr_map: IntMap<PeerAddr>, group_handle: EpollWorkerGroupHandle<M>,
-                                         conn_counts: ConnCounts, client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>) -> Result<Self> {
-        let conn_handler = Arc::new(ConnectionHandler::initialize(id.clone(), first_cli.clone(), conn_counts.clone()));
+impl<M> Connections<M>
+where
+    M: Serializable + 'static,
+{
+    pub(super) fn initialize_connections(
+        id: NodeId,
+        first_cli: NodeId,
+        node_addr_lookup: Arc<ReconfigurableNetworkNode>,
+        group_handle: EpollWorkerGroupHandle<M>,
+        conn_counts: ConnCounts,
+        client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>,
+    ) -> Result<Self> {
+        let conn_handler = Arc::new(ConnectionHandler::initialize(
+            id.clone(),
+            first_cli.clone(),
+            conn_counts.clone(),
+        ));
 
         Ok(Self {
             id,
             first_cli,
             registered_connections: Default::default(),
-            address_map: addr_map,
+            address_lookup: node_addr_lookup,
             worker_group: group_handle,
             client_pooling,
             conn_counts,
@@ -146,7 +186,13 @@ impl<M> Connections<M> where M: Serializable + 'static {
     }
 
     pub(super) fn setup_tcp_server_worker(self: &Arc<Self>, listener: SyncListener) {
-        conn_establish::initialize_server(self.id.clone(), self.first_cli.clone(), listener, self.conn_handler.clone(), Arc::clone(self))
+        conn_establish::initialize_server(
+            self.id.clone(),
+            self.first_cli.clone(),
+            listener,
+            self.conn_handler.clone(),
+            Arc::clone(self),
+        )
     }
 
     /// Get the connection to a given node
@@ -156,40 +202,54 @@ impl<M> Connections<M> where M: Serializable + 'static {
         option.map(|conn| conn.value().clone())
     }
 
+
+    fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr> {
+        self.address_lookup.get_peer_address(*node)
+    }
+
     fn handle_connection_established(self: &Arc<Self>, node: NodeId, socket: SecureSocket) {
         let socket = match socket {
-            SecureSocket::Sync(sync) => {
-                match sync {
-                    SecureSocketSync::Plain(socket) => {
-                        socket
-                    }
-                    SecureSocketSync::Tls(tls, socket) => {
-                        socket
-                    }
-                }
-            }
-            _ => unreachable!()
+            SecureSocket::Sync(sync) => match sync {
+                SecureSocketSync::Plain(socket) => socket,
+                SecureSocketSync::Tls(tls, socket) => socket,
+            },
+            _ => unreachable!(),
         };
 
         self.handle_connection_established_with_socket(node, socket.into());
     }
 
-    fn handle_connection_established_with_socket(self: &Arc<Self>, node: NodeId, socket: MioSocket) {
-        info!("{:?} // Handling established connection to {:?}", self.id, node);
+    fn handle_connection_established_with_socket(
+        self: &Arc<Self>,
+        node: NodeId,
+        socket: MioSocket,
+    ) {
+        info!(
+            "{:?} // Handling established connection to {:?}",
+            self.id, node
+        );
 
         let option = self.registered_connections.entry(node);
 
-        let peer_conn = option.or_insert_with(||
-            {
-                let con = Arc::new(PeerConnection::new(Arc::clone(self), self.client_pooling.init_peer_conn(node)));
+        let peer_conn = option.or_insert_with(|| {
+            let con = Arc::new(PeerConnection::new(
+                Arc::clone(self),
+                self.client_pooling.init_peer_conn(node),
+            ));
 
-                debug!("{:?} // Creating new peer connection to {:?}. {:?}", self.id, node,
-                    con.client_pool_peer().client_id());
+            debug!(
+                "{:?} // Creating new peer connection to {:?}. {:?}",
+                self.id,
+                node,
+                con.client_pool_peer().client_id()
+            );
 
-                con
-            });
+            con
+        });
 
-        let concurrency_level = self.conn_counts.get_connections_to_node(self.id, node, self.first_cli);
+        let concurrency_level =
+            self.conn_counts
+                .get_connections_to_node(self.id, node, self.first_cli);
 
         let conn_id = peer_conn.gen_conn_id();
 
@@ -203,29 +263,40 @@ impl<M> Connections<M> where M: Serializable + 'static {
             current_connections, concurrency_level);
 
             if let Err(err) = socket.shutdown(Shutdown::Both) {
-                error!("{:?} // Failed to shutdown socket {:?} to {:?}. Error: {:?}", self.id, conn_id, node, err);
+                error!(
+                    "{:?} // Failed to shutdown socket {:?} to {:?}. Error: {:?}",
+                    self.id, conn_id, node, err
+                );
             }
 
             return;
         }
 
-        debug!("{:?} // Registering connection {:?} to {:?}", self.id, conn_id, node);
+        debug!(
+            "{:?} // Registering connection {:?} to {:?}",
+            self.id, conn_id, node
+        );
 
         //FIXME: This isn't really an atomic operation but I also don't care LOL.
         peer_conn.register_peer_conn_intent(conn_id);
 
-        let conn_details = NewConnection::new(conn_id, node, self.id,
-                                              socket, peer_conn.value().clone());
+        let conn_details =
+            NewConnection::new(conn_id, node, self.id, socket, peer_conn.value().clone());
 
         // We don't register the connection here as we still need some information that will only be provided
         // to us by the worker that will handle the connection.
         // Therefore, the connection will be registered in the worker itself.
-        self.worker_group.assign_socket_to_worker(conn_details).expect("Failed to assign socket to worker?");
+        self.worker_group
+            .assign_socket_to_worker(conn_details)
+            .expect("Failed to assign socket to worker?");
     }
 
     /// Handle a connection having broken and being removed from the worker
     fn handle_connection_failed(self: &Arc<Self>, node: NodeId, conn_id: u32) {
-        info!("{:?} // Handling failed connection to {:?}. Conn: {:?}", self.id, node, conn_id);
+        info!(
+            "{:?} // Handling failed connection to {:?}. Conn: {:?}",
+            self.id, node, conn_id
+        );
 
         let connection = if let Some(conn) = self.registered_connections.get(&node) {
             conn.value().clone()
@@ -243,8 +314,14 @@ impl<M> Connections<M> where M: Serializable + 'static {
     }
 }
 
-impl<M> PeerConnection<M> where M: Serializable + 'static {
-    fn new(connections: Arc<Connections<M>>, client: Arc<ConnectedPeer<NetworkMessage<M>>>) -> Self {
+impl<M> PeerConnection<M>
+where
+    M: Serializable + 'static,
+{
+    fn new(
+        connections: Arc<Connections<M>>,
+        client: Arc<ConnectedPeer<NetworkMessage<M>>>,
+    ) -> Self {
         let to_send = channel::new_bounded_sync(SEND_QUEUE_SIZE);
 
         Self {
@@ -300,25 +377,20 @@ impl<M> PeerConnection<M> where M: Serializable + 'static {
 
     /// Take a message from the send queue (blocking)
     fn take_from_to_send(&self) -> Result<NetworkSerializedMessage> {
-        self.to_send.1.recv().wrapped(ErrorKind::CommunicationChannel)
+        self.to_send
+            .1
+            .recv()
+            .wrapped(ErrorKind::CommunicationChannel)
     }
 
     /// Attempt to take a message from the send queue (non blocking)
     fn try_take_from_send(&self) -> Result<Option<NetworkSerializedMessage>> {
         match self.to_send.1.try_recv() {
-            Ok(msg) => {
-                Ok(Some(msg))
-            }
-            Err(err) => {
-                match err {
-                    TryRecvError::ChannelDc => {
-                        Err(Error::simple(ErrorKind::CommunicationChannel))
-                    }
-                    TryRecvError::ChannelEmpty | TryRecvError::Timeout => {
-                        Ok(None)
-                    }
-                }
-            }
+            Ok(msg) => Ok(Some(msg)),
+            Err(err) => match err {
+                TryRecvError::ChannelDc => Err(Error::simple(ErrorKind::CommunicationChannel)),
+                TryRecvError::ChannelEmpty | TryRecvError::Timeout => Ok(None),
+            },
         }
     }
 
@@ -331,12 +403,15 @@ impl<M> PeerConnection<M> where M: Serializable + 'static {
     }
 }
 
-
 impl ConnHandle {
-    pub fn new(id: u32, my_id: NodeId, peer_id: NodeId,
-               epoll_worker: EpollWorkerId,
-               conn_token: Token,
-               waker: Arc<Waker>) -> Self {
+    pub fn new(
+        id: u32,
+        my_id: NodeId,
+        peer_id: NodeId,
+        epoll_worker: EpollWorkerId,
+        conn_token: Token,
+        waker: Arc<Waker>,
+    ) -> Self {
         Self {
             id,
             my_id,

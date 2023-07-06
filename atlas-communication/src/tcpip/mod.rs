@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc};
 use std::time::{Duration, Instant};
 
+use atlas_common::peer_addr::PeerAddr;
 use either::Either;
 
 use log::{debug, error, info};
@@ -13,7 +14,7 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 use atlas_common::{async_runtime as rt, socket, threadpool};
 use atlas_common::crypto::hash::Digest;
-use atlas_common::crypto::signature::PublicKey;
+
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::prng::ThreadSafePrng;
@@ -24,41 +25,11 @@ use crate::{Node, NodePK};
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::config::{NodeConfig, TlsConfig};
 use crate::message::{NetworkMessage, NetworkMessageKind, StoredSerializedNetworkMessage, WireMessage};
-use crate::message_signing::{NodePKCrypto, NodePKShared};
 use crate::serialize::{Buf, Serializable};
 use crate::tcpip::connections::{ConnCounts, PeerConnection, PeerConnections};
 
 pub mod connections;
 
-///Represents the server addresses of a peer
-///Clients will only have 1 address while replicas will have 2 addresses (1 for facing clients,
-/// 1 for facing replicas)
-#[derive(Clone, Debug)]
-pub struct PeerAddr {
-    // All nodes have a replica facing socket
-    pub(crate) replica_facing_socket: (SocketAddr, String),
-    // Only replicas have a client facing socket
-    pub(crate) client_facing_socket: Option<(SocketAddr, String)>,
-}
-
-impl PeerAddr {
-    pub fn new(client_addr: (SocketAddr, String)) -> Self {
-        Self {
-            replica_facing_socket: client_addr,
-            client_facing_socket: None,
-        }
-    }
-
-    pub fn new_replica(
-        client_addr: (SocketAddr, String),
-        replica_addr: (SocketAddr, String),
-    ) -> Self {
-        Self {
-            replica_facing_socket: client_addr,
-            client_facing_socket: Some(replica_addr),
-        }
-    }
-}
 
 /// The connection type used for connections
 /// Stores the connector needed
@@ -91,8 +62,8 @@ pub struct TcpNode<M: Serializable + 'static> {
     first_cli: NodeId,
     // The thread safe pseudo random number generator
     rng: Arc<ThreadSafePrng>,
-    //
-    keys: NodePKCrypto,
+    // General network information and reconfiguration logic
+    reconf_node: Arc<ReconfigurableNetworkNode>,
     // The connections that are currently being maintained by us to other peers
     peer_connections: Arc<PeerConnections<M>>,
     //Handles the incoming connections' buffering and request collection
@@ -194,7 +165,7 @@ impl<M: Serializable + 'static> TcpNode<M> {
     }
 
     /// Create the send tos for a given target
-    fn send_tos(&self, shared: Option<&NodePKCrypto>, targets: impl Iterator<Item=NodeId>, flush: bool)
+    fn send_tos(&self, shared: Option<&Arc<ReconfigurableNetworkNode>>, targets: impl Iterator<Item=NodeId>, flush: bool)
                 -> (Option<SendTo<M>>, Option<SendTos<M>>, Vec<NodeId>) {
         let mut send_to_me = None;
         let mut send_tos: Option<SendTos<M>> = None;
@@ -309,7 +280,7 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
 
     type ConnectionManager = PeerConnections<M>;
 
-    type Crypto = NodePKCrypto;
+    type Crypto = ReconfigurableNetworkNode;
 
     type IncomingRqHandler = PeerIncomingRqHandling<NetworkMessage<M>>;
 
@@ -324,13 +295,9 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
 
         let conn_counts = ConnCounts::from_tcp_config(&tcp_config);
 
-        let addr = tcp_config.addrs.get(id.0 as u64).expect(format!("Failed to get my own IP address ({})", id.0).as_str()).clone();
+        let reconf_node = Arc::new(ReconfigurableNetworkNode::initialize(cfg.reconfig));
 
         let network = tcp_config.network_config;
-
-        let (connector, acceptor,
-            client_socket, replica_socket) =
-            Self::setup_network::<AsyncConn>(id, addr, network).await;
 
         //Setup all the peer message reception handling.
         let peers = Arc::new(PeerIncomingRqHandling::new(
@@ -339,12 +306,17 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
             cfg.client_pool_config,
         ));
 
+        let addr = reconf_node.get_own_addr();
+
+        let (connector, acceptor,
+            client_socket, replica_socket) =
+            Self::setup_network::<AsyncConn>(id, addr.clone(), network).await;
+
 
         let peer_connections = PeerConnections::new(id, cfg.first_cli,
                                                     conn_counts,
-                                                    tcp_config.addrs,
+                                                    reconf_node.clone(),
                                                     connector, acceptor, peers.clone());
-
 
         debug!("Initializing connection listeners");
         peer_connections.clone().setup_tcp_listener(client_socket?);
@@ -352,8 +324,6 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
         if let Some(replica) = replica_socket? {
             peer_connections.clone().setup_tcp_listener(replica);
         }
-
-        let shared = NodePKCrypto::new(NodePKShared::from_config(cfg.pk_crypto_config));
 
         let rng = Arc::new(ThreadSafePrng::new());
 
@@ -363,9 +333,9 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
             id,
             first_cli: cfg.first_cli,
             rng,
-            keys: shared,
             peer_connections,
             client_pooling: peers,
+            reconf_node,
         });
 
         // success
@@ -384,14 +354,14 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
         &self.peer_connections
     }
 
-    fn pk_crypto(&self) -> &Self::Crypto {
-        &self.keys
+    fn pk_crypto(&self) -> &Arc<Self::Crypto> {
+        &self.reconf_node
     }
 
     fn node_incoming_rq_handling(&self) -> &Arc<PeerIncomingRqHandling<NetworkMessage<M>>> { &self.client_pooling }
 
     fn quorum_reconfig_handling(&self) -> &Arc<Self::ReconfigurationHandling> {
-        todo!()
+        &self.reconf_node
     }
 
     fn send(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> Result<()> {
@@ -408,7 +378,7 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
     }
 
     fn send_signed(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> Result<()> {
-        let keys = Some(&self.keys);
+        let keys = Some(&self.reconf_node);
 
         let (send_to_me, send_to_others, failed) =
             self.send_tos(keys, iter::once(target), flush);
@@ -436,7 +406,7 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
     }
 
     fn broadcast_signed(&self, message: NetworkMessageKind<M>, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
-        let keys = Some(&self.keys);
+        let keys = Some(&self.reconf_node);
 
         let (send_to_me, send_to_others, failed) =
             self.send_tos(keys, target, true);
@@ -471,7 +441,7 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
 struct SendTo<M: Serializable + 'static> {
     my_id: NodeId,
     peer_id: NodeId,
-    shared: Option<NodePKCrypto>,
+    shared: Option<Arc<ReconfigurableNetworkNode>>,
     nonce: u64,
     peer_cnn: SendToPeer<M>,
     flush: bool,
@@ -488,7 +458,7 @@ enum SendToPeer<M: Serializable + 'static> {
 impl<M: Serializable + 'static> SendTo<M> {
     fn value(self, msg: Either<(NetworkMessageKind<M>, Buf, Digest), (Buf, Digest)>) {
         let key_pair = if let Some(node_shared) = &self.shared {
-            Some(&**node_shared.my_key())
+            Some(&**node_shared.get_key_pair())
         } else {
             None
         };

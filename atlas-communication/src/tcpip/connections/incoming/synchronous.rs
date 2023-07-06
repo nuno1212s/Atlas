@@ -70,6 +70,12 @@ pub(super) fn spawn_incoming_thread<M: Serializable + 'static>(
                     }
                 };
 
+
+                match message {
+                    crate::message::NetworkMessageKind::ReconfigurationMessage(_) => todo!(),
+                    _ => {}
+                }
+
                 let msg = NetworkMessage::new(header, message);
 
                 if let Err(inner) = client_pool_rq.push_request(msg) {

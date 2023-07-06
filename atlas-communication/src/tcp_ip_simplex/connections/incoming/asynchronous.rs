@@ -79,6 +79,7 @@ pub(super) fn spawn_incoming_task<M: Serializable + 'static>(
 
                     continue
                 }
+                NetworkMessageKind::ReconfigurationMessage(reconf) => {todo!()}
                 _ => {}
             }
 

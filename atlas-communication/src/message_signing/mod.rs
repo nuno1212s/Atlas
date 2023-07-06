@@ -8,6 +8,7 @@ use crate::config::PKConfig;
 use crate::message::{WireMessage};
 use crate::NodePK;
 
+#[deprecated(since="0.1.0", note="please use `ReconfigurableNetworkNode` instead")]
 pub struct NodePKShared {
     my_key: Arc<KeyPair>,
     peer_keys: IntMap<PublicKey>,

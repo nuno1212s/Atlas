@@ -1,11 +1,14 @@
+use std::fmt::Debug;
+
 use atlas_common::crypto::signature::{PublicKey, Signature};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 
+use atlas_common::peer_addr::PeerAddr;
 #[cfg(feature = "serialize_serde")]
 use serde::{Serialize, Deserialize};
 
-use crate::{KnownNodes, NetworkView, PeerAddr};
+use crate::{KnownNodes, NetworkView};
 
 
 /// Used to request to join the current quorum
@@ -70,7 +73,7 @@ pub struct QuorumLeaveResponse {
     origin_node: NodeId,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct KnownNodesMessage {
     nodes: Vec<NodeTriple>,
@@ -174,4 +177,10 @@ impl KnownNodesMessage {
         self.nodes
     }
 
+}
+
+impl Debug for NodeTriple {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "NodeTriple {{ node_id: {:?}, addr: {:?}}}", self.node_id, self.addr)
+    }
 }

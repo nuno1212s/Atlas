@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap};
 use std::sync::{Arc, Mutex};
+use atlas_common::peer_addr::PeerAddr;
 use either::Either;
 use log::debug;
 use atlas_common::channel::OneShotRx;
@@ -8,7 +9,7 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use crate::serialize::Serializable;
 use crate::tcp_ip_simplex::connections::{ConnectionDirection, SimplexConnections};
-use crate::tcpip::{NodeConnectionAcceptor, PeerAddr, TlsNodeAcceptor, TlsNodeConnector};
+use crate::tcpip::{NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
 use crate::tcpip::connections::{ConnCounts};
 
 // mod synchronous;

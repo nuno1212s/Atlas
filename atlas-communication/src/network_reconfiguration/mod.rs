@@ -1,18 +1,30 @@
 use crate::message::{NetworkMessage, NetworkMessageKind, StoredMessage};
 use crate::serialize::Serializable;
 use crate::{Node, NodePK, QuorumReconfigurationHandling};
-use atlas_common::async_runtime as rt;
+use atlas_common::{async_runtime as rt, channel};
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, TryRecvError};
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
+use atlas_common::peer_addr::PeerAddr;
+use atlas_reconfiguration::NetworkInfo;
+use atlas_reconfiguration::config::ReconfigurableNetworkConfig;
 use atlas_reconfiguration::message::{NetworkConfigurationMessage, NetworkJoinResponseMessage};
-use atlas_reconfiguration::NetworkNode;
-use log::error;
-use std::sync::Arc;
+use log::{error, info};
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+pub enum CurrentNetworkState {
+    Init,
+    JoiningNetwork(usize, usize),
+    Stable,
+    LeavingNetwork,
+}
 
 pub struct ReconfigurableNetworkNode {
-    node_info: Arc<NetworkNode>,
+    node_info: Arc<NetworkInfo>,
+
+    current_state: Mutex<CurrentNetworkState>,
 
     reconfiguration_message_handling: (
         ChannelSyncTx<StoredMessage<NetworkConfigurationMessage>>,
@@ -57,36 +69,69 @@ impl QuorumReconfigurationHandling for ReconfigurableNetworkNode {
             )),
         }
     }
+
+    fn get_peer_address(&self, peer_id: NodeId) -> Option<PeerAddr> {
+        self.node_info.get_addr_for_node(&peer_id)
+    }
 }
 
 /// The result of attempting to boostrap the node into the existing network.
-/// 
+///
 pub enum BoostrapResult {
     Ready,
     Boostrapping,
-    JoiningNetwork,
+    Failed,
 }
 
 impl ReconfigurableNetworkNode {
+
+    pub fn initialize(config: ReconfigurableNetworkConfig) -> Self {
+
+        let channel = channel::new_bounded_sync(100);
+
+        Self {
+            node_info: Arc::new(NetworkInfo::init_from_config(config)),
+            current_state: Mutex::new(CurrentNetworkState::Init),
+            reconfiguration_message_handling: channel,
+        }
+    }
+
+    pub fn get_own_addr(&self) -> &PeerAddr {
+        self.node_info.get_own_addr()
+    }
+
     pub fn bootstrap_node<NT, M>(&self, node: Arc<NT>) -> Result<BoostrapResult>
     where
         M: Serializable + 'static,
         NT: Node<M> + 'static,
     {
-
-        let bootstrap_nodes : Vec<NodeId> = self.node_info.known_nodes().into_iter().filter(|node_id| {
-            if *node_id == self.node_info.node_id() {
-                false
-            } else {
-                true
-            }
-        }).collect();
+        let bootstrap_nodes: Vec<NodeId> = self
+            .node_info
+            .known_nodes()
+            .into_iter()
+            .filter(|node_id| {
+                if *node_id == self.node_info.node_id() {
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
 
         if bootstrap_nodes.len() == 0 {
-            // We either know no nodes or we are the only bootstrap node.
+            // We either know no nodes or we are the only bootstrap node, in which case we are already ready to start
+            // Operations.
+
+            let mut current_state = self.current_state.lock().unwrap();
+
+            *current_state = CurrentNetworkState::Stable;
 
             return Ok(BoostrapResult::Ready);
         }
+
+        let mut current_state = self.current_state.lock().unwrap();
+
+        *current_state = CurrentNetworkState::JoiningNetwork(bootstrap_nodes.len(), 0);
 
         let our_triple = self.node_info.node_triple();
 
@@ -97,7 +142,7 @@ impl ReconfigurableNetworkNode {
             bootstrap_nodes.into_iter(),
         );
 
-        Ok(BoostrapResult::JoiningNetwork)
+        Ok(BoostrapResult::Boostrapping)
     }
 
     pub fn handle_message_received<M, NT>(
@@ -140,10 +185,41 @@ impl ReconfigurableNetworkNode {
             NetworkConfigurationMessage::NetworkJoinResponse(join_response) => {
                 match join_response {
                     NetworkJoinResponseMessage::Successful(network_view) => {
+
                         self.node_info.handle_successfull_network_join(network_view);
+
+                        let mut state_guard = self.current_state.lock().unwrap();
+
+                        //TODO: Should this first match to see what is the current state and if we are already part of the network then we ignore it?
+
+                        *state_guard = CurrentNetworkState::Stable;
+
+                        return Ok(BoostrapResult::Ready);
                     }
                     NetworkJoinResponseMessage::Rejected(rejected_join) => {
+                        let mut state_guard = self.current_state.lock().unwrap();
+
                         error!("Failed to join network because of {:?}", rejected_join);
+
+                        match &mut *state_guard {
+                            CurrentNetworkState::Init => {},
+                            CurrentNetworkState::JoiningNetwork(
+                                sent_requests,
+                                received_responses,
+                            ) => {
+                                *received_responses += 1;
+
+                                if received_responses >= sent_requests {
+                                    return Ok(BoostrapResult::Failed);
+                                }
+                            }
+                            CurrentNetworkState::Stable => {
+                                info!("Received a negative network join response while already in the network. Ignoring.");
+                            }
+                            CurrentNetworkState::LeavingNetwork => {
+                                info!("Received a negative network join response while already leaving the network. Ignoring.");
+                            },
+                        }
                     }
                 }
             }

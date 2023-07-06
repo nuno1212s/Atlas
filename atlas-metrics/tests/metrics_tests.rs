@@ -34,12 +34,13 @@ mod metrics_tests {
             INFLUX_DB_USER.to_string(),
             influx_db_password,
             nodeId,
+            None
         );
 
         println!("Connecting to InfluxDB with {:?}", influx_args);
 
         initialize_metrics(vec![with_metrics(vec![(TEST_DATA_COLLECTION_POINT_ID,
-                                                   TEST_DATA_COLLECTION_POINT.to_string(), MetricKind::Counter)])], influx_args);
+                                                   TEST_DATA_COLLECTION_POINT.to_string(), MetricKind::Counter).into()])], influx_args);
 
         metric_increment(TEST_DATA_COLLECTION_POINT_ID, None);
 

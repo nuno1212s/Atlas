@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
+use atlas_common::peer_addr::PeerAddr;
 use bytes::Bytes;
 use either::Either;
 use futures::{AsyncReadExt, AsyncWriteExt};
@@ -14,7 +15,7 @@ use crate::message::{Header, WireMessage};
 use crate::serialize::Serializable;
 use crate::tcpip::connections::conn_establish::ConnectionHandler;
 use crate::tcpip::connections::PeerConnections;
-use crate::tcpip::{PeerAddr, TlsNodeAcceptor, TlsNodeConnector};
+use crate::tcpip::{TlsNodeAcceptor, TlsNodeConnector};
 
 pub type Callback = Option<Box<dyn FnOnce(bool) + Send>>;
 

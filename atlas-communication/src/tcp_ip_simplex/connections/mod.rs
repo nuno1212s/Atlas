@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::time::Instant;
+use atlas_common::peer_addr::PeerAddr;
 use dashmap::DashMap;
 use intmap::IntMap;
 use log::{debug, error, warn};
@@ -16,12 +17,13 @@ use atlas_common::node_id::NodeId;
 use atlas_common::socket::{SecureSocket, SecureSocketAsync};
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::message::{NetworkMessage, WireMessage};
-use crate::NodeConnections;
+use crate::{NodeConnections, QuorumReconfigurationHandling};
+use crate::network_reconfiguration::ReconfigurableNetworkNode;
 use crate::serialize::Serializable;
 use crate::tcp_ip_simplex::connections::conn_establish::ConnectionHandler;
 use crate::tcp_ip_simplex::connections::ping_handler::PingHandler;
 use crate::tcpip::connections::{Callback, ConnCounts, ConnHandle, NetworkSerializedMessage};
-use crate::tcpip::{NodeConnectionAcceptor, PeerAddr, TlsNodeAcceptor, TlsNodeConnector};
+use crate::tcpip::{NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
 
 /// How many slots the outgoing queue has for messages.
 const TX_CONNECTION_QUEUE: usize = 1024;
@@ -29,7 +31,7 @@ const TX_CONNECTION_QUEUE: usize = 1024;
 pub struct SimplexConnections<M: Serializable + 'static> {
     id: NodeId,
     first_cli: NodeId,
-    address_map: IntMap<PeerAddr>,
+    node_lookup: Arc<ReconfigurableNetworkNode>,
     conn_counts: ConnCounts,
     client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>,
     connection_map: DashMap<NodeId, Arc<PeerConnection<M>>>,
@@ -86,7 +88,7 @@ impl<M> NodeConnections for SimplexConnections<M> where M: Serializable + 'stati
     }
 
     fn connect_to_node(self: &Arc<Self>, node: NodeId) -> Vec<OneShotRx<Result<()>>> {
-        let option = self.address_map.get(node.0 as u64);
+        let option = self.get_addr_for_node(node);
 
         match option {
             None => {
@@ -126,7 +128,7 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
 
     pub fn new(peer_id: NodeId, first_cli: NodeId,
                conn_counts: ConnCounts,
-               addrs: IntMap<PeerAddr>,
+               addrs: Arc<ReconfigurableNetworkNode>,
                node_connector: TlsNodeConnector,
                node_acceptor: TlsNodeAcceptor,
                client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>) -> Arc<Self> {
@@ -136,7 +138,7 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
         Arc::new(Self {
             id: peer_id,
             first_cli,
-            address_map: addrs,
+            node_lookup: addrs,
             connection_map: DashMap::new(),
             connection_establishing: connection_establish,
             client_pooling,
@@ -145,6 +147,10 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
         })
     }
     
+    fn get_addr_for_node(&self, node: NodeId) -> Option<PeerAddr> {
+        self.node_lookup.get_peer_address(node)
+    }
+
     /// Setup a tcp listener inside this peer connections object.
     pub(super) fn setup_tcp_listener(self: Arc<Self>, node_acceptor: NodeConnectionAcceptor) {
         self.connection_establishing.clone().setup_conn_worker(node_acceptor, self)
@@ -199,7 +205,7 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
 
                 while current_outgoing_connections < concurrency_level {
 
-                    let addr = self.address_map.get(peer_id.0 as u64).expect("Failed to get addr?");
+                    let addr = self.get_addr_for_node(peer_id).expect("Failed to get IP for node");
 
                     let _ = self.connection_establishing.connect_to_node(self, peer_id, addr.clone());
 
@@ -226,7 +232,7 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
 
         // Attempt to re-establish all of the missing connections
         if remaining_conns < concurrency_level {
-            let addr = self.address_map.get(node.0 as u64).unwrap();
+            let addr = self.get_addr_for_node(node).expect("Failed to get IP for node");
 
             for _ in 0..concurrency_level - remaining_conns {
                 self.connection_establishing.connect_to_node(self, node.clone(), addr.clone());

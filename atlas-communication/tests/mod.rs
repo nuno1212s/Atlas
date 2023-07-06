@@ -6,6 +6,7 @@ mod communication_test {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::{Arc, Barrier};
     use std::time::{Duration, Instant};
+    use atlas_common::peer_addr::PeerAddr;
     use intmap::IntMap;
     use log::{debug, error, info, warn};
     use mio::{Events, Poll, Token, Waker};
@@ -24,7 +25,7 @@ mod communication_test {
     use atlas_communication::mio_tcp::MIOTcpNode;
     use atlas_communication::serialize::Serializable;
     use atlas_communication::tcp_ip_simplex::TCPSimplexNode;
-    use atlas_communication::tcpip::{PeerAddr, TcpNode};
+    use atlas_communication::tcpip::{TcpNode};
 
     const FIRST_CLI: NodeId = NodeId(1000u32);
     const CLI_POOL_CFG: ClientPoolConfig = ClientPoolConfig {

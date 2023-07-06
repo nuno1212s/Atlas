@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use atlas_common::peer_addr::PeerAddr;
 use bytes::{Bytes, BytesMut};
 use log::{debug, error, info, trace, warn};
 use mio::{Events, Interest, Poll, Registry, Token};
@@ -23,7 +24,6 @@ use crate::mio_tcp::connections::epoll_group::epoll_workers::{interrupted, would
 use crate::mio_tcp::connections::epoll_group::EpollWorkerGroupHandle;
 use crate::serialize::Serializable;
 use crate::tcpip::connections::ConnCounts;
-use crate::tcpip::PeerAddr;
 
 const DEFAULT_ALLOWED_CONCURRENT_JOINS: usize = 128;
 // Since the tokens will always start at 0, we limit the amount of concurrent joins we can have

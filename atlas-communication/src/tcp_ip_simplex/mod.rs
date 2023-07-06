@@ -2,29 +2,27 @@ pub mod connections;
 
 use std::collections::BTreeMap;
 use std::iter;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
+use atlas_common::peer_addr::PeerAddr;
 use either::Either;
 use log::{debug, error};
-use rustls::{ClientConfig, ServerConfig};
 use smallvec::SmallVec;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::prng::ThreadSafePrng;
 use atlas_common::error::*;
-use atlas_common::{socket, threadpool};
+use atlas_common::{threadpool};
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
-use crate::config::{NodeConfig, TcpConfig, TlsConfig};
+use crate::config::{NodeConfig, TlsConfig};
 use crate::message::{NetworkMessage, NetworkMessageKind, StoredSerializedNetworkMessage, WireMessage};
-use crate::message_signing::{NodePKCrypto, NodePKShared};
-use crate::Node;
+use crate::{Node, NodePK};
 use crate::network_reconfiguration::ReconfigurableNetworkNode;
 use crate::serialize::{Buf, Serializable};
 use crate::tcp_ip_simplex::connections::{PeerConnection, SimplexConnections};
 use crate::tcpip::connections::ConnCounts;
-use crate::tcpip::{AsyncConn, ConnectionType, NodeConnectionAcceptor, PeerAddr, TlsNodeAcceptor, TlsNodeConnector};
+use crate::tcpip::{AsyncConn, ConnectionType, NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
 
 const NODE_QUORUM_SIZE: usize = 1024;
 
@@ -35,8 +33,8 @@ pub struct TCPSimplexNode<M: Serializable + 'static> {
     first_cli: NodeId,
     // The thread safe pseudo random number generator
     rng: Arc<ThreadSafePrng>,
-    // Our public key cryptography information
-    keys: NodePKCrypto,
+    // General network information
+    reconf_node: Arc<ReconfigurableNetworkNode>,
     // The client pooling for this node
     client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>,
 
@@ -93,7 +91,7 @@ impl<M> TCPSimplexNode<M> where M: Serializable + 'static {
 
 
     /// Create the send tos for a given target
-    fn send_tos(&self, shared: Option<&NodePKCrypto>, targets: impl Iterator<Item=NodeId>, flush: bool)
+    fn send_tos(&self, shared: Option<&Arc<ReconfigurableNetworkNode>>, targets: impl Iterator<Item=NodeId>, flush: bool)
                 -> (Option<SendTo<M>>, Option<SendTos<M>>, Vec<NodeId>) {
         let mut send_to_me = None;
         let mut send_tos: Option<SendTos<M>> = None;
@@ -208,7 +206,7 @@ impl<M> TCPSimplexNode<M> where M: Serializable + 'static {
 impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
     type Config = NodeConfig;
     type ConnectionManager = SimplexConnections<M>;
-    type Crypto = NodePKCrypto;
+    type Crypto = ReconfigurableNetworkNode;
     type IncomingRqHandler = PeerIncomingRqHandling<NetworkMessage<M>>;
     type ReconfigurationHandling = ReconfigurableNetworkNode;
 
@@ -222,13 +220,10 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
 
         let conn_counts = ConnCounts::from_tcp_config(&tcp_config);
 
-        let addr = tcp_config.addrs.get(id.0 as u64).expect(format!("Failed to get my own IP address ({})", id.0).as_str()).clone();
+        let reconf_node = Arc::new(ReconfigurableNetworkNode::initialize(cfg.reconfig));
 
         let network = tcp_config.network_config;
 
-        let (connector, acceptor,
-            client_socket, replica_socket) =
-            Self::setup_network::<AsyncConn>(id, addr, network).await;
 
         //Setup all the peer message reception handling.
         let peers = Arc::new(PeerIncomingRqHandling::new(
@@ -237,10 +232,15 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
             cfg.client_pool_config,
         ));
 
+        let addr = reconf_node.get_own_addr();
+
+        let (connector, acceptor,
+            client_socket, replica_socket) =
+            Self::setup_network::<AsyncConn>(id, addr.clone(), network).await;
 
         let peer_connections = SimplexConnections::new(id, cfg.first_cli,
                                                     conn_counts,
-                                                    tcp_config.addrs,
+                                                    reconf_node.clone(),
                                                     connector, acceptor, peers.clone());
 
 
@@ -251,8 +251,6 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
             peer_connections.clone().setup_tcp_listener(replica);
         }
 
-        let shared = NodePKCrypto::new(NodePKShared::from_config(cfg.pk_crypto_config));
-
         let rng = Arc::new(ThreadSafePrng::new());
 
         debug!("{:?} // Initializing node reference", id);
@@ -261,9 +259,9 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
             id,
             first_cli: cfg.first_cli,
             rng,
-            keys: shared,
             client_pooling: peers,
             connections: peer_connections,
+            reconf_node: reconf_node,
         });
 
         // success
@@ -282,8 +280,8 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
         &self.connections
     }
 
-    fn pk_crypto(&self) -> &Self::Crypto {
-        &self.keys
+    fn pk_crypto(&self) -> &Arc<Self::Crypto> {
+        &self.reconf_node
     }
 
     fn node_incoming_rq_handling(&self) -> &Arc<PeerIncomingRqHandling<NetworkMessage<M>>> {
@@ -308,7 +306,7 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
     }
 
     fn send_signed(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> Result<()> {
-        let keys = Some(&self.keys);
+        let keys = Some(&self.reconf_node);
 
         let (send_to_me, send_to_others, failed) =
             self.send_tos(keys, iter::once(target), flush);
@@ -336,7 +334,7 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
     }
 
     fn broadcast_signed(&self, message: NetworkMessageKind<M>, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
-        let keys = Some(&self.keys);
+        let keys = Some(&self.reconf_node);
 
         let (send_to_me, send_to_others, failed) =
             self.send_tos(keys, target, true);
@@ -373,7 +371,7 @@ impl<M: Serializable + 'static> Node<M> for TCPSimplexNode<M> {
 struct SendTo<M: Serializable + 'static> {
     my_id: NodeId,
     peer_id: NodeId,
-    shared: Option<NodePKCrypto>,
+    shared: Option<Arc<ReconfigurableNetworkNode>>,
     nonce: u64,
     peer_cnn: SendToPeer<M>,
     flush: bool,
@@ -390,7 +388,7 @@ enum SendToPeer<M: Serializable + 'static> {
 impl<M: Serializable + 'static> SendTo<M> {
     fn value(self, msg: Either<(NetworkMessageKind<M>, Buf, Digest), (Buf, Digest)>) {
         let key_pair = if let Some(node_shared) = &self.shared {
-            Some(&**node_shared.my_key())
+            Some(&**node_shared.get_key_pair())
         } else {
             None
         };
