@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use chrono::Utc;
@@ -8,10 +7,7 @@ use atlas_common::channel;
 use atlas_common::channel::{ChannelMixedRx, ChannelMixedTx, new_bounded_mixed, OneShotRx, OneShotTx};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
-use crate::message::{NetworkMessage, NetworkMessageKind, PingMessage};
-use crate::Node;
-use crate::serialize::Serializable;
-use crate::tcp_ip_simplex::TCPSimplexNode;
+use crate::message::{NetworkMessageKind, PingMessage};
 
 pub struct PingInfo {
     tx: OneShotTx<PingResponse>,

@@ -1,7 +1,10 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Serialize, Deserialize};
+use crate::crypto::signature::{KeyPair, PublicKey};
+use crate::node_id::NodeId;
 
 
 ///Represents the server addresses of a peer
@@ -33,4 +36,20 @@ impl PeerAddr {
             client_facing_socket: Some(replica_addr),
         }
     }
+}
+
+/// Represents the network information that a node needs to know about other nodes
+pub trait NetworkInformationProvider {
+
+    fn get_own_addr(&self) -> PeerAddr;
+
+    /// Get our own key pair
+    fn get_key_pair(&self) -> &Arc<KeyPair>;
+
+    /// Get the public key of a given node
+    fn get_public_key(&self, node: &NodeId) -> Option<PublicKey>;
+
+    /// Get the peer addr for a given node
+    fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr>;
+
 }

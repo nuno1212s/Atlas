@@ -1,23 +1,26 @@
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use either::Either;
+
 use futures::AsyncReadExt;
-use log::{debug, error, info, trace};
+
+use log::error;
 
 use atlas_common::async_runtime as rt;
 use atlas_common::socket::SecureReadHalfAsync;
 
-use crate::client_pooling::ConnectedPeer;
 use crate::cpu_workers;
-use crate::message::{Header, NetworkMessage};
+use crate::message::{Header, NetworkMessageKind, StoredMessage};
+use crate::reconfiguration_node::ReconfigurationMessageHandler;
 use crate::serialize::Serializable;
 use crate::tcpip::connections::{ConnHandle, PeerConnection};
 
-pub(super) fn spawn_incoming_task<M: Serializable + 'static>(
+pub(super) fn spawn_incoming_task<RM, PM>(
     conn_handle: ConnHandle,
-    peer: Arc<PeerConnection<M>>,
-    mut socket: SecureReadHalfAsync) {
+    peer: Arc<PeerConnection<RM, PM>>,
+    reconf_handle: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
+    mut socket: SecureReadHalfAsync)
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     rt::spawn(async move {
         let client_pool_buffer = Arc::clone(peer.client_pool_peer());
         let mut read_buffer = BytesMut::with_capacity(Header::LENGTH);
@@ -73,21 +76,22 @@ pub(super) fn spawn_incoming_task<M: Serializable + 'static>(
             };
 
             match message {
-                crate::message::NetworkMessageKind::ReconfigurationMessage(_) => todo!(),
-                _ => {}
-            }
-
-            let msg = NetworkMessage::new(header, message);
-
-            if let Err(inner) = client_pool_buffer.push_request(msg) {
-                error!("{:?} // Channel closed, closing tcp connection as well to peer {:?}. {:?}",
+                NetworkMessageKind::System(sys_msg) => {
+                    if let Err(inner) = client_pool_buffer.push_request(StoredMessage::new(header, sys_msg.into())) {
+                        error!("{:?} // Channel closed, closing tcp connection as well to peer {:?}. {:?}",
                     conn_handle.my_id,
                     peer_id,
                     inner,
                 );
-
-                break;
-            };
+                        break;
+                    };
+                }
+                NetworkMessageKind::ReconfigurationMessage(reconfig) => {
+                    if let Err(err) = reconf_handle.push_request(StoredMessage::new(header, reconfig.into())) {
+                        error!("{:?} // Failed to push reconfiguration message to reconfiguration handler. {:?}", conn_handle.my_id, err);
+                    }
+                }
+            }
 
             //TODO: Statistics
         }

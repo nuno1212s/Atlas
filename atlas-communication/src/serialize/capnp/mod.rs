@@ -21,11 +21,12 @@ use super::{Buf};
 const DEFAULT_SERIALIZE_BUFFER_SIZE: usize = 1024;
 
 /// Serialize a wire message into the writer `W`.
-pub fn serialize_message<W, M>(
+pub fn serialize_message<W, RM, PM>(
     w: &mut W,
-    m: &NetworkMessageKind<M>,
+    m: &NetworkMessageKind<RM, PM>,
 ) -> Result<()>
-    where M: Serializable,
+    where RM: Serializable,
+          PM: Serializable,
           W: Write
 {
     let mut root = capnp::message::Builder::new(capnp::message::HeapAllocator::new());
@@ -41,7 +42,12 @@ pub fn serialize_message<W, M>(
         NetworkMessageKind::System(sys_message) => {
             let mut sys_msg_builder = network_message.reborrow().init_system_message();
 
-            M::serialize_capnp(sys_msg_builder, sys_message.deref())?;
+            PM::serialize_capnp(sys_msg_builder, sys_message.deref())?;
+        }
+        NetworkMessageKind::ReconfigurationMessage(reconf_msg) => {
+            let mut reconf_msg = network_message.reborrow().init_reconfiguration_message();
+
+            RM::serialize_capnp(reconf_msg, reconf_msg.deref())?;
         }
     }
 
@@ -52,9 +58,9 @@ pub fn serialize_message<W, M>(
 }
 
 /// Deserialize a message from a reader
-pub fn deserialize_message<R, M>(
+pub fn deserialize_message<R, RM, PM>(
     r: R
-) -> Result<NetworkMessageKind<M>> where R: Read, M: Serializable {
+) -> Result<NetworkMessageKind<RM, PM>> where R: Read, RM: Serializable, PM: Serializable {
     let mut options = ReaderOptions::new();
 
     options.traversal_limit_in_words(None);

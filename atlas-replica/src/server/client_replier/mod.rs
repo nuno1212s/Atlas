@@ -99,7 +99,7 @@ impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
                         // store previous reply message and peer id,
                         // for the next iteration
                         //TODO: Choose ordered or unordered reply
-                        let message = NetworkMessageKind::from(
+                        let message = NetworkMessageKind::from_system(
                             SystemMessage::OrderedReply(ReplyMessage::new(
                                 session_id,
                                 operation_id,

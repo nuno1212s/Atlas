@@ -21,12 +21,14 @@ use crate::tcp_ip_simplex::connections::{ConnectionDirection, PeerConnection};
 use crate::tcp_ip_simplex::connections::ping_handler::{PingChannelReceiver, PingHandler};
 use crate::tcpip::connections::{ConnHandle, NetworkSerializedMessage};
 
-pub(super) fn spawn_outgoing_task<M: Serializable + 'static>(
+pub(super) fn spawn_outgoing_task<RM, PM>(
     conn_handle: ConnHandle,
     ping_handler: Arc<PingHandler>,
     mut ping_orders: PingChannelReceiver,
-    peer: Arc<PeerConnection<M>>,
-    mut socket: SecureSocketAsync) {
+    peer: Arc<PeerConnection<RM, PM>>,
+    mut socket: SecureSocketAsync)
+    where RM: Serializable + 'static, PM: Serializable + 'static
+{
     rt::spawn(async move {
         let mut rx = peer.to_send_handle().clone();
 
@@ -106,11 +108,12 @@ pub(super) fn spawn_outgoing_task<M: Serializable + 'static>(
     });
 }
 
-async fn send_message<M: Serializable + 'static>(peer: &Arc<PeerConnection<M>>,
-                                                 socket: &mut SecureSocketAsync,
-                                                 conn_handle: &ConnHandle,
-                                                 to_send: NetworkSerializedMessage,
-                                                 flush: bool) -> Result<()> {
+async fn send_message<RM, PM>(peer: &Arc<PeerConnection<RM, PM>>,
+                              socket: &mut SecureSocketAsync,
+                              conn_handle: &ConnHandle,
+                              to_send: NetworkSerializedMessage,
+                              flush: bool) -> Result<()>
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     let start = Instant::now();
 
     let (to_send, callback, dispatch_time, _, send_rq_time) = to_send;
@@ -141,12 +144,13 @@ async fn send_message<M: Serializable + 'static>(peer: &Arc<PeerConnection<M>>,
 }
 
 /// Make a ping request
-async fn make_ping_rq<M: Serializable + 'static>(peer: &Arc<PeerConnection<M>>,
-                                                 mut socket: &mut SecureSocketAsync,
-                                                 conn_handle: &ConnHandle) -> Result<()> {
-    let ping = NetworkMessageKind::<M>::Ping(PingMessage::new(true));
+async fn make_ping_rq<RM, PM>(peer: &Arc<PeerConnection<RM, PM>>,
+                              mut socket: &mut SecureSocketAsync,
+                              conn_handle: &ConnHandle) -> Result<()>
+    where RM: Serializable + 'static, PM: Serializable + 'static {
+    let ping = NetworkMessageKind::<RM, PM>::Ping(PingMessage::new(true));
 
-    let (_, result) = serialize_digest_threadpool_return_msg::<M>(ping).await.wrapped(ErrorKind::CommunicationPingHandler)?;
+    let (_, result) = serialize_digest_threadpool_return_msg::<RM, PM>(ping).await.wrapped(ErrorKind::CommunicationPingHandler)?;
 
     let (payload, digest) = result?;
 
@@ -173,7 +177,7 @@ async fn make_ping_rq<M: Serializable + 'static>(peer: &Arc<PeerConnection<M>>,
     socket.read_exact(&mut read_buffer[..header.payload_length()]).await?;
 
     // Use the threadpool for CPU intensive work in order to not block the IO threads
-    let (pong, payload) = cpu_workers::deserialize_message::<M>(header.clone(),
+    let (pong, payload) = cpu_workers::deserialize_message::<RM, PM>(header.clone(),
                                                                 read_buffer).await.unwrap()?;
 
     return match pong {

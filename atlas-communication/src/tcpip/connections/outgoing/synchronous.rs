@@ -1,17 +1,15 @@
 use std::sync::Arc;
 use log::error;
 
-use atlas_common::channel::ChannelMixedRx;
 use atlas_common::socket::SecureWriteHalfSync;
 use atlas_metrics::metrics::metric_duration;
 use crate::metric::COMM_REQUEST_SEND_TIME_ID;
-use crate::serialize::Serializable;
 
-use crate::tcpip::connections::{ConnHandle, PeerConnection, NetworkSerializedMessage};
+use crate::tcpip::connections::{ConnHandle, PeerConnection};
 
-pub(super) fn spawn_outgoing_thread<M: Serializable>(
+pub(super) fn spawn_outgoing_thread<RM, PM>(
     conn_handle: ConnHandle,
-    mut peer: Arc<PeerConnection<M>>,
+    mut peer: Arc<PeerConnection<RM, PM>>,
     mut socket: SecureWriteHalfSync) {
     std::thread::Builder::new()
         .name(format!("Outgoing connection thread"))

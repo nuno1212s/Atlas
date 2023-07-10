@@ -1,20 +1,20 @@
-use std::fs::read;
 use std::io::Read;
 use std::sync::Arc;
 use bytes::BytesMut;
 use log::error;
 use atlas_common::socket::{SecureReadHalfSync};
-use crate::client_pooling::ConnectedPeer;
 use crate::cpu_workers;
-use crate::message::{Header, NetworkMessage};
+use crate::message::{Header, NetworkMessage, NetworkMessageKind, StoredMessage};
+use crate::reconfiguration_node::ReconfigurationMessageHandler;
 use crate::serialize::Serializable;
 use crate::tcpip::connections::{ConnHandle, PeerConnection};
 
-pub(super) fn spawn_incoming_thread<M: Serializable + 'static>(
+pub(super) fn spawn_incoming_thread<RM, PM>(
     conn_handle: ConnHandle,
-    peer: Arc<PeerConnection<M>>,
-    mut socket: SecureReadHalfSync) {
-
+    peer: Arc<PeerConnection<RM, PM>>,
+    reconf_handle: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
+    mut socket: SecureReadHalfSync)
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     std::thread::Builder::new()
         .spawn(move || {
             let mut read_buffer = BytesMut::with_capacity(Header::LENGTH);
@@ -70,21 +70,29 @@ pub(super) fn spawn_incoming_thread<M: Serializable + 'static>(
                     }
                 };
 
-
                 match message {
-                    crate::message::NetworkMessageKind::ReconfigurationMessage(_) => todo!(),
-                    _ => {}
-                }
+                    NetworkMessageKind::ReconfigurationMessage(reconf_msg) => {
+                        let msg = StoredMessage::new(header, reconf_msg.into());
 
-                let msg = NetworkMessage::new(header, message);
+                        if let Err(inner) = reconf_handle.push_request(msg) {
+                            error!("Failed to deliver reconfiguration message to reconfiguration handler. {:?}",
+                            inner);
+                        };
+                    }
+                    NetworkMessageKind::System(sys_msg) => {
+                        let msg = StoredMessage::new(header, sys_msg.into());
 
-                if let Err(inner) = client_pool_rq.push_request(msg) {
-                    error!("Channel closed, closing tcp connection as well to peer {:?}. {:?}",
+                        if let Err(inner) = client_pool_rq.push_request(msg) {
+                            error!("Channel closed, closing tcp connection as well to peer {:?}. {:?}",
                             peer_id,
                             inner);
 
-                    break;
-                };
+                            break;
+                        };
+                    }
+                    _ => {}
+                }
+
 
                 //TODO: Stats
             }

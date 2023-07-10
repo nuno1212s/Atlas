@@ -107,13 +107,27 @@ pub enum NetworkJoinRejectionReason {
     NotNecessary
 }
 
+/// Reconfiguration message type
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum NetworkConfigurationMessage {
+pub enum ReconfigurationMessage {
+    NetworkReconfig(NetworkReconfigMessage),
+    QuorumReconfig(QuorumReconfigMessage)
+}
+
+/// Network reconfiguration messages (Related only to the network view)
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum NetworkReconfigMessage {
     NetworkJoinRequest(NodeTriple),
     NetworkJoinResponse(NetworkJoinResponseMessage),
     NetworkViewStateRequest,
     NetworkViewState(NetworkView),
+}
+
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum QuorumReconfigMessage {
     QuorumEnterRequest(QuorumEnterRequest),
     QuorumEnterResponse(QuorumEnterResponse),
     QuorumLeaveRequest(QuorumLeaveRequest),

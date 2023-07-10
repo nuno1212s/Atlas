@@ -22,17 +22,18 @@ use crate::tcpip::connections::conn_establish::ConnectionHandler;
 use crate::tcpip::connections::PeerConnections;
 use crate::tcpip::{TlsNodeAcceptor, TlsNodeConnector};
 
-pub(super) fn setup_conn_acceptor_thread<M: Serializable + 'static>(
+pub(super) fn setup_conn_acceptor_thread<RM, PM>(
     tcp_listener: SyncListener,
     conn_handler: Arc<ConnectionHandler>,
-    peer_connection: Arc<PeerConnections<M>>,
-) {
+    peer_connection: Arc<PeerConnections<RM, PM>>,
+)
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     std::thread::Builder::new()
         .name(format!("Connection acceptor thread"))
         .spawn(move || loop {
             match tcp_listener.accept() {
                 Ok(connection) => {
-                    conn_handler.accept_conn::<M>(&peer_connection, Either::Right(connection))
+                    conn_handler.accept_conn::<RM, PM>(&peer_connection, Either::Right(connection))
                 }
                 Err(err) => {
                     error!("Failed to accept connection. {:?}", err);
@@ -42,12 +43,13 @@ pub(super) fn setup_conn_acceptor_thread<M: Serializable + 'static>(
         .unwrap();
 }
 
-pub(super) fn connect_to_node_sync<M: Serializable + 'static>(
+pub(super) fn connect_to_node_sync<RM, PM>(
     conn_handler: Arc<ConnectionHandler>,
-    connections: Arc<PeerConnections<M>>,
+    connections: Arc<PeerConnections<RM, PM>>,
     peer_id: NodeId,
     addr: PeerAddr,
-) -> OneShotRx<Result<()>> {
+) -> OneShotRx<Result<()>>
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     let (tx, rx) = new_oneshot_channel();
 
     std::thread::Builder::new()
@@ -91,7 +93,7 @@ pub(super) fn connect_to_node_sync<M: Serializable + 'static>(
                             return;
                         }
                     }
-                    .clone()
+                        .clone()
                 }
             };
 
@@ -106,7 +108,7 @@ pub(super) fn connect_to_node_sync<M: Serializable + 'static>(
                     panic!("Failed, trying to use async connector in sync mode")
                 }
             }
-            .clone();
+                .clone();
 
             const SECS: u64 = 1;
             const RETRY: usize = 3 * 60;
@@ -236,11 +238,12 @@ pub(super) fn connect_to_node_sync<M: Serializable + 'static>(
     rx
 }
 
-pub(super) fn handle_server_conn_established<M: Serializable + 'static>(
+pub(super) fn handle_server_conn_established<RM, PM>(
     conn_handler: Arc<ConnectionHandler>,
-    connections: Arc<PeerConnections<M>>,
+    connections: Arc<PeerConnections<RM, PM>>,
     mut sock: SyncSocket,
-) {
+)
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     threadpool::execute(move || {
         let acceptor = if let TlsNodeAcceptor::Sync(connector) = &conn_handler.tls_acceptor {
             connector.clone()

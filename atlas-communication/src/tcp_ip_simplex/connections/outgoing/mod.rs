@@ -8,11 +8,12 @@ use crate::tcpip::connections::ConnHandle;
 mod asynchronous;
 
 
-pub(super) fn spawn_outgoing_task_handler<M: Serializable>(
+pub(super) fn spawn_outgoing_task_handler<RM, PM>(
     conn_handle: ConnHandle,
-    connection: Arc<PeerConnection<M>>,
+    connection: Arc<PeerConnection<RM, PM>>,
     ping: Arc<PingHandler>,
-    socket: SecureSocket) {
+    socket: SecureSocket) 
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     let rx = ping.register_ping_channel(connection.peer_node_id, conn_handle.id());
 
     match socket {

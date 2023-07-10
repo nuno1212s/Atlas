@@ -2,30 +2,33 @@ use std::collections::BTreeMap;
 use std::iter;
 use std::net::SocketAddr;
 use std::sync::{Arc};
-use std::time::{Duration, Instant};
+use std::time::{Instant};
 
-use atlas_common::peer_addr::PeerAddr;
+use atlas_common::peer_addr::{NetworkInformationProvider, PeerAddr};
 use either::Either;
 
-use log::{debug, error, info};
+use log::{debug, error};
 use rustls::{ClientConfig, ServerConfig};
 use smallvec::SmallVec;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-use atlas_common::{async_runtime as rt, socket, threadpool};
+use atlas_common::{socket, threadpool};
 use atlas_common::crypto::hash::Digest;
+use atlas_common::crypto::signature::KeyPair;
 
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::prng::ThreadSafePrng;
 use atlas_common::socket::{AsyncListener, SyncListener};
 
-use crate::network_reconfiguration::ReconfigurableNetworkNode;
-use crate::{Node, NodePK};
+use crate::reconfiguration_node::{ReconfigurationMessageHandler, ReconfigurationNode};
+use crate::{FullNetworkNode, NodePK};
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::config::{NodeConfig, TlsConfig};
-use crate::message::{NetworkMessage, NetworkMessageKind, StoredSerializedNetworkMessage, WireMessage};
+use crate::message::{NetworkMessage, NetworkMessageKind, StoredMessage, StoredSerializedNetworkMessage, StoredSerializedProtocolMessage, WireMessage};
+use crate::protocol_node::ProtocolNetworkNode;
 use crate::serialize::{Buf, Serializable};
+use crate::tcp_ip_simplex::connections::SimplexConnections;
 use crate::tcpip::connections::{ConnCounts, PeerConnection, PeerConnections};
 
 pub mod connections;
@@ -54,21 +57,27 @@ pub enum NodeConnectionAcceptor {
 
 const NODE_QUORUM_SIZE: usize = 1024;
 
-type SendTos<M> = SmallVec<[SendTo<M>; NODE_QUORUM_SIZE]>;
+type SendTos<RM, PM> = SmallVec<[SendTo<RM, PM>; NODE_QUORUM_SIZE]>;
 
 /// The node based on the TCP/IP protocol stack
-pub struct TcpNode<M: Serializable + 'static> {
+pub struct TcpNode<NI, RM, PM>
+    where
+        NI: NetworkInformationProvider,
+        RM: Serializable + 'static,
+        PM: Serializable + 'static {
     id: NodeId,
     first_cli: NodeId,
     // The thread safe pseudo random number generator
     rng: Arc<ThreadSafePrng>,
     // General network information and reconfiguration logic
-    reconf_node: Arc<ReconfigurableNetworkNode>,
+    reconf_node: Arc<Box<NI>>,
     // The connections that are currently being maintained by us to other peers
-    peer_connections: Arc<PeerConnections<M>>,
+    peer_connections: Arc<PeerConnections<RM, PM>>,
+    // The reconfiguration message handler
+    reconfig_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
     //Handles the incoming connections' buffering and request collection
     //This is polled by the proposer for client requests and by the
-    client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>,
+    client_pooling: Arc<PeerIncomingRqHandling<StoredMessage<PM::Message>>>,
 }
 
 pub trait ConnectionType {
@@ -117,7 +126,11 @@ impl ConnectionType for AsyncConn {
     }
 }
 
-impl<M: Serializable + 'static> TcpNode<M> {
+impl<NI, RM, PM> TcpNode<NI, RM, PM>
+    where
+        NI: NetworkInformationProvider + 'static,
+        RM: Serializable + 'static,
+        PM: Serializable + 'static {
     async fn setup_client_facing_socket<T>(
         id: NodeId,
         addr: PeerAddr,
@@ -165,10 +178,10 @@ impl<M: Serializable + 'static> TcpNode<M> {
     }
 
     /// Create the send tos for a given target
-    fn send_tos(&self, shared: Option<&Arc<ReconfigurableNetworkNode>>, targets: impl Iterator<Item=NodeId>, flush: bool)
-                -> (Option<SendTo<M>>, Option<SendTos<M>>, Vec<NodeId>) {
+    fn send_tos(&self, shared: Option<&Arc<KeyPair>>, targets: impl Iterator<Item=NodeId>, flush: bool)
+                -> (Option<SendTo<RM, PM>>, Option<SendTos<RM, PM>>, Vec<NodeId>) {
         let mut send_to_me = None;
-        let mut send_tos: Option<SendTos<M>> = None;
+        let mut send_tos: Option<SendTos<RM, PM>> = None;
 
         let mut failed = Vec::new();
 
@@ -183,6 +196,7 @@ impl<M: Serializable + 'static> TcpNode<M> {
                     peer_id: id,
                     shared: shared.cloned(),
                     nonce,
+                    reconfig_handling: self.reconfig_handling.clone(),
                     peer_cnn: SendToPeer::Me(self.loopback_channel().clone()),
                     flush,
                     rq_send_time: Instant::now(),
@@ -199,6 +213,7 @@ impl<M: Serializable + 'static> TcpNode<M> {
                                 peer_id: id.clone(),
                                 shared: shared.cloned(),
                                 nonce,
+                                reconfig_handling: self.reconfig_handling.clone(),
                                 peer_cnn: SendToPeer::Peer(conn),
                                 flush,
                                 rq_send_time: Instant::now(),
@@ -211,6 +226,7 @@ impl<M: Serializable + 'static> TcpNode<M> {
                                 peer_id: id.clone(),
                                 shared: shared.cloned(),
                                 nonce,
+                                reconfig_handling: self.reconfig_handling.clone(),
                                 peer_cnn: SendToPeer::Peer(conn),
                                 flush,
                                 rq_send_time: Instant::now(),
@@ -226,8 +242,8 @@ impl<M: Serializable + 'static> TcpNode<M> {
         (send_to_me, send_tos, failed)
     }
 
-    fn serialize_send_impl(send_to_me: Option<SendTo<M>>, send_to_others: Option<SendTos<M>>,
-                           message: NetworkMessageKind<M>) {
+    fn serialize_send_impl(send_to_me: Option<SendTo<RM, PM>>, send_to_others: Option<SendTos<RM, PM>>,
+                           message: NetworkMessageKind<RM, PM>) {
         threadpool::execute(move || {
             match crate::cpu_workers::serialize_digest_no_threadpool(&message) {
                 Ok((buffer, digest)) => {
@@ -240,8 +256,8 @@ impl<M: Serializable + 'static> TcpNode<M> {
         });
     }
 
-    fn send_impl(send_to_me: Option<SendTo<M>>, send_to_others: Option<SendTos<M>>,
-                 msg: NetworkMessageKind<M>, buffer: Buf, digest: Digest, ) {
+    fn send_impl(send_to_me: Option<SendTo<RM, PM>>, send_to_others: Option<SendTos<RM, PM>>,
+                 msg: NetworkMessageKind<RM, PM>, buffer: Buf, digest: Digest, ) {
         if let Some(send_to) = send_to_me {
             send_to.value(Either::Left((msg, buffer.clone(), digest.clone())));
         }
@@ -253,8 +269,8 @@ impl<M: Serializable + 'static> TcpNode<M> {
         }
     }
 
-    fn send_serialized_impl(send_to_me: Option<SendTo<M>>, send_to_others: Option<SendTos<M>>,
-                            mut messages: BTreeMap<NodeId, StoredSerializedNetworkMessage<M>>) {
+    fn send_serialized_impl(send_to_me: Option<SendTo<RM, PM>>, send_to_others: Option<SendTos<RM, PM>>,
+                            mut messages: BTreeMap<NodeId, StoredSerializedNetworkMessage<RM, PM>>) {
         if let Some(send_to) = send_to_me {
             let message = messages.remove(&send_to.peer_id).unwrap();
 
@@ -270,23 +286,88 @@ impl<M: Serializable + 'static> TcpNode<M> {
         }
     }
 
-    fn loopback_channel(&self) -> &Arc<ConnectedPeer<NetworkMessage<M>>> {
+    fn loopback_channel(&self) -> &Arc<ConnectedPeer<StoredMessage<RM::Message>>> {
         self.client_pooling.loopback_connection()
     }
 }
 
-impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
+impl<NI, RM, PM> ProtocolNetworkNode<PM> for TcpNode<NI, RM, PM>
+    where RM: Serializable + 'static, PM: Serializable + 'static {
+    type ConnectionManager = SimplexConnections<RM, PM>;
+    type Crypto = ();
+    type IncomingRqHandler = PeerIncomingRqHandling<StoredMessage<PM::Message>>;
+
+    fn id(&self) -> NodeId {
+        self.id
+    }
+
+    fn first_cli(&self) -> NodeId {
+        self.first_cli
+    }
+
+    fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
+        &self.peer_connections
+    }
+
+    fn pk_crypto(&self) -> &Arc<Self::Crypto> {
+        todo!()
+    }
+
+    fn node_incoming_rq_handling(&self) -> &Arc<Self::IncomingRqHandler> {
+        &self.incoming_rq_handling
+    }
+
+    fn send(&self, message: PM::Message, target: NodeId, flush: bool) -> Result<()> {
+        todo!()
+    }
+
+    fn send_signed(&self, message: PM::Message, target: NodeId, flush: bool) -> Result<()> {
+        todo!()
+    }
+
+    fn broadcast(&self, message: PM::Message, targets: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
+        todo!()
+    }
+
+    fn broadcast_signed(&self, message: PM::Message, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
+        todo!()
+    }
+
+    fn serialize_sign_message(&self, message: PM::Message, target: NodeId) -> Result<StoredSerializedProtocolMessage<PM>> {
+        todo!()
+    }
+
+    fn broadcast_serialized(&self, messages: BTreeMap<NodeId, StoredSerializedProtocolMessage<PM::Message>>) -> std::result::Result<(), Vec<NodeId>> {
+        todo!()
+    }
+}
+
+impl<NI, RM, PM> ReconfigurationNode<RM> for TcpNode<NI, RM, PM>
+    where RM: Serializable + 'static, PM: Serializable + 'static {
+    type ConnectionManager = PeerConnections<RM, PM>;
+    type IncomingReconfigRqHandler = ReconfigurationMessageHandler<StoredMessage<RM::Message>>;
+
+    fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
+        &self.peer_connections
+    }
+
+    fn reconfiguration_message_handler(&self) -> &Arc<Self::IncomingReconfigRqHandler> {
+        &self.reconfig_handling
+    }
+
+    fn send_reconfig_message(&self, message: RM::Message, target: NodeId) -> Result<()> {
+        todo!()
+    }
+
+    fn broadcast_reconfig_message(&self, message: RM::Message, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
+        todo!()
+    }
+}
+
+impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TcpNode<NI, RM, PM> {
     type Config = NodeConfig;
 
-    type ConnectionManager = PeerConnections<M>;
-
-    type Crypto = ReconfigurableNetworkNode;
-
-    type IncomingRqHandler = PeerIncomingRqHandling<NetworkMessage<M>>;
-
-    type ReconfigurationHandling = ReconfigurableNetworkNode;
-
-    async fn bootstrap(cfg: NodeConfig) -> Result<Arc<Self>> {
+    async fn bootstrap(network_info_provider: NI, cfg: Self::Config) -> Result<Arc<Self>> where NI: NetworkInformationProvider {
         let id = cfg.id;
 
         debug!("Initializing sockets.");
@@ -295,7 +376,8 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
 
         let conn_counts = ConnCounts::from_tcp_config(&tcp_config);
 
-        let reconf_node = Arc::new(ReconfigurableNetworkNode::initialize(cfg.reconfig));
+        let network_info_provider = Arc::new(Box::new(network_info_provider));
+        let reconfig_message_handler = Arc::new(ReconfigurationMessageHandler::initialize());
 
         let network = tcp_config.network_config;
 
@@ -306,7 +388,7 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
             cfg.client_pool_config,
         ));
 
-        let addr = reconf_node.get_own_addr();
+        let addr = network_info_provider.get_own_addr();
 
         let (connector, acceptor,
             client_socket, replica_socket) =
@@ -315,7 +397,7 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
 
         let peer_connections = PeerConnections::new(id, cfg.first_cli,
                                                     conn_counts,
-                                                    reconf_node.clone(),
+                                                    network_info_provider.clone(),
                                                     connector, acceptor, peers.clone());
 
         debug!("Initializing connection listeners");
@@ -333,134 +415,49 @@ impl<M: Serializable + 'static> Node<M> for TcpNode<M> {
             id,
             first_cli: cfg.first_cli,
             rng,
+            reconf_node: network_info_provider,
             peer_connections,
+            reconfig_handling: reconfig_message_handler,
             client_pooling: peers,
-            reconf_node,
         });
 
         // success
         Ok(node)
     }
-
-    fn id(&self) -> NodeId {
-        self.id
-    }
-
-    fn first_cli(&self) -> NodeId {
-        self.first_cli
-    }
-
-    fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
-        &self.peer_connections
-    }
-
-    fn pk_crypto(&self) -> &Arc<Self::Crypto> {
-        &self.reconf_node
-    }
-
-    fn node_incoming_rq_handling(&self) -> &Arc<PeerIncomingRqHandling<NetworkMessage<M>>> { &self.client_pooling }
-
-    fn quorum_reconfig_handling(&self) -> &Arc<Self::ReconfigurationHandling> {
-        &self.reconf_node
-    }
-
-    fn send(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> Result<()> {
-        let (send_to_me, send_to_others, failed) =
-            self.send_tos(None, iter::once(target), flush);
-
-        if !failed.is_empty() {
-            return Err(Error::simple(ErrorKind::CommunicationPeerNotFound));
-        }
-
-        Self::serialize_send_impl(send_to_me, send_to_others, message);
-
-        Ok(())
-    }
-
-    fn send_signed(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> Result<()> {
-        let keys = Some(&self.reconf_node);
-
-        let (send_to_me, send_to_others, failed) =
-            self.send_tos(keys, iter::once(target), flush);
-
-        if !failed.is_empty() {
-            return Err(Error::simple(ErrorKind::CommunicationPeerNotFound));
-        }
-
-        Self::serialize_send_impl(send_to_me, send_to_others, message);
-
-        Ok(())
-    }
-
-    fn broadcast(&self, message: NetworkMessageKind<M>, targets: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
-        let (send_to_me, send_to_others, failed) =
-            self.send_tos(None, targets, true);
-
-        Self::serialize_send_impl(send_to_me, send_to_others, message);
-
-        if !failed.is_empty() {
-            Err(failed)
-        } else {
-            Ok(())
-        }
-    }
-
-    fn broadcast_signed(&self, message: NetworkMessageKind<M>, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
-        let keys = Some(&self.reconf_node);
-
-        let (send_to_me, send_to_others, failed) =
-            self.send_tos(keys, target, true);
-
-        Self::serialize_send_impl(send_to_me, send_to_others, message);
-
-        if !failed.is_empty() {
-            Err(failed)
-        } else {
-            Ok(())
-        }
-    }
-
-    fn broadcast_serialized(&self, messages: BTreeMap<NodeId, StoredSerializedNetworkMessage<M>>) -> std::result::Result<(), Vec<NodeId>> {
-        let targets = messages.keys().cloned().into_iter();
-
-        let (send_to_me, send_to_others, failed) = self.send_tos(None,
-                                                                 targets, true);
-        threadpool::execute(move || {
-            Self::send_serialized_impl(send_to_me, send_to_others, messages);
-        });
-
-        if !failed.is_empty() {
-            Err(failed)
-        } else {
-            Ok(())
-        }
-    }
 }
 
 /// Some information about a message about to be sent to a peer
-struct SendTo<M: Serializable + 'static> {
+struct SendTo<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
     my_id: NodeId,
     peer_id: NodeId,
-    shared: Option<Arc<ReconfigurableNetworkNode>>,
+    shared: Option<Arc<KeyPair>>,
     nonce: u64,
-    peer_cnn: SendToPeer<M>,
+    reconfig_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
+    peer_cnn: SendToPeer<RM, PM>,
     flush: bool,
     rq_send_time: Instant,
 }
 
 /// The information about the connection itself which can either be a loopback
 /// or a peer connection
-enum SendToPeer<M: Serializable + 'static> {
-    Me(Arc<ConnectedPeer<NetworkMessage<M>>>),
-    Peer(Arc<PeerConnection<M>>),
+enum SendToPeer<RM, PM> where RM: Serializable + 'static, PM: Serializable + 'static {
+    Me(Arc<ConnectedPeer<StoredMessage<PM::Message>>>),
+    Peer(Arc<PeerConnection<RM, PM>>),
 }
 
-impl<M: Serializable + 'static> SendTo<M> {
-    fn value(self, msg: Either<(NetworkMessageKind<M>, Buf, Digest), (Buf, Digest)>) {
-        let key_pair = if let Some(node_shared) = &self.shared {
-            Some(&**node_shared.get_key_pair())
-        } else {
-            None
+impl<RM, PM> SendTo<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
+    fn value(self, msg: Either<(NetworkMessageKind<RM, PM>, Buf, Digest), (Buf, Digest)>) {
+        let key_pair = match self.shared {
+            None => {
+                None
+            }
+            Some(key_pair) => {
+                Some(&*key_pair)
+            }
         };
 
         match (self.peer_cnn, msg) {
@@ -470,26 +467,46 @@ impl<M: Serializable + 'static> SendTo<M> {
 
                 let (header, _) = message.into_inner();
 
-                conn.push_request(NetworkMessage::new(header, msg)).unwrap();
+                match msg {
+                    NetworkMessageKind::ReconfigurationMessage(reconfig_msg) => {
+                        self.reconfig_handling.push_request(StoredMessage::new(header, reconfig_msg.into())).unwrap();
+                    }
+                    NetworkMessageKind::System(sys_msg) => {
+                        conn.push_request(StoredMessage::new(header, sys_msg.into())).unwrap();
+                    }
+                    _ => {
+                        unreachable!()
+                    }
+                }
             }
             (SendToPeer::Peer(peer), Either::Right((buf, digest))) => {
                 let message = WireMessage::new(self.my_id, self.peer_id,
                                                buf, self.nonce, Some(digest), key_pair);
 
-                peer.peer_message(message, None, self.flush, self.rq_send_time).unwrap();
+                peer.peer_message(message, None, true, Instant::now()).unwrap();
             }
             (_, _) => { unreachable!() }
         }
     }
 
-    fn value_serialized(self, msg: StoredSerializedNetworkMessage<M>) {
+    fn value_serialized(self, msg: StoredSerializedNetworkMessage<RM, PM>) {
         match self.peer_cnn {
             SendToPeer::Me(peer_conn) => {
                 let (header, msg) = msg.into_inner();
 
                 let (msg, _) = msg.into_inner();
 
-                peer_conn.push_request(NetworkMessage::new(header, msg)).unwrap();
+                match msg {
+                    NetworkMessageKind::ReconfigurationMessage(reconfig_msg) => {
+                        self.reconfig_handling.push_request(StoredMessage::new(header, reconfig_msg.into())).unwrap();
+                    }
+                    NetworkMessageKind::System(sys_msg) => {
+                        peer_conn.push_request(StoredMessage::new(header, sys_msg.into())).unwrap();
+                    }
+                    _ => {
+                        unreachable!()
+                    }
+                }
             }
             SendToPeer::Peer(peer_cnn) => {
                 let (header, msg) = msg.into_inner();
@@ -498,7 +515,7 @@ impl<M: Serializable + 'static> SendTo<M> {
 
                 let wm = WireMessage::from_parts(header, buf).unwrap();
 
-                peer_cnn.peer_message(wm, None, self.flush, self.rq_send_time).unwrap();
+                peer_cnn.peer_message(wm, None, true, Instant::now()).unwrap();
             }
         }
     }

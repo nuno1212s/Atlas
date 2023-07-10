@@ -15,7 +15,7 @@ readme = "README.md"
 
 [features]
 
-serialize_serde = ["serde", "bincode", "serde_bytes", "atlas-reconfiguration/serialize_serde", "atlas-common/serialize_serde"]
+serialize_serde = ["serde", "bincode", "serde_bytes", "atlas-common/serialize_serde"]
 serialize_capnp = ["atlas-capnp", "capnp"]
 
 default = ["serialize_serde"]
@@ -23,7 +23,6 @@ default = ["serialize_serde"]
 [dependencies]
 atlas-common = { path = "../atlas-common" }
 atlas-capnp = { path = "../atlas-capnp", optional = true }
-atlas-reconfiguration = { path = "../atlas-reconfiguration" }
 atlas-metrics = { path = "../atlas-metrics" }
 
 capnp = { version = "0.16.0", optional = true }

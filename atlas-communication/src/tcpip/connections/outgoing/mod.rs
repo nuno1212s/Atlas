@@ -8,10 +8,11 @@ use crate::tcpip::connections::{ConnHandle, PeerConnection, NetworkSerializedMes
 pub mod asynchronous;
 pub mod synchronous;
 
-pub(super) fn spawn_outgoing_task_handler<M: Serializable>(
+pub(super) fn spawn_outgoing_task_handler<RM, PM>(
     conn_handle: ConnHandle,
-    connection: Arc<PeerConnection<M>>,
-    socket: SecureWriteHalf) {
+    connection: Arc<PeerConnection<RM, PM>>,
+    socket: SecureWriteHalf)
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     match socket {
         SecureWriteHalf::Async(asynchronous) => {
             asynchronous::spawn_outgoing_task(conn_handle, connection, asynchronous);

@@ -18,7 +18,9 @@ pub type EpollWorkerId = u32;
 // This will just handle creating and deleting connections so it can be small
 pub const DEFAULT_WORKER_CHANNEL: usize = 128;
 
-pub fn init_worker_group_handle<M: Serializable + 'static>(worker_count: u32) -> (EpollWorkerGroupHandle<M>, Vec<ChannelSyncRx<EpollWorkerMessage<M>>>) {
+pub fn init_worker_group_handle<RM, PM>(worker_count: u32) -> (EpollWorkerGroupHandle<RM, PM>, Vec<ChannelSyncRx<EpollWorkerMessage<RM, PM>>>)
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
     let mut workers = Vec::with_capacity(worker_count as usize);
 
     let mut receivers = Vec::with_capacity(worker_count as usize);
@@ -36,7 +38,9 @@ pub fn init_worker_group_handle<M: Serializable + 'static>(worker_count: u32) ->
     }, receivers)
 }
 
-pub fn initialize_worker_group<M: Serializable + 'static>(connections: Arc<Connections<M>>, receivers: Vec<ChannelSyncRx<EpollWorkerMessage<M>>>) -> Result<()> {
+pub fn initialize_worker_group<RM, PM>(connections: Arc<Connections<RM, PM>>, receivers: Vec<ChannelSyncRx<EpollWorkerMessage<RM, PM>>>) -> Result<()>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
     for (worker_id, rx) in receivers.into_iter().enumerate() {
         let worker = EpollWorker::new(worker_id as u32, connections.clone(), rx)?;
 
@@ -53,27 +57,35 @@ pub fn initialize_worker_group<M: Serializable + 'static>(connections: Arc<Conne
 
 /// A handle to the worker group that handles the epoll events
 /// Allows us to register new connections to the epoll workers
-pub struct EpollWorkerGroupHandle<M: Serializable + 'static> {
-    workers: Vec<ChannelSyncTx<EpollWorkerMessage<M>>>,
+pub struct EpollWorkerGroupHandle<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
+    workers: Vec<ChannelSyncTx<EpollWorkerMessage<RM, PM>>>,
     round_robin: AtomicUsize,
 }
 
-pub struct NewConnection<M: Serializable + 'static> {
+pub struct NewConnection<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
     conn_id: u32,
     peer_id: NodeId,
     my_id: NodeId,
     socket: MioSocket,
-    peer_conn: Arc<PeerConnection<M>>,
+    peer_conn: Arc<PeerConnection<RM, PM>>,
 }
 
-pub enum EpollWorkerMessage<M: Serializable + 'static> {
-    NewConnection(NewConnection<M>),
+pub enum EpollWorkerMessage<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
+    NewConnection(NewConnection<RM, PM>),
     CloseConnection(Token),
 }
 
-impl<M: Serializable + 'static> EpollWorkerGroupHandle<M> {
+impl<RM, PM> EpollWorkerGroupHandle<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
     /// Assigns a socket to any given worker
-    pub fn assign_socket_to_worker(&self, conn_details: NewConnection<M>) -> atlas_common::error::Result<()> {
+    pub fn assign_socket_to_worker(&self, conn_details: NewConnection<RM, PM>) -> atlas_common::error::Result<()> {
         let round_robin = self.round_robin.fetch_add(1, Ordering::Relaxed);
 
         let worker = self.workers.get(round_robin % self.workers.len())
@@ -95,7 +107,9 @@ impl<M: Serializable + 'static> EpollWorkerGroupHandle<M> {
     }
 }
 
-impl<M: Serializable + 'static> Clone for EpollWorkerGroupHandle<M> {
+impl<RM, PM> Clone for EpollWorkerGroupHandle<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
     fn clone(&self) -> Self {
         Self {
             workers: self.workers.clone(),

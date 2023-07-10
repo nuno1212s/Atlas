@@ -7,7 +7,7 @@ use atlas_common::socket::{AsyncSocket, SyncSocket};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use crate::serialize::Serializable;
-use crate::tcpip::{NodeConnectionAcceptor,  TlsNodeAcceptor, TlsNodeConnector};
+use crate::tcpip::{NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
 use crate::tcpip::connections::{ConnCounts, PeerConnection, PeerConnections};
 
 mod synchronous;
@@ -39,9 +39,9 @@ impl ConnectionHandler {
         )
     }
 
-    pub(super) fn setup_conn_worker<M: Serializable + 'static>(self: Arc<Self>,
-                                                               listener: NodeConnectionAcceptor,
-                                                               peer_connections: Arc<PeerConnections<M>>) {
+    pub(super) fn setup_conn_worker<RM, PM>(self: Arc<Self>,
+                                            listener: NodeConnectionAcceptor,
+                                            peer_connections: Arc<PeerConnections<RM, PM>>) where RM: Serializable + 'static, PM: Serializable + 'static {
         match listener {
             NodeConnectionAcceptor::Async(async_listener) => {
                 asynchronous::setup_conn_acceptor_task(async_listener, self, peer_connections)
@@ -88,8 +88,9 @@ impl ConnectionHandler {
         }
     }
 
-    pub fn connect_to_node<M: Serializable + 'static>(self: &Arc<Self>, peer_connections: &Arc<PeerConnections<M>>,
-                                                      peer_id: NodeId, peer_addr: PeerAddr) -> OneShotRx<Result<()>> {
+    pub fn connect_to_node<RM, PM>(self: &Arc<Self>, peer_connections: &Arc<PeerConnections<RM, PM>>,
+                                   peer_id: NodeId, peer_addr: PeerAddr) -> OneShotRx<Result<()>>
+        where RM: Serializable + 'static, PM: Serializable + 'static {
         match &self.connector {
             TlsNodeConnector::Async(_) => {
                 asynchronous::connect_to_node_async(Arc::clone(self),
@@ -104,7 +105,8 @@ impl ConnectionHandler {
         }
     }
 
-    pub fn accept_conn<M: Serializable + 'static>(self: &Arc<Self>, peer_connections: &Arc<PeerConnections<M>>, socket: Either<AsyncSocket, SyncSocket>) {
+    pub fn accept_conn<RM, PM>(self: &Arc<Self>, peer_connections: &Arc<PeerConnections<RM, PM>>, socket: Either<AsyncSocket, SyncSocket>)
+        where RM: Serializable + 'static, PM: Serializable + 'static {
         match socket {
             Either::Left(asynchronous) => {
                 asynchronous::handle_server_conn_established(Arc::clone(self),

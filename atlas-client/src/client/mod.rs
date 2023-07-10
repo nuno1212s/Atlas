@@ -387,7 +387,7 @@ impl<D, NT> Client<D, NT>
         }
 
         // broadcast our request to the node group
-        self.node.broadcast(NetworkMessageKind::from(message), targets);
+        self.node.broadcast(NetworkMessageKind::from_system(message), targets);
 
         // await response
         let ready = get_ready::<D>(session_id, &*self.data);
@@ -453,7 +453,7 @@ impl<D, NT> Client<D, NT>
             request_info_guard.insert(request_key, sent_info);
         }
 
-        self.node.broadcast(NetworkMessageKind::from(message), targets);
+        self.node.broadcast(NetworkMessageKind::from_system(message), targets);
 
         Self::start_timeout(
             self.node.clone(),

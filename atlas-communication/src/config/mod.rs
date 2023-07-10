@@ -1,5 +1,3 @@
-use atlas_common::peer_addr::PeerAddr;
-use atlas_reconfiguration::config::ReconfigurableNetworkConfig;
 use intmap::IntMap;
 use rustls::{ClientConfig, ServerConfig};
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
@@ -20,9 +18,6 @@ pub struct NodeConfig {
     /// Every peer with id < first_cli is a replica and every peer with id > first_cli is
     /// a client
     pub first_cli: NodeId,
-    /// The reconfiguration layer config. This handles managing all nodes and knowing their public keys, addresses, etc. 
-    /// Basically maintains the picture on the current network state
-    pub reconfig: ReconfigurableNetworkConfig,
     /// TCP specific configuration
     pub tcp_config: TcpConfig,
     ///The configurations of the client pool config

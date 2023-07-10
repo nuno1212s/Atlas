@@ -1,16 +1,14 @@
 use std::sync::Arc;
 use atlas_common::socket::{SecureReadHalf};
-use crate::client_pooling::ConnectedPeer;
-use crate::message::NetworkMessage;
-use crate::serialize::Serializable;
+
 use crate::tcpip::connections::{ConnHandle, PeerConnection};
 
 pub mod asynchronous;
 pub mod synchronous;
 
-pub(super) fn spawn_incoming_task_handler<M: Serializable>(
+pub(super) fn spawn_incoming_task_handler<RM, PM>(
     conn_handle: ConnHandle,
-    connected_peer: Arc<PeerConnection<M>>,
+    connected_peer: Arc<PeerConnection<RM, PM>>,
     socket: SecureReadHalf) {
 
     match socket {

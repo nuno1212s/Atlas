@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::Instant;
 
-use atlas_common::peer_addr::PeerAddr;
+use atlas_common::peer_addr::{NetworkInformationProvider, PeerAddr};
 use dashmap::DashMap;
 use log::{debug, error, warn};
 
@@ -14,9 +14,8 @@ use atlas_common::socket::SecureReadHalf;
 use atlas_common::socket::SecureWriteHalf;
 
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
-use crate::message::{NetworkMessage, WireMessage};
-use crate::network_reconfiguration::ReconfigurableNetworkNode;
-use crate::{NodeConnections, QuorumReconfigurationHandling};
+use crate::message::{StoredMessage, WireMessage};
+use crate::{NodeConnections};
 use crate::config::{TcpConfig};
 use crate::serialize::Serializable;
 use crate::tcpip::{NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
@@ -61,13 +60,15 @@ impl ConnCounts {
 
 /// Represents a connection between two peers
 /// We can have multiple underlying tcp connections for a given connection between two peers
-pub struct PeerConnection<M: Serializable + 'static> {
+pub struct PeerConnection<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static, {
     // The ID of the connected node
     peer_node_id: NodeId,
     // Node connections
-    node_connections: Arc<PeerConnections<M>>,
+    node_connections: Arc<PeerConnections<RM, PM>>,
     //A handle to the request buffer of the peer we are connected to in the client pooling module
-    client: Arc<ConnectedPeer<NetworkMessage<M>>>,
+    client: Arc<ConnectedPeer<StoredMessage<PM::Message>>>,
     //The channel used to send serialized messages to the tasks that are meant to handle them
     tx: ChannelMixedTx<NetworkSerializedMessage>,
     // The RX handle corresponding to the tx channel above. This is so we can quickly associate new
@@ -115,8 +116,10 @@ impl ConnHandle {
     }
 }
 
-impl<M> PeerConnection<M> where M: Serializable {
-    pub fn new_peer(node_conns: Arc<PeerConnections<M>>, client: Arc<ConnectedPeer<NetworkMessage<M>>>) -> Arc<Self> {
+impl<RM, PM> PeerConnection<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static, {
+    pub fn new_peer(node_conns: Arc<PeerConnections<RM, PM>>, client: Arc<ConnectedPeer<StoredMessage<PM::Message>>>) -> Arc<Self> {
         let (tx, rx) = new_bounded_mixed(TX_CONNECTION_QUEUE);
 
         Arc::new(Self {
@@ -133,7 +136,6 @@ impl<M> PeerConnection<M> where M: Serializable {
 
     /// Send a message through this connection. Only valid for peer connections
     pub(crate) fn peer_message(&self, msg: WireMessage, callback: Callback, should_flush: bool, send_rq_time: Instant) -> Result<()> {
-
         let from = msg.header().from();
         let to = msg.header().to();
 
@@ -147,7 +149,7 @@ impl<M> PeerConnection<M> where M: Serializable {
         Ok(())
     }
 
-    async fn peer_msg_return_async(&self,to_send: NetworkSerializedMessage) -> Result<()> {
+    async fn peer_msg_return_async(&self, to_send: NetworkSerializedMessage) -> Result<()> {
         let send = self.tx.clone();
 
         if let Err(_) = send.send_async(to_send).await {
@@ -254,7 +256,7 @@ impl<M> PeerConnection<M> where M: Serializable {
     }
 
     /// Get the handle to the client pool buffer
-    fn client_pool_peer(&self) -> &Arc<ConnectedPeer<NetworkMessage<M>>> {
+    fn client_pool_peer(&self) -> &Arc<ConnectedPeer<StoredMessage<PM::Message>>> {
         &self.client
     }
 
@@ -266,17 +268,19 @@ impl<M> PeerConnection<M> where M: Serializable {
 
 /// Stores all of the connections that this peer currently has established.
 #[derive(Clone)]
-pub struct PeerConnections<M: Serializable + 'static> {
+pub struct PeerConnections<RM, PM>
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     id: NodeId,
     first_cli: NodeId,
     concurrent_conn: ConnCounts,
-    address_management: Arc<ReconfigurableNetworkNode>,
-    connection_map: Arc<DashMap<NodeId, Arc<PeerConnection<M>>>>,
-    client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>,
+    address_management: Arc<Box<dyn NetworkInformationProvider>>,
+    connection_map: Arc<DashMap<NodeId, Arc<PeerConnection<RM, PM>>>>,
+    client_pooling: Arc<PeerIncomingRqHandling<StoredMessage<PM::Message>>>,
     connection_establisher: Arc<ConnectionHandler>,
 }
 
-impl<M: Serializable + 'static> NodeConnections for PeerConnections<M> {
+impl<RM, PM> NodeConnections for PeerConnections<RM, PM>
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     fn is_connected_to_node(&self, node: &NodeId) -> bool {
         self.connection_map.contains_key(node)
     }
@@ -334,13 +338,15 @@ impl<M: Serializable + 'static> NodeConnections for PeerConnections<M> {
     }
 }
 
-impl<M: Serializable + 'static> PeerConnections<M> {
+impl<RM, PM> PeerConnections<RM, PM>
+    where RM: Serializable + 'static, PM: Serializable + 'static {
+
     pub fn new(peer_id: NodeId, first_cli: NodeId,
                conn_counts: ConnCounts,
-               node_lookup: Arc<ReconfigurableNetworkNode>,
+               node_lookup: Arc<Box<dyn NetworkInformationProvider>>,
                node_connector: TlsNodeConnector,
                node_acceptor: TlsNodeAcceptor,
-               client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>) -> Arc<Self> {
+               client_pooling: Arc<PeerIncomingRqHandling<StoredMessage<PM::Message>>>) -> Arc<Self> {
         let connection_establish = ConnectionHandler::new(peer_id, first_cli, conn_counts.clone(),
                                                           node_connector, node_acceptor);
 
@@ -376,7 +382,7 @@ impl<M: Serializable + 'static> PeerConnections<M> {
     }
 
     /// Get the connection to a given node
-    pub fn get_connection(&self, node: &NodeId) -> Option<Arc<PeerConnection<M>>> {
+    pub fn get_connection(&self, node: &NodeId) -> Option<Arc<PeerConnection<RM, PM>>> {
         let option = self.connection_map.get(node);
 
         option.map(|conn| conn.value().clone())

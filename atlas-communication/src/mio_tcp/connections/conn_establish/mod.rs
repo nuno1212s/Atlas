@@ -39,14 +39,16 @@ pub struct ConnectionHandler {
     currently_connecting: Mutex<BTreeMap<NodeId, usize>>,
 }
 
-pub struct ServerWorker<M: Serializable + 'static> {
+pub struct ServerWorker<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
     my_id: NodeId,
     first_cli: NodeId,
     listener: MioListener,
     currently_accepting: Slab<(MioSocket, usize, BytesMut)>,
     conn_handler: Arc<ConnectionHandler>,
-    peer_conns: Arc<Connections<M>>,
-    poll: Poll
+    peer_conns: Arc<Connections<RM, PM>>,
+    poll: Poll,
 }
 
 #[derive(Debug, Clone)]
@@ -56,9 +58,11 @@ enum ConnectionResult {
     ConnectionBroken,
 }
 
-impl<M> ServerWorker<M> where M: Serializable + 'static {
+impl<RM, PM> ServerWorker<RM, PM>
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
     pub fn new(my_id: NodeId, first_cli: NodeId, listener: MioListener,
-               conn_handler: Arc<ConnectionHandler>, peer_conns: Arc<Connections<M>>) -> Result<Self> {
+               conn_handler: Arc<ConnectionHandler>, peer_conns: Arc<Connections<RM, PM>>) -> Result<Self> {
         let mut poll = Poll::new()?;
 
         Ok(Self {
@@ -68,7 +72,7 @@ impl<M> ServerWorker<M> where M: Serializable + 'static {
             currently_accepting: Slab::with_capacity(DEFAULT_ALLOWED_CONCURRENT_JOINS),
             conn_handler,
             peer_conns,
-            poll
+            poll,
         })
     }
 
@@ -154,7 +158,7 @@ impl<M> ServerWorker<M> where M: Serializable + 'static {
             }
             ConnectionResult::ConnectionBroken => {
                 // Discard of the connection since it has been broken
-                if let Some((mut conn,_, _)) = self.currently_accepting.try_remove(token.into()) {
+                if let Some((mut conn, _, _)) = self.currently_accepting.try_remove(token.into()) {
                     self.poll.registry().deregister(&mut conn)?;
                 }
             }
@@ -265,9 +269,10 @@ impl ConnectionHandler {
         }
     }
 
-    pub fn connect_to_node<M: Serializable + 'static>(self: &Arc<Self>,
-                                                      connections: Arc<Connections<M>>,
-                                                      peer_id: NodeId, addr: PeerAddr) -> OneShotRx<Result<()>> {
+    pub fn connect_to_node<RM, PM>(self: &Arc<Self>, connections: Arc<Connections<RM, PM>>,
+                                   peer_id: NodeId, addr: PeerAddr) -> OneShotRx<Result<()>>
+        where RM: Serializable + 'static,
+              PM: Serializable + 'static {
         let (tx, rx) = channel::new_oneshot_channel();
 
         debug!(" {:?} // Connecting to node {:?} at {:?}", self.my_id(), peer_id, addr);
@@ -425,7 +430,9 @@ impl ConnectionHandler {
     }
 }
 
-pub fn initialize_server<M: Serializable + 'static>(my_id: NodeId, first_cli: NodeId, listener: SyncListener, connection_handler: Arc<ConnectionHandler>, conns: Arc<Connections<M>>) {
+pub fn initialize_server<RM, PM>(my_id: NodeId, first_cli: NodeId, listener: SyncListener, connection_handler: Arc<ConnectionHandler>, conns: Arc<Connections<RM, PM>>)
+    where RM: Serializable + 'static,
+          PM: Serializable + 'static {
     let server_worker = ServerWorker::new(my_id.clone(), first_cli.clone(), listener.into(), connection_handler.clone(), conns).unwrap();
 
     std::thread::Builder::new()

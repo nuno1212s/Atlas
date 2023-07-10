@@ -25,31 +25,31 @@ pub mod serde;
 /// The buffer type used to serialize messages into.
 pub type Buf = Bytes;
 
-pub fn serialize_message<W, M>(w: &mut W, msg: &NetworkMessageKind<M>) -> Result<()>
-    where W: Write + AsRef<[u8]> + AsMut<[u8]>, M: Serializable {
+pub fn serialize_message<W, RM, PM>(w: &mut W, msg: &NetworkMessageKind<RM, PM>) -> Result<()>
+    where W: Write + AsRef<[u8]> + AsMut<[u8]>, RM: Serializable, PM: Serializable {
     #[cfg(feature = "serialize_capnp")]
-    capnp::serialize_message::<W, M>(w, msg)?;
+    capnp::serialize_message::<W, RM, PM>(w, msg)?;
 
     #[cfg(feature = "serialize_serde")]
-    serde::serialize_message::<W, M>(msg, w)?;
+    serde::serialize_message::<W, RM, PM>(msg, w)?;
 
     Ok(())
 }
 
-pub fn deserialize_message<R, M>(r: R) -> Result<NetworkMessageKind<M>>
-    where R: Read + AsRef<[u8]>, M: Serializable {
+pub fn deserialize_message<R, RM, PM>(r: R) -> Result<NetworkMessageKind<RM, PM>>
+    where R: Read + AsRef<[u8]>, RM: Serializable + 'static, PM: Serializable + 'static {
     #[cfg(feature = "serialize_capnp")]
-        let result = capnp::deserialize_message::<R, M>(r)?;
+        let result = capnp::deserialize_message::<R, RM, PM>(r)?;
 
     #[cfg(feature = "serialize_serde")]
-        let result = serde::deserialize_message::<R, M>(r)?;
+        let result = serde::deserialize_message::<R, RM, PM>(r)?;
 
     Ok(result)
 }
 
-pub fn serialize_digest<W, M>(message: &NetworkMessageKind<M>, w: &mut W, ) -> Result<Digest>
-    where W: Write + AsRef<[u8]> + AsMut<[u8]>, M: Serializable {
-    serialize_message::<W, M>(w, message)?;
+pub fn serialize_digest<W, RM, PM>(message: &NetworkMessageKind<RM, PM>, w: &mut W) -> Result<Digest>
+    where W: Write + AsRef<[u8]> + AsMut<[u8]>, RM: Serializable, PM: Serializable {
+    serialize_message::<W, RM, PM>(w, message)?;
 
     let mut ctx = Context::new();
     ctx.update(w.as_ref());

@@ -102,7 +102,7 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
         let view = order_protocol.view();
 
-        self.node.broadcast(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(message)), NodeId::targets(0..view.n()));
+        self.node.broadcast(NetworkMessageKind::from_system(SystemMessage::from_log_transfer_message(message)), NodeId::targets(0..view.n()));
 
         Ok(())
     }
@@ -128,7 +128,7 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
         let message = LTMessage::new(message.sequence_number(), response_msg);
 
-        self.node.send(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(message)), header.from(), true);
+        self.node.send(NetworkMessageKind::from_system(SystemMessage::from_log_transfer_message(message)), header.from(), true);
 
         Ok(())
     }
@@ -160,7 +160,7 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
                 let response_msg = LTMessage::new(message.sequence_number(), message_kind);
 
-                self.node.send(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(response_msg)), header.from(), true);
+                self.node.send(NetworkMessageKind::from_system(SystemMessage::from_log_transfer_message(response_msg)), header.from(), true);
             }
             _ => { unreachable!() }
         }
@@ -186,7 +186,7 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
         let message = LTMessage::new(message.sequence_number(), message_kind);
 
-        self.node.send(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(message)), header.from(), true);
+        self.node.send(NetworkMessageKind::from_system(SystemMessage::from_log_transfer_message(message)), header.from(), true);
 
         Ok(())
     }
@@ -246,7 +246,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
 
         let targets = NodeId::targets(0..view.n());
 
-        self.node.broadcast(NetworkMessageKind::from(SystemMessage::from_log_transfer_message(message)), targets);
+        self.node.broadcast(NetworkMessageKind::from_system(SystemMessage::from_log_transfer_message(message)), targets);
 
         Ok(())
     }
