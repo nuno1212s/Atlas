@@ -170,7 +170,7 @@ impl<NI, RM, PM> MIOTcpNode<NI, RM, PM>
     }
 
     fn send_impl(send_to_me: Option<SendTo<RM, PM>>, send_to_others: Option<SendTos<RM, PM>>,
-                 msg: NetworkMessageKind<PM, RM>, buffer: Buf, digest: Digest, ) {
+                 msg: NetworkMessageKind<RM, PM>, buffer: Buf, digest: Digest, ) {
         if let Some(send_to) = send_to_me {
             send_to.value(Either::Left((msg, buffer.clone(), digest.clone())));
         }
@@ -292,15 +292,17 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for MIOTcpNode<NI, RM, PM>
         }
     }
 
-    fn serialize_sign_message(&self, message: PM::Message, target: NodeId) -> Result<StoredSerializedProtocolMessage<PM>> {
-        let nmk = NetworkMessageKind::from_system(message);
+    fn serialize_sign_message(&self, message: PM::Message, target: NodeId) -> Result<StoredSerializedProtocolMessage<PM::Message>> {
+        let nmk = NetworkMessageKind::<RM, PM>::from_system(message);
 
         let key_pair = Some(&**self.reconfiguration.get_key_pair());
 
+        let nonce = self.rng.next_state();
+
         match crate::cpu_workers::serialize_digest_no_threadpool(&nmk) {
             Ok((buffer, digest)) => {
-                let message = WireMessage::new(self.my_id, self.peer_id,
-                                               buffer, self.nonce, Some(digest), key_pair);
+                let message = WireMessage::new(self.id, target,
+                                               buffer, nonce, Some(digest), key_pair);
 
                 let (header, message) = message.into_inner();
 
@@ -386,7 +388,7 @@ impl<NI, RM, PM> ReconfigurationNode<RM> for MIOTcpNode<NI, RM, PM>
     }
 
     fn broadcast_reconfig_message(&self, message: RM::Message, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
-        let nmk = NetworkMessageKind::from_system(message);
+        let nmk = NetworkMessageKind::from_reconfig(message);
 
         let keys = Some(self.reconfiguration.get_key_pair());
 
@@ -420,7 +422,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
 
         let conn_counts = ConnCounts::from_tcp_config(&tcp_config);
 
-        let network_info_provider = Arc::new(Box::new(network_info_provider));
+        let network_info_provider = Arc::new(network_info_provider);
 
         let reconfig_message_handler = Arc::new(ReconfigurationMessageHandler::initialize());
 
@@ -437,12 +439,12 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
             cfg.client_pool_config,
         ));
 
-        let (handle, receivers) = init_worker_group_handle(worker_count as u32);
+        let (handle, receivers) = init_worker_group_handle::<NI, RM, PM>(worker_count as u32);
 
         let connections = Arc::new(Connections::initialize_connections(
             cfg.id,
             cfg.first_cli,
-            network_info_provider,
+            network_info_provider.clone(),
             handle.clone(),
             conn_counts.clone(),
             reconfig_message_handler.clone(),

@@ -10,9 +10,10 @@ use atlas_common::channel::{ChannelMultRx, ChannelMultTx, ChannelSyncRx, Channel
 use atlas_common::error::*;
 use atlas_metrics::metrics::metric_duration;
 
-use crate::{NodeId, NodeIncomingRqHandler};
+use crate::{NodeId};
 use crate::config::ClientPoolConfig;
 use crate::metric::{CLIENT_POOL_BATCH_PASSING_TIME_ID, CLIENT_POOL_COLLECT_TIME_ID, REPLICA_RQ_PASSING_TIME_ID};
+use crate::protocol_node::NodeIncomingRqHandler;
 
 fn channel_init<T>(capacity: usize) -> (ChannelMultTx<T>, ChannelMultRx<T>) {
     channel::new_bounded_mult(capacity)

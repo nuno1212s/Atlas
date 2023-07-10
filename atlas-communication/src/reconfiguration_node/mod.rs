@@ -275,7 +275,7 @@ use std::sync::{Arc, Mutex};
 // }
 
 /// Represents the network information that a node needs to know about other nodes
-pub trait NetworkInformationProvider {
+pub trait NetworkInformationProvider: Send + Sync {
 
     fn get_own_addr(&self) -> PeerAddr;
 
@@ -301,10 +301,10 @@ pub trait ReconfigurationIncomingHandler<T> {
 }
 
 /// Trait for handling reconfiguration messages and etc
-pub trait ReconfigurationNode<NRM> where NRM: Serializable + 'static {
+pub trait ReconfigurationNode<RM> where RM: Serializable + 'static {
     type ConnectionManager: NodeConnections;
 
-    type IncomingReconfigRqHandler: ReconfigurationIncomingHandler<StoredMessage<NRM::Message>>;
+    type IncomingReconfigRqHandler: ReconfigurationIncomingHandler<StoredMessage<RM::Message>>;
 
     fn node_connections(&self) -> &Arc<Self::ConnectionManager>;
 
@@ -312,10 +312,10 @@ pub trait ReconfigurationNode<NRM> where NRM: Serializable + 'static {
     fn reconfiguration_message_handler(&self) -> &Arc<Self::IncomingReconfigRqHandler>;
 
     /// Send a reconfiguration message to a given target node
-    fn send_reconfig_message(&self, message: NRM::Message, target: NodeId) -> Result<()>;
+    fn send_reconfig_message(&self, message: RM::Message, target: NodeId) -> Result<()>;
 
     /// Broadcast a reconfiguration message to a given set of nodes.
-    fn broadcast_reconfig_message(&self, message: NRM::Message, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>>;
+    fn broadcast_reconfig_message(&self, message: RM::Message, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>>;
 }
 
 pub struct ReconfigurationMessageHandler<T> {

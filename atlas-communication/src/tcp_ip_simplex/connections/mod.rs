@@ -162,7 +162,7 @@ impl<NI, RM, PM> SimplexConnections<NI, RM, PM>
     }
 
     fn get_addr_for_node(&self, node: NodeId) -> Option<PeerAddr> {
-        self.node_lookup.get_peer_address(node)
+        self.node_lookup.get_addr_for_node(&node)
     }
 
     /// Setup a tcp listener inside this peer connections object.
@@ -192,8 +192,7 @@ impl<NI, RM, PM> SimplexConnections<NI, RM, PM>
 
         let peer_conn = option.or_insert_with(||
             {
-                let con = PeerConnection::new_peer(self.client_pooling.init_peer_conn(peer_id),
-                                                   self.reconf_handling.clone());
+                let con = PeerConnection::new_peer(self.client_pooling.init_peer_conn(peer_id), self.reconf_handling.clone());
 
                 debug!("{:?} // Creating new peer connection to {:?}. {:?}", self.id, peer_id,
                     con.client_pool_peer().client_id());
@@ -258,7 +257,7 @@ impl<NI, RM, PM> SimplexConnections<NI, RM, PM>
 impl<RM, PM> PeerConnection<RM, PM>
     where RM: Serializable + 'static, PM: Serializable + 'static {
     pub fn new_peer(client: Arc<ConnectedPeer<StoredMessage<PM::Message>>>,
-                    reconf: Arc<ReconfigurationMessageHandler<RM::Message>>) -> Arc<Self> {
+                    reconf: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>) -> Arc<Self> {
         let (tx, rx) = new_bounded_mixed(TX_CONNECTION_QUEUE);
 
         Arc::new(Self {
@@ -301,7 +300,7 @@ impl<RM, PM> PeerConnection<RM, PM>
         where NI: NetworkInformationProvider + 'static {
         let conn_id = self.conn_id_generator.fetch_add(1, Ordering::Relaxed);
 
-        let conn_handle = ConnHandle::new(conn_id, self.node_connections.id, self.peer_node_id);
+        let conn_handle = ConnHandle::new(conn_id, node_conns.id, self.peer_node_id);
 
         let mut conns = match direction {
             ConnectionDirection::Incoming => &self.incoming_connections,
@@ -359,7 +358,7 @@ impl<RM, PM> PeerConnection<RM, PM>
             active_connections.load(Ordering::Relaxed)
         };
 
-        warn!("{:?} // Connection {} with peer {:?} has been deleted", self.node_connections.id,
+        warn!("Connection {} with peer {:?} has been deleted",
             conn_id,self.peer_node_id);
 
         remaining_conns

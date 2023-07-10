@@ -444,7 +444,7 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
                             let message = read_info.read_buffer.split_to(header.payload_length());
 
                             // We have read the message, send it to be verified and then put into the client pool
-                            cpu_workers::deserialize_and_push_message(header, message,
+                            cpu_workers::deserialize_and_push_message::<RM, PM>(header, message,
                                                                       connection.client.clone(),
                                                                       connection.reconf_handling.clone());
 

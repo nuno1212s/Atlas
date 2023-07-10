@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use atlas_common::socket::{SecureSocket};
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
 use crate::tcp_ip_simplex::connections::{PeerConnection, SimplexConnections};
 use crate::tcp_ip_simplex::connections::ping_handler::PingHandler;
@@ -14,7 +15,9 @@ pub(super) fn spawn_outgoing_task_handler<NI, RM, PM>(
     connection: Arc<PeerConnection<RM, PM>>,
     ping: Arc<PingHandler>,
     socket: SecureSocket)
-    where RM: Serializable + 'static, PM: Serializable + 'static {
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     let rx = ping.register_ping_channel(connection.peer_node_id, conn_handle.id());
 
     match socket {

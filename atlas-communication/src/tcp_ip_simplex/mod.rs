@@ -49,7 +49,7 @@ pub struct TCPSimplexNode<NI, RM, PM>
 }
 
 impl<NI, RM, PM> TCPSimplexNode<NI, RM, PM>
-    where NI: NetworkInformationProvider,
+    where NI: NetworkInformationProvider + 'static,
           RM: Serializable + 'static,
           PM: Serializable + 'static
 {
@@ -215,7 +215,10 @@ impl<NI, RM, PM> TCPSimplexNode<NI, RM, PM>
 }
 
 impl<NI, RM, PM> ProtocolNetworkNode<PM> for TCPSimplexNode<NI, RM, PM>
-    where NI: NetworkInformationProvider, RM: Serializable + 'static, PM: Serializable + 'static {
+    where NI: NetworkInformationProvider,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
+
     type ConnectionManager = SimplexConnections<NI, RM, PM>;
     type Crypto = ();
     type IncomingRqHandler = PeerIncomingRqHandling<StoredMessage<PM::Message>>;
@@ -304,15 +307,17 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for TCPSimplexNode<NI, RM, PM>
         }
     }
 
-    fn serialize_sign_message(&self, message: PM::Message, target: NodeId) -> Result<StoredSerializedProtocolMessage<PM>> {
-        let nmk = NetworkMessageKind::from_system(message);
+    fn serialize_sign_message(&self, message: PM::Message, target: NodeId) -> Result<StoredSerializedProtocolMessage<PM::Message>> {
+        let nmk = NetworkMessageKind::<RM, PM>::from_system(message);
 
         let key_pair = Some(&**self.reconfiguration.get_key_pair());
 
+        let nonce = self.rng.next_state();
+
         match crate::cpu_workers::serialize_digest_no_threadpool(&nmk) {
             Ok((buffer, digest)) => {
-                let message = WireMessage::new(self.my_id, self.peer_id,
-                                               buffer, self.nonce, Some(digest), key_pair);
+                let message = WireMessage::new(self.id, target,
+                                               buffer, nonce, Some(digest), key_pair);
 
                 let (header, message) = message.into_inner();
 
@@ -396,7 +401,7 @@ impl<NI, RM, PM> ReconfigurationNode<RM> for TCPSimplexNode<NI, RM, PM>
     }
 
     fn broadcast_reconfig_message(&self, message: RM::Message, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
-        let nmk = NetworkMessageKind::from_system(message);
+        let nmk = NetworkMessageKind::from_reconfig(message);
 
         let keys = Some(self.reconfiguration.get_key_pair());
 
@@ -419,8 +424,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TCPSimplexNode<NI, RM, PM>
           PM: Serializable + 'static {
     type Config = NodeConfig;
 
-    async fn bootstrap(network_info_provider: NI, cfg: Self::Config) -> Result<Arc<Self>>
-        where NI: NetworkInformationProvider {
+    async fn bootstrap(network_info_provider: NI, cfg: Self::Config) -> Result<Arc<Self>> {
         let id = cfg.id;
 
         debug!("Initializing sockets.");
@@ -429,7 +433,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TCPSimplexNode<NI, RM, PM>
 
         let conn_counts = ConnCounts::from_tcp_config(&tcp_config);
 
-        let network_info_provider = Arc::new(Box::new(network_info_provider));
+        let network_info_provider = Arc::new(network_info_provider);
         let reconfig_message_handler = Arc::new(ReconfigurationMessageHandler::initialize());
 
         let network = tcp_config.network_config;
@@ -523,7 +527,7 @@ impl<RM, PM> SendTo<RM, PM>
 
                 match msg {
                     NetworkMessageKind::ReconfigurationMessage(reconfig_msg) => {
-                        self.reconfig_handling.push_request(StoredMessage::new(header, reconfig_msg.into())).unwrap();
+                        self.reconf_msg.push_request(StoredMessage::new(header, reconfig_msg.into())).unwrap();
                     }
                     NetworkMessageKind::System(sys_msg) => {
                         conn.push_request(StoredMessage::new(header, sys_msg.into())).unwrap();
@@ -552,7 +556,7 @@ impl<RM, PM> SendTo<RM, PM>
 
                 match msg {
                     NetworkMessageKind::ReconfigurationMessage(reconfig_msg) => {
-                        self.reconfig_handling.push_request(StoredMessage::new(header, reconfig_msg.into())).unwrap();
+                        self.reconf_msg.push_request(StoredMessage::new(header, reconfig_msg.into())).unwrap();
                     }
                     NetworkMessageKind::System(sys_msg) => {
                         peer_conn.push_request(StoredMessage::new(header, sys_msg.into())).unwrap();

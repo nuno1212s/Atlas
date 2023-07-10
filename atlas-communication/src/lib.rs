@@ -59,32 +59,11 @@ pub trait NodePK {
     fn get_key_pair(&self) -> &Arc<KeyPair>;
 }
 
-/// Trait for taking requests from the network node
-/// We separate the various sources of requests in order to 
-/// allow for better handling of the requests
-pub trait NodeIncomingRqHandler<T>: Send {
-    /// How many requests are currently in the queue from clients
-    fn rqs_len_from_clients(&self) -> usize;
-
-    /// Receive requests from clients, block if there are no available requests
-    fn receive_from_clients(&self, timeout: Option<Duration>) -> Result<Vec<T>>;
-
-    /// Try to receive requests from clients, does not block if there are no available requests
-    fn try_receive_from_clients(&self) -> Result<Option<Vec<T>>>;
-
-    /// Get the amount of pending requests from replicas
-    fn rqs_len_from_replicas(&self) -> usize;
-
-    /// Receive requests from replicas, block if there are no available requests until an optional
-    /// provided timeout
-    fn receive_from_replicas(&self, timeout: Option<Duration>) -> Result<Option<T>>;
-}
-
 /// A full network node implementation
-pub trait FullNetworkNode<NI, NRM, PM>: ProtocolNetworkNode<PM> + ReconfigurationNode<NRM>
+pub trait FullNetworkNode<NI, RM, PM>: ProtocolNetworkNode<PM> + ReconfigurationNode<RM>
     where
         NI: NetworkInformationProvider + 'static,
-        NRM: Serializable + 'static,
+        RM: Serializable + 'static,
         PM: Serializable + 'static {
 
     /// The configuration type this node wants to accept

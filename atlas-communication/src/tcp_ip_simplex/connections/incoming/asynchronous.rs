@@ -58,8 +58,8 @@ pub(super) fn spawn_incoming_task<NI, RM, PM>(
             }
 
             // Use the threadpool for CPU intensive work in order to not block the IO threads
-            let result = cpu_workers::deserialize_message(header.clone(),
-                                                          read_buffer).await.unwrap();
+            let result = cpu_workers::deserialize_message::<RM, PM>(header.clone(),
+                                                                    read_buffer).await.unwrap();
 
             let message = match result {
                 Ok((message, bytes)) => {
@@ -112,7 +112,7 @@ pub(super) fn spawn_incoming_task<NI, RM, PM>(
         }
 
         let remaining_conns = peer.delete_connection(conn_handle.id(), ConnectionDirection::Incoming);
-        
+
         // Retry to establish the connections if possible
         node_connections.handle_conn_lost(peer.peer_node_id, remaining_conns);
     });

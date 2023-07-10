@@ -56,7 +56,7 @@ pub(super) fn spawn_incoming_thread<NI, RM, PM>(
                 }
 
                 // Use the threadpool for CPU intensive work in order to not block the IO threads
-                let result = cpu_workers::deserialize_message(header.clone(),
+                let result = cpu_workers::deserialize_message::<RM, PM>(header.clone(),
                                                               read_buffer).recv().unwrap();
 
                 let message = match result {

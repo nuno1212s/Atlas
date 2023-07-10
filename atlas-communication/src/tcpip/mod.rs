@@ -22,13 +22,13 @@ use atlas_common::prng::ThreadSafePrng;
 use atlas_common::socket::{AsyncListener, SyncListener};
 
 use crate::reconfiguration_node::{NetworkInformationProvider, ReconfigurationMessageHandler, ReconfigurationNode};
-use crate::{FullNetworkNode, NodePK};
+use crate::FullNetworkNode;
+use crate::NodePK;
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::config::{NodeConfig, TlsConfig};
 use crate::message::{NetworkMessageKind, SerializedMessage, StoredMessage, StoredSerializedNetworkMessage, StoredSerializedProtocolMessage, WireMessage};
 use crate::protocol_node::ProtocolNetworkNode;
 use crate::serialize::{Buf, Serializable};
-use crate::tcp_ip_simplex::connections::SimplexConnections;
 use crate::tcpip::connections::{ConnCounts, PeerConnection, PeerConnections};
 
 pub mod connections;
@@ -70,7 +70,7 @@ pub struct TcpNode<NI, RM, PM>
     // The thread safe pseudo random number generator
     rng: Arc<ThreadSafePrng>,
     // General network information and reconfiguration logic
-    reconf_node: Arc<NI>,
+    reconfiguration: Arc<NI>,
     // The connections that are currently being maintained by us to other peers
     peer_connections: Arc<PeerConnections<NI, RM, PM>>,
     // The reconfiguration message handler
@@ -286,17 +286,18 @@ impl<NI, RM, PM> TcpNode<NI, RM, PM>
         }
     }
 
-    fn loopback_channel(&self) -> &Arc<ConnectedPeer<StoredMessage<RM::Message>>> {
+    fn loopback_channel(&self) -> &Arc<ConnectedPeer<StoredMessage<PM::Message>>> {
         self.client_pooling.loopback_connection()
     }
 }
 
 impl<NI, RM, PM> ProtocolNetworkNode<PM> for TcpNode<NI, RM, PM>
     where
-        NI: NetworkInformationProvider,
-        RM: Serializable + 'static, PM: Serializable + 'static {
+        NI: NetworkInformationProvider + 'static,
+        RM: Serializable + 'static,
+        PM: Serializable + 'static {
     type ConnectionManager = PeerConnections<NI, RM, PM>;
-    type Crypto = ();
+    type Crypto = NI;
     type IncomingRqHandler = PeerIncomingRqHandling<StoredMessage<PM::Message>>;
 
     fn id(&self) -> NodeId {
@@ -316,7 +317,7 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for TcpNode<NI, RM, PM>
     }
 
     fn node_incoming_rq_handling(&self) -> &Arc<Self::IncomingRqHandler> {
-        &self.incoming_rq_handling
+        &self.client_pooling
     }
 
     fn send(&self, message: PM::Message, target: NodeId, flush: bool) -> Result<()> {
@@ -383,15 +384,17 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for TcpNode<NI, RM, PM>
         }
     }
 
-    fn serialize_sign_message(&self, message: PM::Message, target: NodeId) -> Result<StoredSerializedProtocolMessage<PM>> {
-        let nmk = NetworkMessageKind::from_system(message);
+    fn serialize_sign_message(&self, message: PM::Message, target: NodeId) -> Result<StoredSerializedProtocolMessage<PM::Message>> {
+        let nmk = NetworkMessageKind::<RM, PM>::from_system(message);
 
         let key_pair = Some(&**self.reconfiguration.get_key_pair());
 
+        let nonce = self.rng.next_state();
+
         match crate::cpu_workers::serialize_digest_no_threadpool(&nmk) {
             Ok((buffer, digest)) => {
-                let message = WireMessage::new(self.my_id, self.peer_id,
-                                               buffer, self.nonce, Some(digest), key_pair);
+                let message = WireMessage::new(self.id, target,
+                                               buffer, nonce, Some(digest), key_pair);
 
                 let (header, message) = message.into_inner();
 
@@ -475,7 +478,7 @@ impl<NI, RM, PM> ReconfigurationNode<RM> for TcpNode<NI, RM, PM>
     }
 
     fn broadcast_reconfig_message(&self, message: RM::Message, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
-        let nmk = NetworkMessageKind::from_system(message);
+        let nmk = NetworkMessageKind::from_reconfig(message);
 
         let keys = Some(self.reconfiguration.get_key_pair());
 
@@ -508,7 +511,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TcpNode<NI, RM, PM>
 
         let conn_counts = ConnCounts::from_tcp_config(&tcp_config);
 
-        let network_info_provider = Arc::new(Box::new(network_info_provider));
+        let network_info_provider = Arc::new(network_info_provider);
         let reconfig_message_handler = Arc::new(ReconfigurationMessageHandler::initialize());
 
         let network = tcp_config.network_config;
@@ -548,7 +551,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TcpNode<NI, RM, PM>
             id,
             first_cli: cfg.first_cli,
             rng,
-            reconf_node: network_info_provider,
+            reconfiguration: network_info_provider,
             peer_connections,
             reconfig_handling: reconfig_message_handler,
             client_pooling: peers,

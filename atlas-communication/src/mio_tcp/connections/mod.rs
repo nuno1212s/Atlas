@@ -58,7 +58,7 @@ pub struct PeerConnection<RM, PM>
     //A handle to the request buffer of the peer we are connected to in the client pooling module
     client: Arc<ConnectedPeer<StoredMessage<PM::Message>>>,
     //A handle to the reconfiguration message handler
-    reconf_handling: Arc<ReconfigurationMessageHandler<RM::Message>>,
+    reconf_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
     // A thread-safe counter for generating connection ids
     conn_id_generator: AtomicU32,
     //The map connecting each connection to a token in the MIO Workers
@@ -214,7 +214,7 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
     }
 
     fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr> {
-        self.address_lookup.get_peer_address(*node)
+        self.address_lookup.get_addr_for_node(node)
     }
 
     fn handle_connection_established(self: &Arc<Self>, node: NodeId, socket: SecureSocket) {
@@ -330,7 +330,7 @@ impl<RM, PM> PeerConnection<RM, PM>
 {
     fn new(
         client: Arc<ConnectedPeer<StoredMessage<PM::Message>>>,
-        reconf_handling: Arc<ReconfigurationMessageHandler<RM::Message>>
+        reconf_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>
     ) -> Self {
         let to_send = channel::new_bounded_sync(SEND_QUEUE_SIZE);
 

@@ -61,7 +61,7 @@ pub(super) fn spawn_incoming_task<NI, RM, PM>(
             }
 
             // Use the threadpool for CPU intensive work in order to not block the IO threads
-            let result = cpu_workers::deserialize_message(header.clone(),
+            let result = cpu_workers::deserialize_message::<RM, PM>(header.clone(),
                                                           read_buffer).await.unwrap();
 
             let message = match result {
