@@ -9,6 +9,7 @@ use atlas_common::node_id::NodeId;
 use atlas_common::socket::MioSocket;
 use crate::mio_tcp::connections::{Connections, PeerConnection};
 use crate::mio_tcp::connections::epoll_group::epoll_workers::EpollWorker;
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
 
 pub mod epoll_workers;
@@ -18,8 +19,9 @@ pub type EpollWorkerId = u32;
 // This will just handle creating and deleting connections so it can be small
 pub const DEFAULT_WORKER_CHANNEL: usize = 128;
 
-pub fn init_worker_group_handle<RM, PM>(worker_count: u32) -> (EpollWorkerGroupHandle<RM, PM>, Vec<ChannelSyncRx<EpollWorkerMessage<RM, PM>>>)
-    where RM: Serializable + 'static,
+pub fn init_worker_group_handle<NI, RM, PM>(worker_count: u32) -> (EpollWorkerGroupHandle<RM, PM>, Vec<ChannelSyncRx<EpollWorkerMessage<RM, PM>>>)
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
           PM: Serializable + 'static {
     let mut workers = Vec::with_capacity(worker_count as usize);
 
@@ -38,8 +40,9 @@ pub fn init_worker_group_handle<RM, PM>(worker_count: u32) -> (EpollWorkerGroupH
     }, receivers)
 }
 
-pub fn initialize_worker_group<RM, PM>(connections: Arc<Connections<RM, PM>>, receivers: Vec<ChannelSyncRx<EpollWorkerMessage<RM, PM>>>) -> Result<()>
-    where RM: Serializable + 'static,
+pub fn initialize_worker_group<NI, RM, PM>(connections: Arc<Connections<NI, RM, PM>>, receivers: Vec<ChannelSyncRx<EpollWorkerMessage<RM, PM>>>) -> Result<()>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
           PM: Serializable + 'static {
     for (worker_id, rx) in receivers.into_iter().enumerate() {
         let worker = EpollWorker::new(worker_id as u32, connections.clone(), rx)?;

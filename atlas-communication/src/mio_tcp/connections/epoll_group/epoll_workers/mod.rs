@@ -4,7 +4,7 @@ use std::net::Shutdown;
 use std::sync::Arc;
 use std::time::Duration;
 use bytes::{Buf, Bytes, BytesMut};
-use log::{debug, error, info, trace};
+use log::{error, info, trace};
 use mio::{Events, Interest, Poll, Token, Waker};
 use mio::event::Event;
 use slab::Slab;
@@ -16,6 +16,7 @@ use crate::cpu_workers;
 use crate::message::{Header, WireMessage};
 use crate::mio_tcp::connections::{Connections, ConnHandle};
 use crate::mio_tcp::connections::epoll_group::{EpollWorkerId, EpollWorkerMessage, NewConnection};
+use crate::reconfiguration_node::NetworkInformationProvider;
 use super::PeerConnection;
 use crate::serialize::Serializable;
 
@@ -32,12 +33,15 @@ type ConnectionRegister = ChannelSyncRx<MioSocket>;
 
 
 /// The information for this worker thread.
-pub(super) struct EpollWorker<RM, PM> {
+pub(super) struct EpollWorker<NI, RM, PM>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     // The id of this worker
     worker_id: EpollWorkerId,
     // A reference to our parent connections, so we can update it in case anything goes wrong
     // With any connections
-    global_connections: Arc<Connections<RM, PM>>,
+    global_connections: Arc<Connections<NI, RM, PM>>,
     // This slab stores the connections that are currently being handled by this worker
     connections: Slab<SocketConnection<RM, PM>>,
     // register new connections
@@ -83,11 +87,13 @@ struct WritingInformation {
     currently_writing: Bytes,
 }
 
-impl<RM, PM> EpollWorker<RM, PM>
-    where RM: Serializable + 'static,
-          PM: Serializable + 'static {
+impl<NI, RM, PM> EpollWorker<NI, RM, PM>
+    where
+        NI: NetworkInformationProvider + 'static,
+        RM: Serializable + 'static,
+        PM: Serializable + 'static {
     /// Initializing a worker thread for the worker group
-    pub fn new(worker_id: EpollWorkerId, connections: Arc<Connections<RM, PM>>,
+    pub fn new(worker_id: EpollWorkerId, connections: Arc<Connections<NI, RM, PM>>,
                register: ChannelSyncRx<EpollWorkerMessage<RM, PM>>) -> atlas_common::error::Result<Self> {
         let poll = Poll::new().wrapped_msg(ErrorKind::Communication, "Failed to initialize poll")?;
 
@@ -438,7 +444,9 @@ impl<RM, PM> EpollWorker<RM, PM>
                             let message = read_info.read_buffer.split_to(header.payload_length());
 
                             // We have read the message, send it to be verified and then put into the client pool
-                            cpu_workers::deserialize_and_push_message(header, message, connection.client.clone());
+                            cpu_workers::deserialize_and_push_message(header, message,
+                                                                      connection.client.clone(),
+                                                                      connection.reconf_handling.clone());
 
                             read_info.read_bytes = read_info.read_buffer.len();
 

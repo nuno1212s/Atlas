@@ -17,23 +17,26 @@ use atlas_common::socket::{
 use atlas_common::{prng, socket, threadpool};
 
 use crate::message::{Header, WireMessage};
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
 use crate::tcpip::connections::conn_establish::ConnectionHandler;
 use crate::tcpip::connections::PeerConnections;
 use crate::tcpip::{TlsNodeAcceptor, TlsNodeConnector};
 
-pub(super) fn setup_conn_acceptor_thread<RM, PM>(
+pub(super) fn setup_conn_acceptor_thread<NI, RM, PM>(
     tcp_listener: SyncListener,
     conn_handler: Arc<ConnectionHandler>,
-    peer_connection: Arc<PeerConnections<RM, PM>>,
+    peer_connection: Arc<PeerConnections<NI, RM, PM>>,
 )
-    where RM: Serializable + 'static, PM: Serializable + 'static {
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     std::thread::Builder::new()
         .name(format!("Connection acceptor thread"))
         .spawn(move || loop {
             match tcp_listener.accept() {
                 Ok(connection) => {
-                    conn_handler.accept_conn::<RM, PM>(&peer_connection, Either::Right(connection))
+                    conn_handler.accept_conn::<NI, RM, PM>(&peer_connection, Either::Right(connection))
                 }
                 Err(err) => {
                     error!("Failed to accept connection. {:?}", err);
@@ -43,13 +46,15 @@ pub(super) fn setup_conn_acceptor_thread<RM, PM>(
         .unwrap();
 }
 
-pub(super) fn connect_to_node_sync<RM, PM>(
+pub(super) fn connect_to_node_sync<NI, RM, PM>(
     conn_handler: Arc<ConnectionHandler>,
-    connections: Arc<PeerConnections<RM, PM>>,
+    connections: Arc<PeerConnections<NI, RM, PM>>,
     peer_id: NodeId,
     addr: PeerAddr,
 ) -> OneShotRx<Result<()>>
-    where RM: Serializable + 'static, PM: Serializable + 'static {
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     let (tx, rx) = new_oneshot_channel();
 
     std::thread::Builder::new()
@@ -238,12 +243,14 @@ pub(super) fn connect_to_node_sync<RM, PM>(
     rx
 }
 
-pub(super) fn handle_server_conn_established<RM, PM>(
+pub(super) fn handle_server_conn_established<NI, RM, PM>(
     conn_handler: Arc<ConnectionHandler>,
-    connections: Arc<PeerConnections<RM, PM>>,
+    connections: Arc<PeerConnections<NI, RM, PM>>,
     mut sock: SyncSocket,
 )
-    where RM: Serializable + 'static, PM: Serializable + 'static {
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     threadpool::execute(move || {
         let acceptor = if let TlsNodeAcceptor::Sync(connector) = &conn_handler.tls_acceptor {
             connector.clone()

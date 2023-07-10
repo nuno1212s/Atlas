@@ -16,18 +16,22 @@ use crate::cpu_workers::{serialize_digest_no_threadpool, serialize_digest_thread
 use crate::message::{Header, NetworkMessageKind, PingMessage, WireMessage};
 
 use crate::metric::{COMM_REQUEST_SEND_TIME_ID, COMM_RQ_SEND_CLI_PASSING_TIME_ID, COMM_RQ_SEND_PASSING_TIME_ID, COMM_RQ_TIME_SPENT_IN_MOD_ID};
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
-use crate::tcp_ip_simplex::connections::{ConnectionDirection, PeerConnection};
+use crate::tcp_ip_simplex::connections::{ConnectionDirection, PeerConnection, SimplexConnections};
 use crate::tcp_ip_simplex::connections::ping_handler::{PingChannelReceiver, PingHandler};
 use crate::tcpip::connections::{ConnHandle, NetworkSerializedMessage};
 
-pub(super) fn spawn_outgoing_task<RM, PM>(
+pub(super) fn spawn_outgoing_task<NI, RM, PM>(
     conn_handle: ConnHandle,
     ping_handler: Arc<PingHandler>,
     mut ping_orders: PingChannelReceiver,
+    node_connections: Arc<SimplexConnections<NI, RM, PM>>,
     peer: Arc<PeerConnection<RM, PM>>,
     mut socket: SecureSocketAsync)
-    where RM: Serializable + 'static, PM: Serializable + 'static
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static
 {
     rt::spawn(async move {
         let mut rx = peer.to_send_handle().clone();
@@ -103,7 +107,11 @@ pub(super) fn spawn_outgoing_task<RM, PM>(
             }
         }
 
-        peer.delete_connection(conn_handle.id(), ConnectionDirection::Outgoing);
+        let remaining_conns = peer.delete_connection(conn_handle.id(), ConnectionDirection::Outgoing);
+
+        // Retry to establish the connections if possible
+        node_connections.handle_conn_lost(peer.peer_node_id, remaining_conns);
+
         ping_handler.remove_ping_channel(peer.peer_node_id, conn_handle.id());
     });
 }
@@ -178,7 +186,7 @@ async fn make_ping_rq<RM, PM>(peer: &Arc<PeerConnection<RM, PM>>,
 
     // Use the threadpool for CPU intensive work in order to not block the IO threads
     let (pong, payload) = cpu_workers::deserialize_message::<RM, PM>(header.clone(),
-                                                                read_buffer).await.unwrap()?;
+                                                                     read_buffer).await.unwrap()?;
 
     return match pong {
         NetworkMessageKind::Ping(ping) => {

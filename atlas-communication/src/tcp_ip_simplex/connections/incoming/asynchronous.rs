@@ -8,15 +8,19 @@ use atlas_common::async_runtime as rt;
 use crate::cpu_workers;
 use crate::cpu_workers::serialize_digest_threadpool_return_msg;
 use crate::message::{Header, NetworkMessage, NetworkMessageKind, PingMessage, StoredMessage, WireMessage};
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
-use crate::tcp_ip_simplex::connections::{ConnectionDirection, PeerConnection};
+use crate::tcp_ip_simplex::connections::{ConnectionDirection, PeerConnection, SimplexConnections};
 use crate::tcpip::connections::ConnHandle;
 
-pub(super) fn spawn_incoming_task<RM, PM>(
+pub(super) fn spawn_incoming_task<NI, RM, PM>(
     conn_handle: ConnHandle,
+    node_connections: Arc<SimplexConnections<NI, RM, PM>>,
     peer: Arc<PeerConnection<RM, PM>>,
     mut socket: SecureSocketAsync)
-    where RM: Serializable + 'static, PM: Serializable + 'static {
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     rt::spawn(async move {
         let client_pool_buffer = Arc::clone(peer.client_pool_peer());
         let mut read_buffer = BytesMut::with_capacity(Header::LENGTH);
@@ -80,7 +84,16 @@ pub(super) fn spawn_incoming_task<RM, PM>(
 
                     continue;
                 }
-                NetworkMessageKind::ReconfigurationMessage(reconf) => { todo!() }
+                NetworkMessageKind::ReconfigurationMessage(reconf) => {
+                    let msg = StoredMessage::new(header, reconf.into());
+
+                    if let Err(err) = peer.reconf_handler.push_request(msg) {
+                        error!("{:?} // Failed to push reconfiguration message {:?}. {:?}",
+                            conn_handle.my_id(),
+                            peer_id,
+                            err,);
+                    }
+                }
                 NetworkMessageKind::System(sys_msg) => {
                     let msg = StoredMessage::new(header, sys_msg.into());
 
@@ -98,7 +111,10 @@ pub(super) fn spawn_incoming_task<RM, PM>(
             //TODO: Statistics
         }
 
-        peer.delete_connection(conn_handle.id(), ConnectionDirection::Incoming);
+        let remaining_conns = peer.delete_connection(conn_handle.id(), ConnectionDirection::Incoming);
+        
+        // Retry to establish the connections if possible
+        node_connections.handle_conn_lost(peer.peer_node_id, remaining_conns);
     });
 }
 

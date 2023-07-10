@@ -10,6 +10,7 @@ use atlas_metrics::metrics::metric_duration;
 use crate::client_pooling::ConnectedPeer;
 use crate::message::{Header, NetworkMessage, NetworkMessageKind, StoredMessage};
 use crate::metric::{COMM_DESERIALIZE_VERIFY_TIME_ID, COMM_SERIALIZE_SIGN_TIME_ID, THREADPOOL_PASS_TIME_ID};
+use crate::reconfiguration_node::ReconfigurationMessageHandler;
 use crate::serialize;
 use crate::serialize::Serializable;
 use crate::tcp_ip_simplex::connections::PeerConnection;
@@ -124,7 +125,8 @@ pub(crate) fn deserialize_message<RM, PM>(header: Header, payload: BytesMut)
 }
 
 pub(crate) fn deserialize_and_push_message<RM, PM>(header: Header, payload: BytesMut,
-                                                   connection: Arc<ConnectedPeer<StoredMessage<PM::Message>>>)
+                                                   connection: Arc<ConnectedPeer<StoredMessage<PM::Message>>>,
+                                                   reconf_handle: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>)
     where RM: Serializable + 'static, PM: Serializable + 'static {
     let start = Instant::now();
 
@@ -134,8 +136,12 @@ pub(crate) fn deserialize_and_push_message<RM, PM>(header: Header, payload: Byte
         let (message, _) = deserialize_message_no_threadpool::<RM, PM>(header.clone(), payload).unwrap();
 
         match message {
-            NetworkMessageKind::ReconfigurationMessage(reconf) => {}
-            NetworkMessageKind::Ping(_) => {}
+            NetworkMessageKind::ReconfigurationMessage(reconf) => {
+                reconf_handle.push_request(StoredMessage::new(header, reconf.into())).unwrap();
+            }
+            NetworkMessageKind::Ping(_) => {
+                todo!("MIO does not currently use this (and the only one that uses this function is MIO so....)")
+            }
             NetworkMessageKind::System(sys_msg) => {
                 connection.push_request(StoredMessage::new(header, sys_msg.into())).unwrap();
             }

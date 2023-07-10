@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap};
 use std::sync::{Arc, Mutex};
 use atlas_common::peer_addr::PeerAddr;
 use either::Either;
@@ -6,9 +6,10 @@ use atlas_common::channel::OneShotRx;
 use atlas_common::socket::{AsyncSocket, SyncSocket};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
 use crate::tcpip::{NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
-use crate::tcpip::connections::{ConnCounts, PeerConnection, PeerConnections};
+use crate::tcpip::connections::{ConnCounts, PeerConnections};
 
 mod synchronous;
 mod asynchronous;
@@ -39,9 +40,12 @@ impl ConnectionHandler {
         )
     }
 
-    pub(super) fn setup_conn_worker<RM, PM>(self: Arc<Self>,
-                                            listener: NodeConnectionAcceptor,
-                                            peer_connections: Arc<PeerConnections<RM, PM>>) where RM: Serializable + 'static, PM: Serializable + 'static {
+    pub(super) fn setup_conn_worker<NI, RM, PM>(self: Arc<Self>,
+                                                listener: NodeConnectionAcceptor,
+                                                peer_connections: Arc<PeerConnections<NI, RM, PM>>)
+        where NI: NetworkInformationProvider + 'static,
+              RM: Serializable + 'static,
+              PM: Serializable + 'static {
         match listener {
             NodeConnectionAcceptor::Async(async_listener) => {
                 asynchronous::setup_conn_acceptor_task(async_listener, self, peer_connections)
@@ -88,9 +92,11 @@ impl ConnectionHandler {
         }
     }
 
-    pub fn connect_to_node<RM, PM>(self: &Arc<Self>, peer_connections: &Arc<PeerConnections<RM, PM>>,
-                                   peer_id: NodeId, peer_addr: PeerAddr) -> OneShotRx<Result<()>>
-        where RM: Serializable + 'static, PM: Serializable + 'static {
+    pub fn connect_to_node<NI, RM, PM>(self: &Arc<Self>, peer_connections: &Arc<PeerConnections<NI, RM, PM>>,
+                                       peer_id: NodeId, peer_addr: PeerAddr) -> OneShotRx<Result<()>>
+        where NI: NetworkInformationProvider + 'static,
+              RM: Serializable + 'static,
+              PM: Serializable + 'static {
         match &self.connector {
             TlsNodeConnector::Async(_) => {
                 asynchronous::connect_to_node_async(Arc::clone(self),
@@ -105,8 +111,10 @@ impl ConnectionHandler {
         }
     }
 
-    pub fn accept_conn<RM, PM>(self: &Arc<Self>, peer_connections: &Arc<PeerConnections<RM, PM>>, socket: Either<AsyncSocket, SyncSocket>)
-        where RM: Serializable + 'static, PM: Serializable + 'static {
+    pub fn accept_conn<NI, RM, PM>(self: &Arc<Self>, peer_connections: &Arc<PeerConnections<NI, RM, PM>>, socket: Either<AsyncSocket, SyncSocket>)
+        where NI: NetworkInformationProvider + 'static,
+              RM: Serializable + 'static,
+              PM: Serializable + 'static {
         match socket {
             Either::Left(asynchronous) => {
                 asynchronous::handle_server_conn_established(Arc::clone(self),

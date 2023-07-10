@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::iter;
 use std::net::SocketAddr;
-use std::sync::{Arc};
-use std::time::{Instant};
+use std::sync::Arc;
+use std::time::Instant;
 
-use atlas_common::peer_addr::{NetworkInformationProvider, PeerAddr};
+use atlas_common::peer_addr::PeerAddr;
 use either::Either;
 
 use log::{debug, error};
@@ -21,11 +21,11 @@ use atlas_common::node_id::NodeId;
 use atlas_common::prng::ThreadSafePrng;
 use atlas_common::socket::{AsyncListener, SyncListener};
 
-use crate::reconfiguration_node::{ReconfigurationMessageHandler, ReconfigurationNode};
+use crate::reconfiguration_node::{NetworkInformationProvider, ReconfigurationMessageHandler, ReconfigurationNode};
 use crate::{FullNetworkNode, NodePK};
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::config::{NodeConfig, TlsConfig};
-use crate::message::{NetworkMessage, NetworkMessageKind, StoredMessage, StoredSerializedNetworkMessage, StoredSerializedProtocolMessage, WireMessage};
+use crate::message::{NetworkMessageKind, SerializedMessage, StoredMessage, StoredSerializedNetworkMessage, StoredSerializedProtocolMessage, WireMessage};
 use crate::protocol_node::ProtocolNetworkNode;
 use crate::serialize::{Buf, Serializable};
 use crate::tcp_ip_simplex::connections::SimplexConnections;
@@ -62,7 +62,7 @@ type SendTos<RM, PM> = SmallVec<[SendTo<RM, PM>; NODE_QUORUM_SIZE]>;
 /// The node based on the TCP/IP protocol stack
 pub struct TcpNode<NI, RM, PM>
     where
-        NI: NetworkInformationProvider,
+        NI: NetworkInformationProvider + 'static,
         RM: Serializable + 'static,
         PM: Serializable + 'static {
     id: NodeId,
@@ -70,9 +70,9 @@ pub struct TcpNode<NI, RM, PM>
     // The thread safe pseudo random number generator
     rng: Arc<ThreadSafePrng>,
     // General network information and reconfiguration logic
-    reconf_node: Arc<Box<NI>>,
+    reconf_node: Arc<NI>,
     // The connections that are currently being maintained by us to other peers
-    peer_connections: Arc<PeerConnections<RM, PM>>,
+    peer_connections: Arc<PeerConnections<NI, RM, PM>>,
     // The reconfiguration message handler
     reconfig_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
     //Handles the incoming connections' buffering and request collection
@@ -292,8 +292,10 @@ impl<NI, RM, PM> TcpNode<NI, RM, PM>
 }
 
 impl<NI, RM, PM> ProtocolNetworkNode<PM> for TcpNode<NI, RM, PM>
-    where RM: Serializable + 'static, PM: Serializable + 'static {
-    type ConnectionManager = SimplexConnections<RM, PM>;
+    where
+        NI: NetworkInformationProvider,
+        RM: Serializable + 'static, PM: Serializable + 'static {
+    type ConnectionManager = PeerConnections<NI, RM, PM>;
     type Crypto = ();
     type IncomingRqHandler = PeerIncomingRqHandling<StoredMessage<PM::Message>>;
 
@@ -318,33 +320,133 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for TcpNode<NI, RM, PM>
     }
 
     fn send(&self, message: PM::Message, target: NodeId, flush: bool) -> Result<()> {
-        todo!()
+        let message = NetworkMessageKind::from_system(message);
+
+        let (send_to_me, send_to_others, failed) =
+            self.send_tos(None, iter::once(target), flush);
+
+        if !failed.is_empty() {
+            return Err(Error::simple(ErrorKind::CommunicationPeerNotFound));
+        }
+
+        Self::serialize_send_impl(send_to_me, send_to_others, message);
+
+        Ok(())
     }
 
     fn send_signed(&self, message: PM::Message, target: NodeId, flush: bool) -> Result<()> {
-        todo!()
+        let message = NetworkMessageKind::from_system(message);
+
+        let shared = Some(self.reconfiguration.get_key_pair());
+
+        let (send_to_me, send_to_others, failed) =
+            self.send_tos(shared, iter::once(target), flush);
+
+        if !failed.is_empty() {
+            return Err(Error::simple(ErrorKind::CommunicationPeerNotFound));
+        }
+
+        Self::serialize_send_impl(send_to_me, send_to_others, message);
+
+        Ok(())
     }
 
     fn broadcast(&self, message: PM::Message, targets: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
-        todo!()
+        let message = NetworkMessageKind::from_system(message);
+
+        let (send_to_me, send_to_others, failed) =
+            self.send_tos(None, targets, true);
+
+        Self::serialize_send_impl(send_to_me, send_to_others, message);
+
+        if !failed.is_empty() {
+            Err(failed)
+        } else {
+            Ok(())
+        }
     }
 
-    fn broadcast_signed(&self, message: PM::Message, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
-        todo!()
+    fn broadcast_signed(&self, message: PM::Message, targets: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
+        let shared = Some(self.reconfiguration.get_key_pair());
+
+        let message = NetworkMessageKind::from_system(message);
+
+        let (send_to_me, send_to_others, failed) =
+            self.send_tos(shared, targets, true);
+
+        Self::serialize_send_impl(send_to_me, send_to_others, message);
+
+        if !failed.is_empty() {
+            Err(failed)
+        } else {
+            Ok(())
+        }
     }
 
     fn serialize_sign_message(&self, message: PM::Message, target: NodeId) -> Result<StoredSerializedProtocolMessage<PM>> {
-        todo!()
+        let nmk = NetworkMessageKind::from_system(message);
+
+        let key_pair = Some(&**self.reconfiguration.get_key_pair());
+
+        match crate::cpu_workers::serialize_digest_no_threadpool(&nmk) {
+            Ok((buffer, digest)) => {
+                let message = WireMessage::new(self.my_id, self.peer_id,
+                                               buffer, self.nonce, Some(digest), key_pair);
+
+                let (header, message) = message.into_inner();
+
+                let msg = match nmk {
+                    NetworkMessageKind::System(sys) => {
+                        StoredSerializedProtocolMessage::new(header, SerializedMessage::new(sys.into(), message))
+                    }
+                    _ => unreachable!()
+                };
+
+                Ok(msg)
+            }
+            Err(err) => {
+                error!("Failed to serialize message {:?}", err);
+
+                Err(Error::simple(ErrorKind::CommunicationSerialize))
+            }
+        }
     }
 
     fn broadcast_serialized(&self, messages: BTreeMap<NodeId, StoredSerializedProtocolMessage<PM::Message>>) -> std::result::Result<(), Vec<NodeId>> {
-        todo!()
+        let targets = messages.keys().cloned().into_iter();
+
+        let (send_to_me, send_to_others, failed) = self.send_tos(None,
+                                                                 targets, true);
+
+        let mut mapped_serialized_messages = BTreeMap::new();
+
+        for (id, message) in messages.into_iter() {
+            let (header, message) = message.into_inner();
+
+            let (pm, buf) = message.into_inner();
+
+            let nmk = NetworkMessageKind::from_system(pm);
+
+            let message = StoredSerializedNetworkMessage::new(header, SerializedMessage::new(nmk, buf));
+
+            mapped_serialized_messages.insert(id, message);
+        }
+
+        threadpool::execute(move || {
+            Self::send_serialized_impl(send_to_me, send_to_others, mapped_serialized_messages);
+        });
+
+        if !failed.is_empty() {
+            Err(failed)
+        } else {
+            Ok(())
+        }
     }
 }
 
 impl<NI, RM, PM> ReconfigurationNode<RM> for TcpNode<NI, RM, PM>
-    where RM: Serializable + 'static, PM: Serializable + 'static {
-    type ConnectionManager = PeerConnections<RM, PM>;
+    where NI: NetworkInformationProvider + 'static, RM: Serializable + 'static, PM: Serializable + 'static {
+    type ConnectionManager = PeerConnections<NI, RM, PM>;
     type IncomingReconfigRqHandler = ReconfigurationMessageHandler<StoredMessage<RM::Message>>;
 
     fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
@@ -356,15 +458,45 @@ impl<NI, RM, PM> ReconfigurationNode<RM> for TcpNode<NI, RM, PM>
     }
 
     fn send_reconfig_message(&self, message: RM::Message, target: NodeId) -> Result<()> {
-        todo!()
+        let nmk = NetworkMessageKind::from_reconfig(message);
+
+        let keys = Some(self.reconfiguration.get_key_pair());
+
+        let (send_to_me, send_to_others, failed) =
+            self.send_tos(keys, iter::once(target), true);
+
+        if !failed.is_empty() {
+            return Err(Error::simple(ErrorKind::CommunicationPeerNotFound));
+        }
+
+        Self::serialize_send_impl(send_to_me, send_to_others, nmk);
+
+        Ok(())
     }
 
     fn broadcast_reconfig_message(&self, message: RM::Message, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
-        todo!()
+        let nmk = NetworkMessageKind::from_system(message);
+
+        let keys = Some(self.reconfiguration.get_key_pair());
+
+        let (send_to_me, send_to_others, failed) =
+            self.send_tos(keys, target, true);
+
+        Self::serialize_send_impl(send_to_me, send_to_others, nmk);
+
+        if !failed.is_empty() {
+            Err(failed)
+        } else {
+            Ok(())
+        }
     }
 }
 
-impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TcpNode<NI, RM, PM> {
+impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TcpNode<NI, RM, PM>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static
+{
     type Config = NodeConfig;
 
     async fn bootstrap(network_info_provider: NI, cfg: Self::Config) -> Result<Arc<Self>> where NI: NetworkInformationProvider {
@@ -398,7 +530,8 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TcpNode<NI, RM, PM> {
         let peer_connections = PeerConnections::new(id, cfg.first_cli,
                                                     conn_counts,
                                                     network_info_provider.clone(),
-                                                    connector, acceptor, peers.clone());
+                                                    connector, acceptor, peers.clone(),
+                                                    reconfig_message_handler.clone());
 
         debug!("Initializing connection listeners");
         peer_connections.clone().setup_tcp_listener(client_socket?);

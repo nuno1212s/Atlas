@@ -5,16 +5,19 @@ use log::error;
 use atlas_common::socket::{SecureReadHalfSync};
 use crate::cpu_workers;
 use crate::message::{Header, NetworkMessage, NetworkMessageKind, StoredMessage};
-use crate::reconfiguration_node::ReconfigurationMessageHandler;
+use crate::reconfiguration_node::{NetworkInformationProvider, ReconfigurationMessageHandler};
 use crate::serialize::Serializable;
-use crate::tcpip::connections::{ConnHandle, PeerConnection};
+use crate::tcpip::connections::{ConnHandle, PeerConnection, PeerConnections};
 
-pub(super) fn spawn_incoming_thread<RM, PM>(
+pub(super) fn spawn_incoming_thread<NI, RM, PM>(
     conn_handle: ConnHandle,
+    node_conns: Arc<PeerConnections<NI, RM, PM>>,
     peer: Arc<PeerConnection<RM, PM>>,
-    reconf_handle: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
     mut socket: SecureReadHalfSync)
-    where RM: Serializable + 'static, PM: Serializable + 'static {
+    where
+        NI: NetworkInformationProvider + 'static,
+        RM: Serializable + 'static,
+        PM: Serializable + 'static {
     std::thread::Builder::new()
         .spawn(move || {
             let mut read_buffer = BytesMut::with_capacity(Header::LENGTH);
@@ -74,7 +77,7 @@ pub(super) fn spawn_incoming_thread<RM, PM>(
                     NetworkMessageKind::ReconfigurationMessage(reconf_msg) => {
                         let msg = StoredMessage::new(header, reconf_msg.into());
 
-                        if let Err(inner) = reconf_handle.push_request(msg) {
+                        if let Err(inner) = peer.reconf_handling.push_request(msg) {
                             error!("Failed to deliver reconfiguration message to reconfiguration handler. {:?}",
                             inner);
                         };
@@ -93,9 +96,11 @@ pub(super) fn spawn_incoming_thread<RM, PM>(
                     _ => {}
                 }
 
-
                 //TODO: Stats
             }
-            peer.delete_connection(conn_handle.id());
+
+            let remaining_conns = peer.delete_connection(conn_handle.id());
+
+            node_conns.handle_conn_lost(&peer.peer_node_id, remaining_conns)
         }).unwrap();
 }

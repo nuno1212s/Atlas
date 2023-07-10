@@ -1,6 +1,6 @@
 use crate::message::{NetworkMessage, NetworkMessageKind, StoredMessage};
 use crate::serialize::Serializable;
-use crate::{NodePK, NodeConnections};
+use crate::{NodeConnections, NodePK};
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, TryRecvError};
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::error::*;
@@ -274,6 +274,22 @@ use std::sync::{Arc, Mutex};
 //     }
 // }
 
+/// Represents the network information that a node needs to know about other nodes
+pub trait NetworkInformationProvider {
+
+    fn get_own_addr(&self) -> PeerAddr;
+
+    /// Get our own key pair
+    fn get_key_pair(&self) -> &Arc<KeyPair>;
+
+    /// Get the public key of a given node
+    fn get_public_key(&self, node: &NodeId) -> Option<PublicKey>;
+
+    /// Get the peer addr for a given node
+    fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr>;
+
+}
+
 /// Handling of incoming requests
 pub trait ReconfigurationIncomingHandler<T> {
     /// Receive a reconfiguration message from other nodes
@@ -344,3 +360,4 @@ impl<T> ReconfigurationIncomingHandler<T> for ReconfigurationMessageHandler<T> {
         }
     }
 }
+

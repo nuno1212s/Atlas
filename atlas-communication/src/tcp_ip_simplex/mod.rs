@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::iter;
 use std::sync::Arc;
 use std::time::Instant;
-use atlas_common::peer_addr::{NetworkInformationProvider, PeerAddr};
+use atlas_common::peer_addr::PeerAddr;
 use either::Either;
 use log::{debug, error};
 use smallvec::SmallVec;
@@ -13,14 +13,14 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::prng::ThreadSafePrng;
 use atlas_common::error::*;
-use atlas_common::{threadpool};
+use atlas_common::threadpool;
 use atlas_common::crypto::signature::KeyPair;
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::config::{NodeConfig, TlsConfig};
 use crate::message::{NetworkMessageKind, SerializedMessage, StoredMessage, StoredSerializedNetworkMessage, StoredSerializedProtocolMessage, WireMessage};
 use crate::{FullNetworkNode, NodePK};
 use crate::protocol_node::ProtocolNetworkNode;
-use crate::reconfiguration_node::{ReconfigurationMessageHandler, ReconfigurationNode};
+use crate::reconfiguration_node::{NetworkInformationProvider, ReconfigurationMessageHandler, ReconfigurationNode};
 use crate::serialize::{Buf, Serializable};
 use crate::tcp_ip_simplex::connections::{PeerConnection, SimplexConnections};
 use crate::tcpip::connections::ConnCounts;
@@ -44,8 +44,8 @@ pub struct TCPSimplexNode<NI, RM, PM>
     client_pooling: Arc<PeerIncomingRqHandling<StoredMessage<PM::Message>>>,
     // The handle to the reconfiguration message handling
     reconfig_handle: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
-
-    connections: Arc<SimplexConnections<RM, PM>>,
+    // The manager of this peer's connections
+    connections: Arc<SimplexConnections<NI, RM, PM>>,
 }
 
 impl<NI, RM, PM> TCPSimplexNode<NI, RM, PM>
@@ -216,7 +216,7 @@ impl<NI, RM, PM> TCPSimplexNode<NI, RM, PM>
 
 impl<NI, RM, PM> ProtocolNetworkNode<PM> for TCPSimplexNode<NI, RM, PM>
     where NI: NetworkInformationProvider, RM: Serializable + 'static, PM: Serializable + 'static {
-    type ConnectionManager = SimplexConnections<RM, PM>;
+    type ConnectionManager = SimplexConnections<NI, RM, PM>;
     type Crypto = ();
     type IncomingRqHandler = PeerIncomingRqHandling<StoredMessage<PM::Message>>;
 
@@ -367,7 +367,7 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for TCPSimplexNode<NI, RM, PM>
 
 impl<NI, RM, PM> ReconfigurationNode<RM> for TCPSimplexNode<NI, RM, PM>
     where NI: NetworkInformationProvider, RM: Serializable + 'static, PM: Serializable + 'static {
-    type ConnectionManager = SimplexConnections<RM, PM>;
+    type ConnectionManager = SimplexConnections<NI, RM, PM>;
     type IncomingReconfigRqHandler = ReconfigurationMessageHandler<StoredMessage<RM::Message>>;
 
     fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
@@ -413,7 +413,10 @@ impl<NI, RM, PM> ReconfigurationNode<RM> for TCPSimplexNode<NI, RM, PM>
     }
 }
 
-impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TCPSimplexNode<NI, RM, PM> {
+impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TCPSimplexNode<NI, RM, PM>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     type Config = NodeConfig;
 
     async fn bootstrap(network_info_provider: NI, cfg: Self::Config) -> Result<Arc<Self>>
@@ -447,7 +450,10 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TCPSimplexNode<NI, RM, PM> {
         let peer_connections = SimplexConnections::new(id, cfg.first_cli,
                                                        conn_counts,
                                                        network_info_provider.clone(),
-                                                       connector, acceptor, peers.clone());
+                                                       connector,
+                                                       acceptor,
+                                                       peers.clone(),
+                                                       reconfig_message_handler.clone());
 
 
         debug!("Initializing connection listeners");

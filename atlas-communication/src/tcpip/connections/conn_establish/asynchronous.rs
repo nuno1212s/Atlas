@@ -12,6 +12,7 @@ use atlas_common::{async_runtime as rt, prng, socket};
 use atlas_common::channel::{new_oneshot_channel, OneShotRx};
 use atlas_common::node_id::NodeId;
 use crate::message::{Header, WireMessage};
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
 use crate::tcpip::connections::conn_establish::ConnectionHandler;
 use crate::tcpip::connections::PeerConnections;
@@ -19,15 +20,17 @@ use crate::tcpip::{TlsNodeAcceptor, TlsNodeConnector};
 
 pub type Callback = Option<Box<dyn FnOnce(bool) + Send>>;
 
-pub(super) fn setup_conn_acceptor_task<RM, PM>(tcp_listener: AsyncListener,
-                                               conn_handler: Arc<ConnectionHandler>,
-                                               peer_connections: Arc<PeerConnections<RM, PM>>)
-    where RM: Serializable + 'static, PM: Serializable + 'static {
+pub(super) fn setup_conn_acceptor_task<NI, RM, PM>(tcp_listener: AsyncListener,
+                                                   conn_handler: Arc<ConnectionHandler>,
+                                                   peer_connections: Arc<PeerConnections<NI, RM, PM>>)
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     rt::spawn(async move {
         loop {
             match tcp_listener.accept().await {
                 Ok(connection) => {
-                    conn_handler.accept_conn::<RM, PM>(&peer_connections, Either::Left(connection))
+                    conn_handler.accept_conn::<NI, RM, PM>(&peer_connections, Either::Left(connection))
                 }
                 Err(err) => {
                     error!("Failed to accept connection. {:?}", err);
@@ -37,10 +40,12 @@ pub(super) fn setup_conn_acceptor_task<RM, PM>(tcp_listener: AsyncListener,
     });
 }
 
-pub(super) fn connect_to_node_async<RM, PM>(conn_handler: Arc<ConnectionHandler>,
-                                            connections: Arc<PeerConnections<RM, PM>>,
-                                            peer_id: NodeId, addr: PeerAddr) -> OneShotRx<Result<()>>
-    where RM: Serializable + 'static, PM: Serializable + 'static {
+pub(super) fn connect_to_node_async<NI, RM, PM>(conn_handler: Arc<ConnectionHandler>,
+                                                connections: Arc<PeerConnections<NI, RM, PM>>,
+                                                peer_id: NodeId, addr: PeerAddr) -> OneShotRx<Result<()>>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     let (tx, rx) = new_oneshot_channel();
 
     rt::spawn(async move {
@@ -202,10 +207,12 @@ pub(super) fn connect_to_node_async<RM, PM>(conn_handler: Arc<ConnectionHandler>
     rx
 }
 
-pub(super) fn handle_server_conn_established<RM, PM>(conn_handler: Arc<ConnectionHandler>,
-                                                     connections: Arc<PeerConnections<RM, PM>>,
-                                                     mut sock: AsyncSocket)
-    where RM: Serializable + 'static, PM: Serializable + 'static {
+pub(super) fn handle_server_conn_established<NI, RM, PM>(conn_handler: Arc<ConnectionHandler>,
+                                                         connections: Arc<PeerConnections<NI, RM, PM>>,
+                                                         mut sock: AsyncSocket)
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     rt::spawn(async move {
         let acceptor = if let TlsNodeAcceptor::Async(connector) = &conn_handler.tls_acceptor {
             connector.clone()
