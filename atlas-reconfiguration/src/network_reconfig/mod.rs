@@ -6,6 +6,8 @@ use atlas_common::channel::OneShotRx;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::node_id::NodeId;
 use atlas_common::peer_addr::PeerAddr;
+use atlas_communication::reconfiguration_node::NetworkInformationProvider;
+use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{KnownNodesMessage, NetworkJoinRejectionReason, NetworkJoinResponseMessage, NodeTriple};
 
 /// The reconfiguration module.
@@ -17,14 +19,6 @@ use crate::message::{KnownNodesMessage, NetworkJoinRejectionReason, NetworkJoinR
 
 pub type NetworkPredicate =
 fn(Arc<NetworkInfo>, NodeTriple) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
-
-/// The map of known nodes in the network, independently of whether they are part of the current
-/// quorum or not
-#[derive(Clone)]
-pub struct KnownNodes {
-    node_keys: BTreeMap<NodeId, PublicKey>,
-    node_addrs: BTreeMap<NodeId, PeerAddr>,
-}
 
 
 /// Our current view of the network and the information about our own node
@@ -110,7 +104,7 @@ impl NetworkInfo {
     }
 
     /// Handle a node having introduced itself to us by inserting it into our known nodes
-    pub fn handle_node_introduced(&self, node: NodeTriple) {
+    pub(crate) fn handle_node_introduced(&self, node: NodeTriple) {
 
         debug!("Received a node introduction message from node {:?}. Handling it", node);
 
@@ -120,7 +114,7 @@ impl NetworkInfo {
     }
 
     /// Handle us having received a successfull network join response, with the list of known nodes
-    pub fn handle_successfull_network_join(&self, known_nodes: KnownNodesMessage) {
+    pub(crate) fn handle_successfull_network_join(&self, known_nodes: KnownNodesMessage) {
         let mut write_guard = self.known_nodes.write().unwrap();
 
         debug!("Successfully joined the network. Updating our known nodes list with the received list {:?}", known_nodes);
@@ -211,5 +205,59 @@ impl NetworkInfo {
             self.key_pair.public_key_bytes().to_vec(),
             self.address.clone(),
         )
+    }
+}
+
+impl NetworkInformationProvider for NetworkInfo {
+    fn get_own_addr(&self) -> PeerAddr {
+        self.address.clone()
+    }
+
+    fn get_key_pair(&self) -> &Arc<KeyPair> {
+        &self.key_pair
+    }
+
+    fn get_public_key(&self, node: &NodeId) -> Option<PublicKey> {
+        self.known_nodes.read().unwrap().node_keys.get(node).cloned()
+    }
+
+    fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr> {
+        self.known_nodes.read().unwrap().node_addrs.get(node).cloned()
+    }
+}
+
+/// The map of known nodes in the network, independently of whether they are part of the current
+/// quorum or not
+#[derive(Clone)]
+pub struct KnownNodes {
+    pub(crate) node_keys: BTreeMap<NodeId, PublicKey>,
+    pub(crate) node_addrs: BTreeMap<NodeId, PeerAddr>,
+}
+
+
+impl KnownNodes {
+    fn empty() -> Self {
+        Self {
+            node_keys: BTreeMap::new(),
+            node_addrs: BTreeMap::new(),
+        }
+    }
+
+    fn from_known_list(nodes: Vec<NodeTriple>) -> Self {
+        let mut known_nodes = Self::empty();
+
+        for node in nodes {
+            NetworkInfo::handle_single_node_introduced(&mut known_nodes, node)
+        }
+
+        known_nodes
+    }
+
+    pub fn node_keys(&self) -> &BTreeMap<NodeId, PublicKey> {
+        &self.node_keys
+    }
+
+    pub fn node_addrs(&self) -> &BTreeMap<NodeId, PeerAddr> {
+        &self.node_addrs
     }
 }

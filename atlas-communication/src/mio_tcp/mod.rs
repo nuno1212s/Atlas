@@ -18,7 +18,7 @@ use atlas_common::prng::ThreadSafePrng;
 use atlas_common::socket::SyncListener;
 use atlas_metrics::metrics::metric_duration;
 
-use crate::{FullNetworkNode, NodePK};
+use crate::{FullNetworkNode};
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::config::MioConfig;
 use crate::message::{NetworkMessageKind, SerializedMessage, StoredMessage, StoredSerializedNetworkMessage, StoredSerializedProtocolMessage, WireMessage};
@@ -205,7 +205,7 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for MIOTcpNode<NI, RM, PM>
           RM: Serializable + 'static,
           PM: Serializable + 'static {
     type ConnectionManager = Connections<NI, RM, PM>;
-    type Crypto = ();
+    type NetworkInfoProvider = NI;
     type IncomingRqHandler = PeerIncomingRqHandling<StoredMessage<PM::Message>>;
 
     fn id(&self) -> NodeId {
@@ -220,8 +220,8 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for MIOTcpNode<NI, RM, PM>
         &self.connections
     }
 
-    fn pk_crypto(&self) -> &Arc<Self::Crypto> {
-        todo!()
+    fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider> {
+        &self.reconfiguration
     }
 
     fn node_incoming_rq_handling(&self) -> &Arc<Self::IncomingRqHandler> {
@@ -360,10 +360,15 @@ impl<NI, RM, PM> ReconfigurationNode<RM> for MIOTcpNode<NI, RM, PM>
           RM: Serializable + 'static,
           PM: Serializable + 'static {
     type ConnectionManager = Connections<NI, RM, PM>;
+    type NetworkInfoProvider = NI;
     type IncomingReconfigRqHandler = ReconfigurationMessageHandler<StoredMessage<RM::Message>>;
 
     fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
         &self.connections
+    }
+
+    fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider> {
+        &self.reconfiguration
     }
 
     fn reconfiguration_message_handler(&self) -> &Arc<Self::IncomingReconfigRqHandler> {
@@ -411,7 +416,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
           PM: Serializable + 'static {
     type Config = MioConfig;
 
-    async fn bootstrap(network_info_provider: NI, node_config: Self::Config) -> Result<Arc<Self>> where NI: NetworkInformationProvider {
+    async fn bootstrap(network_info_provider: Arc<NI>, node_config: Self::Config) -> Result<Arc<Self>> where NI: NetworkInformationProvider {
         let MioConfig { node_config: cfg, worker_count } = node_config;
 
         let id = cfg.id;
@@ -421,8 +426,6 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
         let tcp_config = cfg.tcp_config;
 
         let conn_counts = ConnCounts::from_tcp_config(&tcp_config);
-
-        let network_info_provider = Arc::new(network_info_provider);
 
         let reconfig_message_handler = Arc::new(ReconfigurationMessageHandler::initialize());
 
@@ -502,12 +505,12 @@ impl<RM, PM> SendTo<RM, PM>
     where RM: Serializable + 'static,
           PM: Serializable + 'static {
     fn value(self, msg: Either<(NetworkMessageKind<RM, PM>, Buf, Digest), (Buf, Digest)>) {
-        let key_pair = match self.shared {
+        let key_pair = match &self.shared {
             None => {
                 None
             }
             Some(key_pair) => {
-                Some(&*key_pair)
+                Some(&**key_pair)
             }
         };
 

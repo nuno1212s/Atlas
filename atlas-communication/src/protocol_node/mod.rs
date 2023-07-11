@@ -3,8 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use atlas_common::node_id::NodeId;
 use atlas_common::error::*;
-use crate::{NodeConnections, NodePK};
+use crate::{NodeConnections};
 use crate::message::{StoredMessage, StoredSerializedProtocolMessage};
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
 
 /// Trait for taking requests from the network node
@@ -33,7 +34,7 @@ pub trait NodeIncomingRqHandler<T>: Send {
 pub trait ProtocolNetworkNode<M>: Send + Sync where M: Serializable + 'static {
     type ConnectionManager: NodeConnections;
 
-    type Crypto: NodePK;
+    type NetworkInfoProvider: NetworkInformationProvider;
 
     type IncomingRqHandler: NodeIncomingRqHandler<StoredMessage<M::Message>>;
 
@@ -47,7 +48,7 @@ pub trait ProtocolNetworkNode<M>: Send + Sync where M: Serializable + 'static {
     fn node_connections(&self) -> &Arc<Self::ConnectionManager>;
 
     /// Crypto
-    fn pk_crypto(&self) -> &Arc<Self::Crypto>;
+    fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider>;
 
     /// Get a reference to the incoming request handling
     fn node_incoming_rq_handling(&self) -> &Arc<Self::IncomingRqHandler>;

@@ -6,7 +6,6 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use crate::config::PKConfig;
 use crate::message::{WireMessage};
-use crate::NodePK;
 
 #[deprecated(since="0.1.0", note="please use `ReconfigurableNetworkNode` instead")]
 pub struct NodePKShared {
@@ -42,16 +41,6 @@ impl NodePKCrypto {
     }
 
     pub fn my_key(&self) -> &Arc<KeyPair> {
-        &self.pk_shared.my_key
-    }
-}
-
-impl NodePK for NodePKCrypto {
-    fn get_public_key(&self, node: &NodeId) -> Option<PublicKey> {
-        self.pk_shared.peer_keys.get(node.0 as u64).cloned()
-    }
-
-    fn get_key_pair(&self) -> &Arc<KeyPair> {
         &self.pk_shared.my_key
     }
 }

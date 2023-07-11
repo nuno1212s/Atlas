@@ -94,6 +94,7 @@ pub(super) fn spawn_incoming_task<NI, RM, PM>(
                         error!("{:?} // Failed to push reconfiguration message to reconfiguration handler. {:?}", conn_handle.my_id, err);
                     }
                 }
+                _ => unreachable!()
             }
 
             //TODO: Statistics

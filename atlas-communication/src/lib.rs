@@ -51,14 +51,6 @@ pub trait NodeConnections {
     async fn disconnect_from_node(&self, node: &NodeId) -> Result<()>;
 }
 
-pub trait NodePK {
-    /// Get the public key for a given node
-    fn get_public_key(&self, node: &NodeId) -> Option<PublicKey>;
-
-    /// Get our own key pair
-    fn get_key_pair(&self) -> &Arc<KeyPair>;
-}
-
 /// A full network node implementation
 pub trait FullNetworkNode<NI, RM, PM>: ProtocolNetworkNode<PM> + ReconfigurationNode<RM>
     where
@@ -70,5 +62,5 @@ pub trait FullNetworkNode<NI, RM, PM>: ProtocolNetworkNode<PM> + Reconfiguration
     type Config;
 
     /// Bootstrap the node
-    async fn bootstrap(network_info_provider: NI, node_config: Self::Config) -> Result<Arc<Self>>;
+    async fn bootstrap(network_info_provider: Arc<NI>, node_config: Self::Config) -> Result<Arc<Self>>;
 }

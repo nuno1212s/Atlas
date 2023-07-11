@@ -1,14 +1,18 @@
+use core::num::flt2dec::Sign;
 use std::fmt::Debug;
 
-use atlas_common::crypto::signature::{PublicKey, Signature};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 
 use atlas_common::peer_addr::PeerAddr;
 #[cfg(feature = "serialize_serde")]
 use serde::{Serialize, Deserialize};
+use atlas_common::crypto::hash::Digest;
+use atlas_common::crypto::signature::Signature;
+use atlas_communication::serialize::Serializable;
 
-use crate::{KnownNodes, NetworkView};
+use crate::{QuorumView};
+use crate::network_reconfig::KnownNodes;
 
 
 /// Used to request to join the current quorum
@@ -84,7 +88,7 @@ pub struct KnownNodesMessage {
 pub struct NodeTriple {
     node_id: NodeId,
     addr: PeerAddr,
-    pub_key: Vec<u8>
+    pub_key: Vec<u8>,
 }
 
 /// The response to the request to join the network
@@ -104,7 +108,7 @@ pub enum NetworkJoinRejectionReason {
     IncorrectSignature,
     // Clients don't need to connect to other clients, for example, so it is not necessary
     // For them to know about each other
-    NotNecessary
+    NotNecessary,
 }
 
 /// Reconfiguration message type
@@ -112,7 +116,7 @@ pub enum NetworkJoinRejectionReason {
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum ReconfigurationMessage {
     NetworkReconfig(NetworkReconfigMessage),
-    QuorumReconfig(QuorumReconfigMessage)
+    QuorumReconfig(QuorumReconfigMessage),
 }
 
 /// Network reconfiguration messages (Related only to the network view)
@@ -121,16 +125,41 @@ pub enum ReconfigurationMessage {
 pub enum NetworkReconfigMessage {
     NetworkJoinRequest(NodeTriple),
     NetworkJoinResponse(NetworkJoinResponseMessage),
-    NetworkViewStateRequest,
-    NetworkViewState(NetworkView),
+    NetworkHelloRequest(NodeTriple),
+}
+
+/// A certificate that a given node sent a quorum view
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct QuorumViewCert {
+    /// The quorum view that was sent
+    quorum_view: QuorumView,
+    /// The digest of the quorum view
+    digest: Digest,
+    /// The node that sent the quorum view
+    sender: NodeId,
+    /// The signature of the quorum view (digest) by the node id
+    signature: Signature
 }
 
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumReconfigMessage {
+    /// A state request for the current network view
+    NetworkViewStateRequest,
+    /// The response to the state request
+    NetworkViewState(QuorumViewCert),
+    /// A request to join the current quorum
     QuorumEnterRequest(QuorumEnterRequest),
+    /// The response to the request to join the quorum, 2f+1 responses
+    /// are required to consider the request successful and allow for this
+    /// to be passed to the ordering protocol as a QuorumJoinCertificate
     QuorumEnterResponse(QuorumEnterResponse),
+    /// A message to indicate that a node has entered the quorum
+    QuorumUpdated(QuorumViewCert),
+    /// A request to leave the current quorum
     QuorumLeaveRequest(QuorumLeaveRequest),
+    /// The response to the request to leave the quorum
     QuorumLeaveResponse(QuorumLeaveResponse),
 }
 
@@ -164,7 +193,6 @@ impl NodeTriple {
 
 impl From<&KnownNodes> for KnownNodesMessage {
     fn from(value: &KnownNodes) -> Self {
-
         let mut known_nodes = Vec::with_capacity(value.node_keys.len());
 
         for (node_id, public_key) in value.node_keys() {
@@ -182,7 +210,6 @@ impl From<&KnownNodes> for KnownNodesMessage {
 }
 
 impl KnownNodesMessage {
-
     pub fn known_nodes(&self) -> &Vec<NodeTriple> {
         &self.nodes
     }
@@ -190,11 +217,47 @@ impl KnownNodesMessage {
     pub fn into_nodes(self) -> Vec<NodeTriple> {
         self.nodes
     }
-
 }
 
 impl Debug for NodeTriple {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "NodeTriple {{ node_id: {:?}, addr: {:?}}}", self.node_id, self.addr)
+    }
+}
+
+pub struct ReconfData;
+
+impl Serializable for ReconfData {
+    type Message = ReconfigurationMessage;
+
+    //TODO: Implement capnproto messages
+}
+
+pub enum QuorumReconfigurationMessage {
+    RequestQuorumViewAlteration(QuorumJoinCertificate),
+}
+
+pub enum QuorumReconfigurationResponse {
+    QuorumAlterationResponse(QuorumAlterationResponse),
+}
+
+pub enum QuorumAlterationResponse {
+    Successful,
+    Failed()
+}
+
+impl QuorumViewCert {
+    
+    pub fn quorum_view(&self) -> &QuorumView {
+        &self.quorum_view
+    }
+    pub fn digest(&self) -> Digest {
+        self.digest
+    }
+    pub fn sender(&self) -> NodeId {
+        self.sender
+    }
+    pub fn signature(&self) -> Signature {
+        self.signature
     }
 }

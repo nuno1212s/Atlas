@@ -1,26 +1,30 @@
+extern crate core;
+
 pub mod config;
 pub mod message;
 pub mod network_reconfig;
 pub mod quorum_reconfig;
 mod metrics;
+mod node_types;
 
-use crate::message::{
-    KnownNodesMessage, NetworkJoinRejectionReason, NetworkJoinResponseMessage, NodeTriple,
-    QuorumEnterRejectionReason, QuorumEnterResponse, QuorumNodeJoinResponse,
-};
-use atlas_common::async_runtime as rt;
-use atlas_common::channel::OneShotRx;
-use atlas_common::crypto::signature::{KeyPair, PublicKey};
-use atlas_common::node_id::NodeId;
-use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::peer_addr::PeerAddr;
-use config::ReconfigurableNetworkConfig;
-use futures::future::join_all;
-use log::debug;
+use std::collections::BTreeSet;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::sync::{Arc, RwLock, RwLockWriteGuard};
+use atlas_common::error::*;
+use std::sync::Arc;
+use log::{error, info};
+use atlas_common::channel;
+use atlas_common::async_runtime as rt;
+use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::node_id::NodeId;
+use atlas_common::ordering::SeqNo;
+use atlas_communication::message::Header;
+use atlas_communication::NodeConnections;
+use atlas_communication::reconfiguration_node::{ReconfigurationIncomingHandler, ReconfigurationNode};
+use crate::message::{NetworkJoinResponseMessage, NetworkReconfigMessage, NodeTriple, QuorumReconfigMessage, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfData, ReconfigurationMessage};
+use crate::network_reconfig::NetworkInfo;
+use crate::node_types::NodeType;
+use crate::quorum_reconfig::{QuorumView, QuorumNode};
 
 /// The reconfiguration module.
 /// Provides various utilities for allowing reconfiguration of the network
@@ -29,324 +33,226 @@ use std::sync::{Arc, RwLock, RwLockWriteGuard};
 /// This module will then be used by the parts of the system which must be reconfigurable
 /// (For example, the network
 
-pub type NetworkPredicate =
-    fn(Arc<NetworkInfo>, NodeTriple) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
+pub fn bootstrap_reconf_node<NT>(network_info: Arc<NetworkInfo>, node: Arc<NT>)
+                                 -> Result<(ChannelSyncRx<QuorumReconfigurationMessage>,
+                                            ChannelSyncTx<QuorumReconfigurationResponse>)>
+    where NT: ReconfigurationNode<ReconfData> + 'static {
+    let (reconfig_tx, reconfig_rx) = channel::new_bounded_sync(128);
 
-/// Our current view of the network and the information about our own node
-/// This is the node data for the network information. This does not
-/// directly store information about the quorum, only about the nodes that we
-/// currently know about
-pub struct NetworkInfo {
-    node_id: NodeId,
-    key_pair: Arc<KeyPair>,
+    let (reconfig_resp_tx, reconfig_resp_rx) = channel::new_bounded_sync(128);
 
-    address: PeerAddr,
+    let reconf_node = ReconfigurableNode {
+        curr_seq: SeqNo::ZERO,
+        network_view: network_info,
+        current_state: NetworkNodeState::Init,
+        quorum_communication: reconfig_tx,
+        quorum_responses: reconfig_resp_rx,
+        network_node: node,
+        node_type: NodeType::Client(),
+    };
 
-    // The list of nodes that we currently know in the network
-    known_nodes: RwLock<KnownNodes>,
+    std::thread::Builder::new()
+        .name(format!("Reconfiguration Node Thread"))
+        .spawn(move || {
+            reconf_node.run();
+        }).unwrap();
 
-    /// Predicates that must be satisfied for a node to be allowed to join the network
-    predicates: Vec<NetworkPredicate>,
+    Ok((reconfig_rx, reconfig_resp_tx))
 }
 
-pub type QuorumPredicate =
-    fn(Arc<QuorumNode>, NodeTriple) -> OneShotRx<Option<QuorumEnterRejectionReason>>;
+/// The reconfigurable node which will handle all reconfiguration requests
+/// This handles the network level reconfiguration, not the quorum level reconfiguration
+struct ReconfigurableNode<NT> {
+    curr_seq: SeqNo,
 
-pub struct QuorumNode {
-    node_id: NodeId,
-    current_network_view: NetworkView,
+    network_view: Arc<NetworkInfo>,
 
-    /// Predicates that must be satisfied for a node to be allowed to join the quorum
-    predicates: Vec<QuorumPredicate>,
+    current_state: NetworkNodeState,
+
+    quorum_communication: ChannelSyncTx<QuorumReconfigurationMessage>,
+    quorum_responses: ChannelSyncRx<QuorumReconfigurationResponse>,
+
+    network_node: Arc<NT>,
+
+    node_type: NodeType,
 }
 
-/// The map of known nodes in the network, independently of whether they are part of the current
-/// quorum or not
-#[derive(Clone)]
-pub struct KnownNodes {
-    node_keys: BTreeMap<NodeId, PublicKey>,
-    node_addrs: BTreeMap<NodeId, PeerAddr>,
+
+/// The current state of our node (network level, not quorum level)
+/// Quorum level operations will only take place when we are a stable member of the protocol
+#[derive(Debug, Clone)]
+enum NetworkNodeState {
+    /// The node is currently initializing and will attempt to join the network
+    Init,
+    /// We have broadcast the join request to the known nodes and are waiting for their responses
+    /// Which contain the network information. Afterwards, we will attempt to introduce ourselves to all
+    /// nodes in the network (if there are more nodes than the known boostrap nodes)
+    JoiningNetwork { contacted: usize, responded: BTreeSet<NodeId> },
+    /// We are currently introducing ourselves to the network (and attempting to acquire all known nodes)
+    IntroductionPhase { contacted: usize, responded: BTreeSet<NodeId> },
+    /// A stable member of the network, up to date with the current membership
+    StableMember,
+    /// We are currently leaving the network
+    LeavingNetwork,
 }
 
-/// The current view of nodes in the network, as in which of them
-/// are currently partaking in the consensus
-#[derive(Clone)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub struct NetworkView {
-    sequence_number: SeqNo,
 
-    quorum_members: Vec<NodeId>,
+/// A node which wants to partake in the consensus protocol
+struct ReplicaQuorumNode {
+    quorum_view: QuorumNode,
+
+    quorum_node_state: QuorumNodeState,
 }
 
-impl Orderable for NetworkView {
-    fn sequence_number(&self) -> SeqNo {
-        self.sequence_number
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuorumNodeState {
+    /// We are currently initializing and will attempt to join the network
+    Init,
+    /// We are currently joining the network and will attempt to acquire the quorum
+    JoiningNetwork,
+    /// Stable member of the quorum, up to date with the members
+    StableMember,
+    /// Leaving the quorum
+    LeavingNetwork,
 }
 
-impl NetworkInfo {
-    pub fn init_from_config(config: ReconfigurableNetworkConfig) -> Self {
-        let ReconfigurableNetworkConfig {
-            node_id,
-            key_pair,
-            our_address,
-            known_nodes,
-        } = config;
+impl<NT> ReconfigurableNode<NT> {
+    fn run(mut self) where NT: ReconfigurationNode<ReconfData> {
+        loop {
+            match &mut self.current_state {
+                NetworkNodeState::Init => {
+                    let known_nodes: Vec<NodeId> = self.network_view.known_nodes().into_iter()
+                        .filter(|node| *node != self.network_view.node_id()).collect();
 
-        NetworkInfo {
-            node_id,
-            key_pair: Arc::new(key_pair),
-            address: our_address,
-            known_nodes: RwLock::new(KnownNodes::from_known_list(known_nodes)),
-            predicates: Vec::new(),
-        }
-    }
+                    let join_message = ReconfigurationMessage::NetworkReconfig(NetworkReconfigMessage::NetworkJoinRequest(
+                        self.network_view.node_triple()
+                    ));
 
-    pub fn empty_network_node(
-        node_id: NodeId,
-        key_pair: KeyPair,
-        address: PeerAddr,
-    ) -> Self {
-        NetworkInfo {
-            node_id,
-            key_pair: Arc::new(key_pair),
-            known_nodes: RwLock::new(KnownNodes::empty()),
-            predicates: vec![],
-            address,
-        }
-    }
+                    let contacted = known_nodes.len();
 
-    /// Initialize a NetworkNode with a list of already known Nodes so we can bootstrap our information
-    /// From them.
-    pub fn with_bootstrap_nodes(
-        node_id: NodeId,
-        key_pair: KeyPair,
-        address: PeerAddr,
-        bootstrap_nodes: BTreeMap<NodeId, (PeerAddr, Vec<u8>)>,
-    ) -> Self {
-        let node = NetworkInfo::empty_network_node(node_id, key_pair, address);
+                    if known_nodes.is_empty() {
+                        self.current_state = NetworkNodeState::StableMember;
 
-        {
-            let mut write_guard = node.known_nodes.write().unwrap();
+                        continue;
+                    }
 
-            for (node_id, (addr, pk_bytes)) in bootstrap_nodes {
-                let public_key = PublicKey::from_bytes(&pk_bytes[..]).unwrap();
+                    let mut node_results = Vec::new();
 
-                write_guard.node_keys.insert(node_id, public_key);
-                write_guard.node_addrs.insert(node_id, addr);
+                    for node in &known_nodes {
+                        let mut node_connection_results = self.network_node.node_connections().connect_to_node(*node);
+
+                        node_results.push((*node, node_connection_results));
+                    }
+
+                    for (node, conn_results) in node_results {
+                        for conn_result in conn_results {
+                            if let Err(err) = conn_result.recv().unwrap() {
+                                error!("Error while connecting to another node: {:?}", err);
+                            }
+                        }
+                    }
+
+                    let _ = self.network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter());
+
+                    self.current_state = NetworkNodeState::JoiningNetwork {
+                        contacted,
+                        responded: Default::default(),
+                    };
+                }
+                NetworkNodeState::JoiningNetwork { contacted, responded } => {
+                    let reconfiguration_message = self.network_node.reconfiguration_message_handler().receive_reconfig_message().unwrap();
+
+                    let (header, message): (Header, ReconfigurationMessage) = reconfiguration_message.into_inner();
+
+                    // Avoid accepting double answers
+                    if responded.insert(header.from()) {
+                        match message {
+                            ReconfigurationMessage::NetworkReconfig(network_reconfig_msg) => {
+                                match network_reconfig_msg {
+                                    NetworkReconfigMessage::NetworkJoinRequest(_) => {
+                                        info!("Received a network join request from {:?} but we are still not part of the network, so we can't answer", header.from());
+                                    }
+                                    NetworkReconfigMessage::NetworkJoinResponse(join_response) => {
+                                        match join_response {
+                                            NetworkJoinResponseMessage::Successful(network_information) => {
+                                                info!("We were accepted into the network by the node {:?}", header.from());
+
+                                                self.network_view.handle_successfull_network_join(network_information);
+
+                                                self.current_state = NetworkNodeState::IntroductionPhase {
+                                                    contacted: 0,
+                                                    responded: Default::default(),
+                                                };
+                                            }
+                                            NetworkJoinResponseMessage::Rejected(rejection_reason) => {
+                                                error!("We were rejected from the network: {:?} by the node {:?}", rejection_reason, header.from());
+                                            }
+                                        }
+                                    }
+                                    NetworkReconfigMessage::NetworkViewStateRequest => {}
+                                    NetworkReconfigMessage::NetworkViewState(_) => {}
+                                }
+                            }
+                            ReconfigurationMessage::QuorumReconfig(quorum_reconfig) => {
+                                // We cannot partake in quorum reconfiguration debacles until we are a stable member of the network
+                            }
+                        }
+                    }
+                }
+                NetworkNodeState::StableMember => {
+                    let reconfiguration_message = self.network_node.reconfiguration_message_handler().receive_reconfig_message().unwrap();
+
+                    let (header, message): (Header, ReconfigurationMessage) = reconfiguration_message.into_inner();
+
+                    match message {
+                        ReconfigurationMessage::NetworkReconfig(network_reconfig) => {
+                            match network_reconfig {
+                                NetworkReconfigMessage::NetworkJoinRequest(join_request) => {
+                                    let network = self.network_node.clone();
+
+                                    let target = header.from();
+
+                                    rt::spawn(async move {
+                                        let result = self.network_view.can_introduce_node(join_request).await;
+
+                                        let _ = network.send_reconfig_message(ReconfigurationMessage::NetworkReconfig(NetworkReconfigMessage::NetworkJoinResponse(result)), target);
+                                    });
+                                }
+                                NetworkReconfigMessage::NetworkJoinResponse(_) => {
+                                    // Ignored, we are already a stable member of the network
+                                }
+                                NetworkReconfigMessage::NetworkHelloRequest(_) => {}
+                            }
+                        }
+                        ReconfigurationMessage::QuorumReconfig(quorum_reconfig) => {
+                            match quorum_reconfig {
+                                QuorumReconfigMessage::NetworkViewStateRequest => {
+                                    let current_view = self.quorum_view.network_view();
+
+                                    let message = QuorumReconfigMessage::NetworkViewState(current_view);
+
+                                    let _ = self.network_node.send_reconfig_message(ReconfigurationMessage::QuorumReconfig(message), header.from());
+                                }
+                                QuorumReconfigMessage::NetworkViewState(state_view) => {}
+                                QuorumReconfigMessage::QuorumEnterRequest(_) => {}
+                                QuorumReconfigMessage::QuorumEnterResponse(_) => {}
+                                QuorumReconfigMessage::QuorumLeaveRequest(_) => {}
+                                QuorumReconfigMessage::QuorumLeaveResponse(_) => {}
+                            }
+                        }
+                    }
+                }
+                NetworkNodeState::LeavingNetwork => {}
+                NetworkNodeState::IntroductionPhase { .. } => {}
             }
         }
-
-        node
     }
 
-    pub fn register_join_predicate(&mut self, predicate: NetworkPredicate) {
-        self.predicates.push(predicate)
-    }
+    fn introduce_node(&self) where NT: ReconfigurationNode<ReconfData> {
+        let know_nodes = self.network_view.known_nodes();
 
-    pub fn node_id(&self) -> NodeId {
-        self.node_id
-    }
+        let hello_message = NetworkReconfigMessage::NetworkHelloRequest(self.network_view.node_triple());
 
-    /// Handle a node having introduced itself to us by inserting it into our known nodes
-    pub fn handle_node_introduced(&self, node: NodeTriple) {
-
-        debug!("Received a node introduction message from node {:?}. Handling it", node);
-
-        let mut write_guard = self.known_nodes.write().unwrap();
-
-        Self::handle_single_node_introduced(&mut *write_guard, node)
-    }
-
-    /// Handle us having received a successfull network join response, with the list of known nodes
-    pub fn handle_successfull_network_join(&self, known_nodes: KnownNodesMessage) {
-        let mut write_guard = self.known_nodes.write().unwrap();
-
-        debug!("Successfully joined the network. Updating our known nodes list with the received list {:?}", known_nodes);
-
-        for node in known_nodes.into_nodes() {
-            Self::handle_single_node_introduced(&mut *write_guard, node);
-        }
-    }
-
-    fn handle_single_node_introduced(write_guard: &mut KnownNodes, node: NodeTriple) {
-        let node_id = node.node_id();
-
-        if !write_guard.node_keys.contains_key(&node_id) {
-            let public_key = PublicKey::from_bytes(&node.public_key()[..]).unwrap();
-
-            write_guard.node_keys.insert(node_id, public_key);
-            write_guard.node_addrs.insert(node_id, node.addr().clone());
-        }
-    }
-
-    /// Can we introduce this node to the network
-    pub async fn can_introduce_node(
-        self: Arc<Self>,
-        node_id: NodeTriple,
-    ) -> NetworkJoinResponseMessage {
-        let mut results = Vec::with_capacity(self.predicates.len());
-
-        for x in &self.predicates {
-            let rx = x(self.clone(), node_id.clone());
-
-            results.push(rx);
-        }
-
-        let results = join_all(results.into_iter()).await;
-
-        for join_result in results {
-            if let Some(reason) = join_result.unwrap() {
-                return NetworkJoinResponseMessage::Rejected(reason);
-            }
-        }
-
-        self.handle_node_introduced(node_id);
-
-        let read_guard = self.known_nodes.read().unwrap();
-
-        return NetworkJoinResponseMessage::Successful(KnownNodesMessage::from(&*read_guard));
-    }
-
-    pub fn get_pk_for_node(&self, node: &NodeId) -> Option<PublicKey> {
-        self.known_nodes
-            .read()
-            .unwrap()
-            .node_keys
-            .get(node)
-            .cloned()
-    }
-
-    pub fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr> {
-        self.known_nodes
-            .read()
-            .unwrap()
-            .node_addrs
-            .get(node)
-            .cloned()
-    }
-
-    pub fn get_own_addr(&self) -> &PeerAddr {
-        &self.address
-    }
-
-    pub fn keypair(&self) -> &Arc<KeyPair> {
-        &self.key_pair
-    }
-
-    pub fn known_nodes(&self) -> Vec<NodeId> {
-        self.known_nodes
-            .read()
-            .unwrap()
-            .node_addrs
-            .keys()
-            .cloned()
-            .collect()
-    }
-
-    pub fn node_triple(&self) -> NodeTriple {
-        NodeTriple::new(
-            self.node_id,
-            self.key_pair.public_key_bytes().to_vec(),
-            self.address.clone(),
-        )
-    }
-}
-
-impl QuorumNode {
-    pub fn empty_quorum_node(node_id: NodeId) -> Self {
-        QuorumNode {
-            node_id,
-            current_network_view: NetworkView::empty(),
-            predicates: vec![],
-        }
-    }
-
-    pub fn install_network_view(&mut self, network_view: NetworkView) {
-        self.current_network_view = network_view;
-    }
-
-    /// Are we a member of the current quorum
-    pub fn is_quorum_member(&self) -> bool {
-        self.current_network_view
-            .quorum_members
-            .contains(&self.node_id)
-    }
-
-    /// Can a given node join the quorum
-    pub async fn can_node_join_quorum(self: Arc<Self>, node_id: NodeTriple) -> QuorumEnterResponse {
-        if !self.is_quorum_member() {
-            return QuorumEnterResponse::Rejected(
-                QuorumEnterRejectionReason::NodeIsNotQuorumParticipant,
-            );
-        }
-
-        let mut results = Vec::with_capacity(self.predicates.len());
-
-        for x in &self.predicates {
-            let rx = x(self.clone(), node_id.clone());
-
-            results.push(rx);
-        }
-
-        let results = join_all(results.into_iter()).await;
-
-        for join_result in results {
-            if let Some(reason) = join_result.unwrap() {
-                return QuorumEnterResponse::Rejected(reason);
-            }
-        }
-
-        return QuorumEnterResponse::Successful(QuorumNodeJoinResponse::new(
-            self.current_network_view.sequence_number(),
-            node_id.node_id(),
-            self.node_id,
-        ));
-    }
-}
-
-impl KnownNodes {
-    fn empty() -> Self {
-        Self {
-            node_keys: BTreeMap::new(),
-            node_addrs: BTreeMap::new(),
-        }
-    }
-
-    fn from_known_list(nodes: Vec<NodeTriple>) -> Self {
-        let mut known_nodes = Self::empty();
-
-        for node in nodes {
-            NetworkInfo::handle_single_node_introduced(&mut known_nodes, node)
-        }
-
-        known_nodes
-    }
-
-    pub fn node_keys(&self) -> &BTreeMap<NodeId, PublicKey> {
-        &self.node_keys
-    }
-
-    pub fn node_addrs(&self) -> &BTreeMap<NodeId, PeerAddr> {
-        &self.node_addrs
-    }
-}
-
-impl NetworkView {
-    pub fn empty() -> Self {
-        NetworkView {
-            sequence_number: SeqNo::ZERO,
-            quorum_members: Vec::new(),
-        }
-    }
-}
-
-impl Clone for QuorumNode {
-    fn clone(&self) -> Self {
-        QuorumNode {
-            node_id: self.node_id,
-            current_network_view: self.current_network_view.clone(),
-            predicates: self.predicates.clone(),
-        }
+        let _ = self.network_node.broadcast_reconfig_message(ReconfigurationMessage::NetworkReconfig(hello_message), know_nodes.into_iter());
     }
 }

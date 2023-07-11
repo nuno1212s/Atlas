@@ -22,7 +22,7 @@ use crate::tcp_ip_simplex::connections::PeerConnection;
 /// in synchronous or asynchronous workloads.
 pub(crate) fn serialize_digest_message<RM, PM>(message: NetworkMessageKind<RM, PM>)
                                                -> OneShotRx<Result<(Bytes, Digest)>>
-    where RM: Serializable, PM: Serializable {
+    where RM: Serializable + 'static, PM: Serializable + 'static{
     let (tx, rx) = new_oneshot_channel();
 
     let start = Instant::now();
@@ -42,7 +42,7 @@ pub(crate) fn serialize_digest_message<RM, PM>(message: NetworkMessageKind<RM, P
 /// the message back to us as well so we can do what ever we want with it.
 pub(crate) fn serialize_digest_threadpool_return_msg<RM, PM>(message: NetworkMessageKind<RM, PM>)
                                                              -> OneShotRx<(NetworkMessageKind<RM, PM>, Result<(Bytes, Digest)>)>
-    where RM: Serializable, PM: Serializable {
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     let (tx, rx) = channel::new_oneshot_channel();
 
     threadpool::execute(move || {
@@ -110,7 +110,7 @@ pub(crate) fn deserialize_message_no_threadpool<RM, PM>(header: Header, payload:
 /// Also returns the bytes so we can re utilize them for our next operation.
 pub(crate) fn deserialize_message<RM, PM>(header: Header, payload: BytesMut)
                                           -> OneShotRx<Result<(NetworkMessageKind<RM, PM>, BytesMut)>>
-    where RM: Serializable, PM: Serializable {
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     let (tx, rx) = new_oneshot_channel();
 
     let start = Instant::now();

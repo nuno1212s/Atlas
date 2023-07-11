@@ -31,7 +31,6 @@ enum ConnectionWorkResult {
 
 type ConnectionRegister = ChannelSyncRx<MioSocket>;
 
-
 /// The information for this worker thread.
 pub(super) struct EpollWorker<NI, RM, PM>
     where NI: NetworkInformationProvider + 'static,
