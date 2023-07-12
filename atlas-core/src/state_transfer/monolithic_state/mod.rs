@@ -3,7 +3,7 @@ use atlas_common::channel::ChannelSyncTx;
 use atlas_execution::state::monolithic_state::{InstallStateMessage, MonolithicState};
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
-use atlas_communication::Node;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::ApplicationData;
 use crate::persistent_log::MonolithicStateLog;
@@ -32,6 +32,6 @@ pub trait MonolithicStateTransfer<S, NT, PL>: StateTransferProtocol<S, NT, PL>
         where D: ApplicationData + 'static,
               OP: OrderingProtocolMessage + 'static,
               LP: LogTransferMessage + 'static,
-              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+              NT: ProtocolNetworkNode<ServiceMsg<D, OP, Self::Serialization, LP>>,
               V: NetworkView;
 }

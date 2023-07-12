@@ -3,7 +3,7 @@ use std::sync::Arc;
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::message::StoredMessage;
-use atlas_communication::Node;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_execution::serialize::ApplicationData;
 use crate::messages::{LogTransfer, StateTransfer};
 use crate::ordering_protocol::{OrderingProtocol, OrderingProtocolArgs, SerProof, View};
@@ -47,7 +47,7 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
     /// Request the latest state from the rest of replicas
     fn request_latest_log<ST>(&mut self,
                               order_protocol: &mut OP) -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
+        where NT: ProtocolNetworkNode<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               ST: StateTransferMessage + 'static,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
@@ -56,7 +56,7 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
                                   order_protocol: &mut OP,
                                   message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
                                   -> Result<()>
-        where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
+        where NT: ProtocolNetworkNode<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               ST: StateTransferMessage + 'static,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
@@ -67,14 +67,14 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
                            order_protocol: &mut OP,
                            message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
                            -> Result<LTResult<D>>
-        where NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
+        where NT: ProtocolNetworkNode<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               ST: StateTransferMessage + 'static,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
     /// Handle a timeout being received from the timeout layer
     fn handle_timeout<ST>(&mut self, timeout: Vec<RqTimeout>) -> Result<LTTimeoutResult>
         where ST: StateTransferMessage + 'static,
-              NT: Node<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
+              NT: ProtocolNetworkNode<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 }
 

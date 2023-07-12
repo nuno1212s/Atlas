@@ -8,7 +8,6 @@ use atlas_communication::message::{Header, NetworkMessage, StoredMessage, System
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::Node;
 use atlas_execution::app::{Update, UpdateBatch};
 use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::ApplicationData;

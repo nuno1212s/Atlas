@@ -9,6 +9,8 @@ edition = "2021"
 
 serialize_serde = ["serde"]
 
+default = ["serialize_serde"]
+
 [dependencies]
 atlas-common = { path = "../atlas-common" }
 atlas-metrics = { path = "../atlas-metrics" }

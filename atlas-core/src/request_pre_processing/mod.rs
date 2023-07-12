@@ -12,8 +12,8 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::globals::ReadOnly;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::{Node, NodeIncomingRqHandler};
 use atlas_communication::message::{Header, NetworkMessage, StoredMessage};
+use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
 use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::{metric_duration, metric_increment};
 
@@ -135,7 +135,7 @@ struct RequestPreProcessingOrchestrator<WD, D, NT> where D: ApplicationData, WD:
 
 impl<WD, D, NT> RequestPreProcessingOrchestrator<WD, D, NT> where D: ApplicationData + 'static, WD: Send {
     fn run<OP, ST, LP>(mut self)
-        where NT: Node<ServiceMsg<D, OP, ST, LP>>,
+        where NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>>,
               OP: OrderingProtocolMessage + 'static,
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage + 'static,
@@ -147,7 +147,7 @@ impl<WD, D, NT> RequestPreProcessingOrchestrator<WD, D, NT> where D: Application
     }
 
     fn process_client_rqs<OP, ST, LP>(&mut self)
-        where NT: Node<ServiceMsg<D, OP, ST, LP>>,
+        where NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>>,
               OP: OrderingProtocolMessage + 'static,
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage + 'static,
@@ -170,11 +170,9 @@ impl<WD, D, NT> RequestPreProcessingOrchestrator<WD, D, NT> where D: Application
             let mut unordered_worker_message = init_worker_vecs(self.thread_count, messages.len());
 
             for message in messages {
-                let NetworkMessage { header, message } = message;
+                let (header, message) = message.into_inner();
 
-                let sysmsg = message.into();
-
-                match sysmsg {
+                match message {
                     SystemMessage::OrderedRequest(req) => {
                         let worker = WD::get_worker_for(&header, &req, self.thread_count);
 
@@ -388,7 +386,7 @@ pub fn initialize_request_pre_processor<WD, D, OP, ST, LP, NT>(concurrency: usiz
           OP: OrderingProtocolMessage + 'static,
           ST: StateTransferMessage + 'static,
           LP: LogTransferMessage + 'static,
-          NT: Node<ServiceMsg<D, OP, ST, LP>> + 'static,
+          NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> + 'static,
           WD: WorkPartitioner<D::Request> + 'static {
     let (batch_tx, receiver) = new_bounded_sync(PROPOSER_QUEUE_SIZE);
 
@@ -437,7 +435,7 @@ fn launch_orchestrator_thread<WD, D, OP, ST, LP, NT>(orchestrator: RequestPrePro
           OP: OrderingProtocolMessage + 'static,
           ST: StateTransferMessage + 'static,
           LP: LogTransferMessage + 'static,
-          NT: Node<ServiceMsg<D, OP, ST, LP>> + 'static,
+          NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> + 'static,
           WD: WorkPartitioner<D::Request> + 'static {
     std::thread::Builder::new()
         .name(format!("{}", RQ_PRE_PROCESSING_ORCHESTRATOR))

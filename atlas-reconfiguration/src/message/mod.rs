@@ -1,4 +1,3 @@
-use core::num::flt2dec::Sign;
 use std::fmt::Debug;
 
 use atlas_common::node_id::NodeId;
@@ -27,7 +26,7 @@ pub struct QuorumEnterRequest {
 /// TODO: Decide how many responses we need in order to consider it a valid join request
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub struct QuorumNodeJoinResponse {
+pub struct QuorumNodeJoinApproval {
     network_view_seq: SeqNo,
 
     requesting_node: NodeId,
@@ -40,7 +39,7 @@ pub struct QuorumNodeJoinResponse {
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumJoinCertificate {
     network_view_seq: SeqNo,
-    approvals: Vec<QuorumNodeJoinResponse>,
+    approvals: Vec<QuorumNodeJoinApproval>,
 }
 
 /// Reason message for the rejection of quorum entering request
@@ -57,7 +56,7 @@ pub enum QuorumEnterRejectionReason {
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumEnterResponse {
-    Successful(QuorumNodeJoinResponse),
+    Successful(QuorumNodeJoinApproval),
 
     Rejected(QuorumEnterRejectionReason),
 }
@@ -163,7 +162,7 @@ pub enum QuorumReconfigMessage {
     QuorumLeaveResponse(QuorumLeaveResponse),
 }
 
-impl QuorumNodeJoinResponse {
+impl QuorumNodeJoinApproval {
     pub fn new(network_view_seq: SeqNo, requesting_node: NodeId, origin_node: NodeId) -> Self {
         Self { network_view_seq, requesting_node, origin_node }
     }
@@ -244,6 +243,12 @@ pub enum QuorumReconfigurationResponse {
 pub enum QuorumAlterationResponse {
     Successful,
     Failed()
+}
+
+impl QuorumEnterRequest {
+    pub fn new(node_triple: NodeTriple) -> Self {
+        Self { node_triple }
+    }
 }
 
 impl QuorumViewCert {

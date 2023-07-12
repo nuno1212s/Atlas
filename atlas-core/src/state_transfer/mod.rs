@@ -8,7 +8,6 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
-use atlas_communication::Node;
 use crate::messages::{Protocol, StateTransfer};
 use crate::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, View};
 use crate::serialize::{LogTransferMessage, NetworkView, OrderingProtocolMessage, ServiceMsg, StatefulOrderProtocolMessage, StateTransferMessage};
@@ -16,6 +15,7 @@ use crate::timeouts::{RqTimeout, Timeouts};
 #[cfg(feature = "serialize_serde")]
 use serde::{Serialize, Deserialize};
 use atlas_common::crypto::hash::Digest;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_execution::ExecutorHandle;
 use crate::persistent_log::{StatefulOrderingProtocolLog};
 use crate::request_pre_processing::BatchOutput;
@@ -115,7 +115,7 @@ pub trait StateTransferProtocol<S, NT, PL> {
             D: ApplicationData + 'static,
             OP: OrderingProtocolMessage + 'static,
             LP: LogTransferMessage + 'static,
-            NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+            NT: ProtocolNetworkNode<ServiceMsg<D, OP, Self::Serialization, LP>>,
             V: NetworkView;
 
     /// Handle a state transfer protocol message that was received while executing the ordering protocol
@@ -126,7 +126,7 @@ pub trait StateTransferProtocol<S, NT, PL> {
         where D: ApplicationData + 'static,
               OP: OrderingProtocolMessage + 'static,
               LP: LogTransferMessage + 'static,
-              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+              NT: ProtocolNetworkNode<ServiceMsg<D, OP, Self::Serialization, LP>>,
               V: NetworkView;
 
     /// Process a state transfer protocol message, received from other replicas
@@ -139,7 +139,7 @@ pub trait StateTransferProtocol<S, NT, PL> {
         where D: ApplicationData + 'static,
               OP: OrderingProtocolMessage + 'static,
               LP: LogTransferMessage + 'static,
-              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+              NT: ProtocolNetworkNode<ServiceMsg<D, OP, Self::Serialization, LP>>,
               V: NetworkView;
 
     /// Handle the replica wanting to request a state from the application
@@ -151,7 +151,7 @@ pub trait StateTransferProtocol<S, NT, PL> {
         where D: ApplicationData + 'static,
               OP: OrderingProtocolMessage + 'static,
               LP: LogTransferMessage + 'static,
-              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+              NT: ProtocolNetworkNode<ServiceMsg<D, OP, Self::Serialization, LP>>,
               V: NetworkView;
 
     /// Handle a timeout being received from the timeout layer
@@ -161,6 +161,6 @@ pub trait StateTransferProtocol<S, NT, PL> {
         where D: ApplicationData + 'static,
               OP: OrderingProtocolMessage + 'static,
               LP: LogTransferMessage + 'static,
-              NT: Node<ServiceMsg<D, OP, Self::Serialization, LP>>,
+              NT: ProtocolNetworkNode<ServiceMsg<D, OP, Self::Serialization, LP>>,
               V: NetworkView;
 }

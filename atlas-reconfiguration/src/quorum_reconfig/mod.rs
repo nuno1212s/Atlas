@@ -6,7 +6,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::message::{NodeTriple, QuorumEnterRejectionReason, QuorumEnterResponse, QuorumNodeJoinResponse};
+use crate::message::{NodeTriple, QuorumEnterRejectionReason, QuorumEnterResponse, QuorumNodeJoinApproval};
 
 pub type QuorumPredicate =
 fn(Arc<QuorumNode>, NodeTriple) -> OneShotRx<Option<QuorumEnterRejectionReason>>;
@@ -84,7 +84,7 @@ impl QuorumNode {
             }
         }
 
-        return QuorumEnterResponse::Successful(QuorumNodeJoinResponse::new(
+        return QuorumEnterResponse::Successful(QuorumNodeJoinApproval::new(
             self.current_network_view.sequence_number(),
             node_id.node_id(),
             self.node_id,

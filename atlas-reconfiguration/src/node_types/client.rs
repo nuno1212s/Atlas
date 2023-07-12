@@ -1,13 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
 use log::error;
+
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
-use atlas_communication::message::StoredMessage;
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
-use crate::quorum_reconfig::{QuorumView, QuorumNode};
-use crate::{ReconfigurableNode, ReplicaQuorumNode};
+
+use crate::{GeneralNodeInfo};
 use crate::message::{QuorumReconfigMessage, QuorumViewCert, ReconfData, ReconfigurationMessage};
-use crate::node_types::replica;
+use crate::quorum_reconfig::QuorumView;
 
 enum ClientState {
     /// We are initializing our state
@@ -21,7 +23,8 @@ enum ClientState {
 
 }
 
-pub struct ClientQuorumView {
+///
+pub(crate) struct ClientQuorumView {
     current_state: ClientState,
     current_quorum_view: QuorumView,
 
@@ -39,35 +42,34 @@ impl ClientQuorumView {
         }
     }
 
-    pub fn iterate<NT>(&mut self, replica: &ReconfigurableNode<NT>)
+    pub fn iterate<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>)
         where NT: ReconfigurationNode<ReconfData> {
-        self.current_state = match self.current_state {
+        match &mut self.current_state {
             ClientState::Init => {
                 let reconf_message = QuorumReconfigMessage::NetworkViewStateRequest;
 
-                let known_nodes = replica.network_view.known_nodes();
+                let known_nodes = node.network_view.known_nodes();
 
-                let _ = replica.network_node.broadcast_reconfig_message(ReconfigurationMessage::QuorumReconfig(reconf_message), known_nodes);
+                let contacted_nodes = known_nodes.len();
 
-                ClientState::Initializing(known_nodes.len(), Default::default(), Default::default())
+                let _ = network_node.broadcast_reconfig_message(ReconfigurationMessage::QuorumReconfig(reconf_message), known_nodes.into_iter());
+
+                self.current_state = ClientState::Initializing(contacted_nodes, Default::default(), Default::default())
             }
-            ClientState::Stable => {
-                // Nothing to do here
-                ClientState::Stable
+            _ => {
+                //Nothing to do here
             }
-            ClientState::Initializing(_, _, _) => {}
         }
     }
 
     /// Handle a view state message being received
-    pub fn handle_view_state_message<NT>(&mut self, replica: &ReconfigurableNode<NT>, quorum_view_state: QuorumViewCert)
-        where NT: ReconfigurationNode<ReconfData> {
-        self.current_state = match self.current_state {
+    pub fn handle_view_state_message<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>, quorum_view_state: QuorumViewCert)
+        where NT: ReconfigurationNode<ReconfData> + 'static {
+        match &mut self.current_state {
             ClientState::Init => {
                 //TODO: Maybe require at least more than one message to be received before we change state?
-                ClientState::Init
             }
-            ClientState::Initializing(sent_messages, mut received, mut received_message) => {
+            ClientState::Initializing(sent_messages, received, received_message) => {
                 // We are still initializing, so we need to add this message to the list of received messages
 
                 if received.insert(quorum_view_state.sender()) {
@@ -80,7 +82,7 @@ impl ClientQuorumView {
                            quorum_view_state.sender(), quorum_view_state.digest());
                 }
 
-                let needed_messages = sent_messages / 2 + 1;
+                let needed_messages = *sent_messages / 2 + 1;
 
                 if received.len() >= needed_messages {
                     // We have received all of the messages that we are going to receive, so we can now
@@ -102,42 +104,34 @@ impl ClientQuorumView {
 
                             self.quorum_view_certificate = quorum_certs.clone();
 
-                            ClientState::Stable
-                        } else {
-                            ClientState::Initializing(sent_messages, received, received_message)
+                            self.current_state = ClientState::Stable;
                         }
                     } else {
                         error!("Received no messages from any nodes");
-
-                        ClientState::Initializing(sent_messages, received, received_message)
                     }
-                } else {
-                    ClientState::Initializing(sent_messages, received, received_message)
                 }
             }
             ClientState::Updating(received, received_messages) => {
                 // This type of messages should not be received while we are updating
-                ClientState::Updating(received, received_messages)
             }
             ClientState::Stable => {
                 // We are already stable, so we don't need to do anything
-                ClientState::Stable
             }
         }
     }
 
     /// Handle a node having entered the quorum view
-    pub fn handle_quorum_entered_received(&mut self, replica: &ReplicaQuorumNode, quorum_view_state: QuorumViewCert) {
-        self.current_state = match self.current_state {
+    pub fn handle_quorum_entered_received<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>,
+                                              quorum_view_state: QuorumViewCert)
+        where NT: ReconfigurationNode<ReconfData> + 'static {
+        match &mut self.current_state {
             ClientState::Init => {
                 // We are not ready to handle this message yet
-                ClientState::Init
             }
             ClientState::Initializing(a, b, c) => {
                 // We are not ready to handle this message yet
-                ClientState::Initializing(a, b, c)
             }
-            ClientState::Updating(mut received, mut received_message) => {
+            ClientState::Updating(received, received_message) => {
                 if received.insert(quorum_view_state.sender()) {
                     let entry = received_message.entry(quorum_view_state.digest())
                         .or_insert(Default::default());
@@ -170,25 +164,33 @@ impl ClientQuorumView {
 
                             self.quorum_view_certificate = quorum_certs.clone();
 
-                            ClientState::Stable
-                        } else {
-                            ClientState::Updating(received, received_message)
+                            self.current_state = ClientState::Stable;
                         }
                     } else {
                         error!("Received no messages from any nodes");
-
-                        ClientState::Updating(received, received_message)
                     }
-                } else {
-                    ClientState::Updating(received, received_message)
                 }
             }
             ClientState::Stable => {
+                if self.current_quorum_view.sequence_number() < quorum_view_state.quorum_view().sequence_number() {
+                    // We have received a message from a node that is not in the current quorum view
+                    // so we need to update the quorum view
 
+                    let mut received = BTreeSet::new();
 
+                    received.insert(quorum_view_state.sender());
+
+                    let mut received_message = BTreeMap::new();
+
+                    let entry: &mut Vec<QuorumViewCert> = received_message.entry(quorum_view_state.digest())
+                        .or_insert(Default::default());
+
+                    entry.push(quorum_view_state.clone());
+
+                    self.current_state = ClientState::Updating(received, received_message);
+                }
 
                 //TODO: Change to the update state
-                ClientState::Stable
             }
         }
     }
