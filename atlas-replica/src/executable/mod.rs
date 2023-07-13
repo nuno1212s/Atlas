@@ -55,7 +55,7 @@ impl ExecutorReplier for FollowerReplier {
             OP: OrderingProtocolMessage + 'static,
             ST: StateTransferMessage + 'static,
             LT: LogTransferMessage + 'static,
-            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LT>> {
+            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LT>> + 'static {
         if let None = seq {
             //Followers only deliver replies to the unordered requests, since it's not part of the quorum
             // And the requests it executes are only forwarded to it

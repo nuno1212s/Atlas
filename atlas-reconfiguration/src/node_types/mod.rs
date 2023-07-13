@@ -8,12 +8,12 @@ use crate::GeneralNodeInfo;
 pub mod client;
 pub mod replica;
 
-pub(crate) enum NodeType {
+pub(crate) enum NodeType<JC> {
     Client(ClientQuorumView),
-    Replica(ReplicaQuorumView)
+    Replica(ReplicaQuorumView<JC>),
 }
 
-impl NodeType {
+impl<JC> NodeType<JC> {
     pub fn new_client() -> Self {
         NodeType::Client(ClientQuorumView::new())
     }
@@ -23,7 +23,7 @@ impl NodeType {
     }
 
     pub fn iterate<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>)
-    where NT: ReconfigurationNode<ReconfData> + 'static {
+        where NT: ReconfigurationNode<ReconfData> + 'static {
         match self {
             NodeType::Client(client) => {
                 client.iterate(node, network_node)
@@ -33,5 +33,4 @@ impl NodeType {
             }
         }
     }
-
 }

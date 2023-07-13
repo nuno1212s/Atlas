@@ -26,16 +26,13 @@ pub trait NetworkView: Orderable + Clone {
 }
 
 pub trait OrderProtocolLog: Orderable {
-
     // At the moment I only need orderable, but I might need more in the future
     fn first_seq(&self) -> Option<SeqNo>;
-
 }
 
 pub trait OrderProtocolProof: Orderable {
 
     // At the moment I only need orderable, but I might need more in the future
-
 }
 
 /// We do not need a serde module since serde serialization is just done on the network level.
@@ -51,7 +48,7 @@ pub trait OrderingProtocolMessage: Send {
     type ProtocolMessage: Orderable + Send + Clone;
 
     #[cfg(feature = "serialize_serde")]
-    type ProtocolMessage: Orderable +  for<'a> Deserialize<'a> + Serialize + Send + Clone + Debug;
+    type ProtocolMessage: Orderable + for<'a> Deserialize<'a> + Serialize + Send + Clone + Debug;
 
     /// A proof of a given Sequence number in the consensus protocol
     /// This is used when requesting the latest consensus id in the state transfer protocol,
@@ -92,7 +89,7 @@ pub trait OrderingProtocolMessage: Send {
 }
 
 
-pub trait LogTransferMessage : Send {
+pub trait LogTransferMessage: Send {
     #[cfg(feature = "serialize_capnp")]
     type LogTransferMessage: Send + Clone;
 
@@ -104,8 +101,8 @@ pub trait LogTransferMessage : Send {
 
     #[cfg(feature = "serialize_capnp")]
     fn deserialize_capnp(reader: febft_capnp::cst_messages_capnp::cst_message::Reader) -> Result<Self::LogTransferMessage>;
-
 }
+
 /// The abstraction for state transfer protocol messages.
 /// This allows us to have any state transfer protocol work with the same backbone
 pub trait StateTransferMessage: Send {
@@ -124,7 +121,6 @@ pub trait StateTransferMessage: Send {
 
 /// The messages for the stateful ordering protocol
 pub trait StatefulOrderProtocolMessage: Send {
-
     /// A type that defines the log of decisions made since the last garbage collection
     /// (In the case of BFT SMR the log is GCed after a checkpoint of the application)
     #[cfg(feature = "serialize_capnp")]
@@ -138,6 +134,15 @@ pub trait StatefulOrderProtocolMessage: Send {
 
     #[cfg(feature = "serialize_capnp")]
     fn deserialize_declog_capnp(reader: febft_capnp::cst_messages_capnp::dec_log::Reader) -> Result<Self::DecLog>;
+}
+
+/// Reconfiguration protocol messages
+pub trait ReconfigurationProtocolMessage: Serializable {
+    #[cfg(feature = "serialize_capnp")]
+    type QuorumJoinCertificate: Send + Clone;
+
+    #[cfg(feature = "serialize_serde")]
+    type QuorumJoinCertificate: for<'a> Deserialize<'a> + Serialize + Send + Clone;
 
 }
 
@@ -151,7 +156,6 @@ pub type ClientServiceMsg<D: ApplicationData> = ServiceMsg<D, NoProtocol, NoProt
 pub type ClientMessage<D: ApplicationData> = <ClientServiceMsg<D> as Serializable>::Message;
 
 impl<D: ApplicationData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage> Serializable for ServiceMsg<D, P, S, L> {
-    
     type Message = SystemMessage<D, P::ProtocolMessage, S::StateTransferMessage, L::LogTransferMessage>;
 
     #[cfg(feature = "serialize_capnp")]

@@ -8,6 +8,7 @@ use atlas_communication::FullNetworkNode;
 use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{DivisibleStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
+use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_core::serialize::ServiceMsg;
 use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
 use atlas_core::state_transfer::log_transfer::{LogTransferProtocol};
@@ -24,8 +25,9 @@ use crate::persistent_log::SMRPersistentLog;
 use crate::server::client_replier::Replier;
 use crate::server::Replica;
 
-pub struct DivStReplica<S, A, OP, ST, LT, NT, PL>
-    where S: DivisibleState + 'static,
+pub struct DivStReplica<RP, S, A, OP, ST, LT, NT, PL>
+    where RP: ReconfigurationProtocol<NT> + 'static,
+          S: DivisibleState + 'static,
           A: Application<S> + Send + 'static,
           OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
           ST: DivisibleStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
@@ -34,7 +36,7 @@ pub struct DivStReplica<S, A, OP, ST, LT, NT, PL>
 {
     p: PhantomData<A>,
     /// The inner replica object, responsible for the general replica things
-    inner_replica: Replica<S, A::AppData, OP, ST, LT, NT, PL>,
+    inner_replica: Replica<RP, S, A::AppData, OP, ST, LT, NT, PL>,
 
     state_tx: ChannelSyncTx<InstallStateMessage<S>>,
     checkpoint_rx: ChannelSyncRx<AppStateMessage<S>>,
@@ -42,15 +44,16 @@ pub struct DivStReplica<S, A, OP, ST, LT, NT, PL>
     state_transfer_protocol: ST,
 }
 
-impl<S, A, OP, ST, LT, NT, PL> DivStReplica<S, A, OP, ST, LT, NT, PL> where
+impl<RP, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, S, A, OP, ST, LT, NT, PL> where
+    RP: ReconfigurationProtocol<NT> + 'static,
     S: DivisibleState + Send + 'static,
     A: Application<S> + Send + 'static,
     OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send + 'static,
     LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
     ST: DivisibleStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
     PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + DivisibleStateLog<S> + 'static,
-    NT: FullNetworkNode<NetworkInfo, ReconfData, ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static {
-    pub async fn bootstrap(cfg: DivisibleStateReplicaConfig<S, A, OP, ST, LT, NT, PL>) -> Result<Self> {
+    NT: FullNetworkNode<RP::InformationProvider, RP::Serialization, ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static {
+    pub async fn bootstrap(cfg: DivisibleStateReplicaConfig<RP, S, A, OP, ST, LT, NT, PL>) -> Result<Self> {
         let DivisibleStateReplicaConfig {
             service, replica_config, st_config
         } = cfg;
@@ -58,7 +61,7 @@ impl<S, A, OP, ST, LT, NT, PL> DivStReplica<S, A, OP, ST, LT, NT, PL> where
 
         let (executor_handle, executor_receiver) = DivisibleStateExecutor::<S, A, NT>::init_handle();
 
-        let inner_replica = Replica::<S, A::AppData, OP, ST, LT, NT, PL>::bootstrap(replica_config, executor_handle.clone()).await?;
+        let inner_replica = Replica::<RP, S, A::AppData, OP, ST, LT, NT, PL>::bootstrap(replica_config, executor_handle.clone()).await?;
 
         let node = inner_replica.node.clone();
 

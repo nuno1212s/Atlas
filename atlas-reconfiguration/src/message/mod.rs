@@ -9,6 +9,7 @@ use serde::{Serialize, Deserialize};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::crypto::signature::Signature;
 use atlas_communication::serialize::Serializable;
+use atlas_core::serialize::ReconfigurationProtocolMessage;
 
 use crate::{QuorumView};
 use crate::network_reconfig::KnownNodes;
@@ -232,17 +233,8 @@ impl Serializable for ReconfData {
     //TODO: Implement capnproto messages
 }
 
-pub enum QuorumReconfigurationMessage {
-    RequestQuorumViewAlteration(QuorumJoinCertificate),
-}
-
-pub enum QuorumReconfigurationResponse {
-    QuorumAlterationResponse(QuorumAlterationResponse),
-}
-
-pub enum QuorumAlterationResponse {
-    Successful,
-    Failed()
+impl ReconfigurationProtocolMessage for ReconfData {
+    type QuorumJoinCertificate = QuorumJoinCertificate;
 }
 
 impl QuorumEnterRequest {

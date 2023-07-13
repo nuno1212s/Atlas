@@ -7,7 +7,7 @@ use super::{ClientType, Client};
 
 pub struct Ordered;
 
-impl<D, NT> ClientType<D, NT> for Ordered where D: ApplicationData + 'static {
+impl<RF, D, NT> ClientType<RF, D, NT> for Ordered where D: ApplicationData + 'static {
     fn init_request(
         session_id: SeqNo,
         operation_id: SeqNo,
@@ -18,11 +18,11 @@ impl<D, NT> ClientType<D, NT> for Ordered where D: ApplicationData + 'static {
 
     type Iter = impl Iterator<Item=NodeId>;
 
-    fn init_targets(client: &Client<D, NT>) -> (Self::Iter, usize) {
+    fn init_targets(client: &Client<RF, D, NT>) -> (Self::Iter, usize) {
         (NodeId::targets(0..client.params.n()), client.params.n())
     }
 
-    fn needed_responses(client: &Client<D, NT>) -> usize {
+    fn needed_responses(client: &Client<RF, D, NT>) -> usize {
         client.params.f() + 1
     }
 }

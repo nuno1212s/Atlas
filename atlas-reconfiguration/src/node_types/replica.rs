@@ -7,9 +7,10 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
-use crate::message::{QuorumEnterRequest, QuorumNodeJoinApproval, QuorumReconfigMessage, QuorumReconfigurationMessage, QuorumReconfigurationResponse, QuorumViewCert, ReconfData, ReconfigurationMessage};
+use atlas_core::reconfiguration_protocol::{QuorumReconfigurationMessage, QuorumReconfigurationResponse};
+use crate::message::{QuorumEnterRequest, QuorumNodeJoinApproval, QuorumReconfigMessage, QuorumViewCert, ReconfData, ReconfigurationMessage};
 use crate::quorum_reconfig::QuorumView;
-use crate::GeneralNodeInfo;
+use crate::{GeneralNodeInfo, ReconfigurableNode};
 
 enum ReplicaState {
     Init,
@@ -24,17 +25,17 @@ enum ReplicaState {
     LeavingQuorum,
 }
 
-pub(crate) struct ReplicaQuorumView {
+pub(crate) struct ReplicaQuorumView<JC> {
     /// The current state of the replica
     current_state: ReplicaState,
     /// The current quorum view we know of
     current_view: QuorumView,
 
-    quorum_communication: ChannelSyncTx<QuorumReconfigurationMessage>,
+    quorum_communication: ChannelSyncTx<QuorumReconfigurationMessage<JC>>,
     quorum_responses: ChannelSyncRx<QuorumReconfigurationResponse>,
 }
 
-impl ReplicaQuorumView {
+impl<JC> ReplicaQuorumView<JC> {
     pub fn new() -> Self {
         let (quorum_tx, quorum_rx) = channel::new_bounded_sync(128);
         let (quorum_response_tx, quorum_response_rx) = channel::new_bounded_sync(128);

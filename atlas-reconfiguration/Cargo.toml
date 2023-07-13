@@ -15,6 +15,7 @@ default = ["serialize_serde"]
 atlas-common = { path = "../atlas-common" }
 atlas-metrics = { path = "../atlas-metrics" }
 atlas-communication = {path = "../atlas-communication"}
+atlas-core = {path = "../atlas-core"}
 
 futures = "0.3.26"
 

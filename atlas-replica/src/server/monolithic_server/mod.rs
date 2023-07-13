@@ -10,7 +10,8 @@ use atlas_common::{channel, threadpool};
 use atlas_common::globals::ReadOnly;
 use atlas_communication::{FullNetworkNode};
 use atlas_core::persistent_log::{MonolithicStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
-use atlas_core::serialize::ServiceMsg;
+use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
+use atlas_core::serialize::{ReconfigurationProtocolMessage, ServiceMsg};
 use atlas_core::state_transfer::log_transfer::{LogTransferProtocol};
 use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_core::state_transfer::{Checkpoint};
@@ -29,8 +30,9 @@ use crate::server::client_replier::Replier;
 use crate::server::Replica;
 
 /// Replica type made to handle monolithic states and executors
-pub struct MonReplica<S, A, OP, ST, LT, NT, PL>
-    where S: MonolithicState + 'static,
+pub struct MonReplica<RP, S, A, OP, ST, LT, NT, PL>
+    where RP: ReconfigurationProtocol<NT> + 'static,
+          S: MonolithicState + 'static,
           A: Application<S> + Send + 'static,
           OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
           ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
@@ -38,7 +40,7 @@ pub struct MonReplica<S, A, OP, ST, LT, NT, PL>
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + 'static + MonolithicStateLog<S>, {
     p: PhantomData<A>,
     /// The inner replica object, responsible for the general replica things
-    inner_replica: Replica<S, A::AppData, OP, ST, LT, NT, PL>,
+    inner_replica: Replica<RP, S, A::AppData, OP, ST, LT, NT, PL>,
 
     state_tx: ChannelSyncTx<InstallStateMessage<S>>,
     checkpoint_rx: ChannelSyncRx<AppStateMessage<S>>,
@@ -47,16 +49,17 @@ pub struct MonReplica<S, A, OP, ST, LT, NT, PL>
     state_transfer_protocol: ST,
 }
 
-impl<S, A, OP, ST, LT, NT, PL> MonReplica<S, A, OP, ST, LT, NT, PL>
+impl<RP, S, A, OP, ST, LT, NT, PL> MonReplica<RP, S, A, OP, ST, LT, NT, PL>
     where
+    RP: ReconfigurationProtocol<NT> + 'static,
         S: MonolithicState + 'static,
         A: Application<S> + Send + 'static,
         OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send + 'static,
         LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
         ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
         PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + MonolithicStateLog<S> + 'static,
-        NT: FullNetworkNode<NetworkInfo, ReconfData, ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static {
-    pub async fn bootstrap(cfg: MonolithicStateReplicaConfig<S, A, OP, ST, LT, NT, PL>) -> Result<Self> {
+        NT: FullNetworkNode<RP::InformationProvider, RP::Serialization, ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static {
+    pub async fn bootstrap(cfg: MonolithicStateReplicaConfig<RP, S, A, OP, ST, LT, NT, PL>) -> Result<Self> {
         let MonolithicStateReplicaConfig {
             service,
             replica_config,
@@ -65,7 +68,7 @@ impl<S, A, OP, ST, LT, NT, PL> MonReplica<S, A, OP, ST, LT, NT, PL>
 
         let (executor_handle, executor_receiver) = MonolithicExecutor::<S, A, NT>::init_handle();
 
-        let inner_replica = Replica::<S, A::AppData, OP, ST, LT, NT, PL>::bootstrap(replica_config, executor_handle.clone()).await?;
+        let inner_replica = Replica::<RP, S, A::AppData, OP, ST, LT, NT, PL>::bootstrap(replica_config, executor_handle.clone()).await?;
 
         let node = inner_replica.node.clone();
 
@@ -74,7 +77,7 @@ impl<S, A, OP, ST, LT, NT, PL> MonReplica<S, A, OP, ST, LT, NT, PL>
 
         let (state_tx, checkpoint_rx) =
             MonolithicExecutor::init::<OP::Serialization, ST::Serialization, LT::Serialization, ReplicaReplier>
-            (reply_handle, executor_receiver, None, service, inner_replica.node.clone())?;
+                (reply_handle, executor_receiver, None, service, inner_replica.node.clone())?;
 
         let state_transfer_protocol = ST::initialize(st_config, inner_replica.timeouts.clone(),
                                                      inner_replica.node.clone(),
@@ -82,7 +85,7 @@ impl<S, A, OP, ST, LT, NT, PL> MonReplica<S, A, OP, ST, LT, NT, PL>
 
         let digest_app_state = channel::new_bounded_sync(5);
 
-        let view= inner_replica.ordering_protocol.view();
+        let view = inner_replica.ordering_protocol.view();
 
         let mut replica = Self {
             p: Default::default(),

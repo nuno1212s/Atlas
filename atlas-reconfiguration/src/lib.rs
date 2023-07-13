@@ -21,11 +21,12 @@ use atlas_common::ordering::SeqNo;
 use atlas_communication::message::Header;
 use atlas_communication::NodeConnections;
 use atlas_communication::reconfiguration_node::{ReconfigurationIncomingHandler, ReconfigurationNode};
-use crate::message::{NetworkJoinResponseMessage, NetworkReconfigMessage, NodeTriple, QuorumReconfigMessage, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfData, ReconfigurationMessage};
+use atlas_core::reconfiguration_protocol::{QuorumJoinCert, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
+use crate::config::ReconfigurableNetworkConfig;
+use crate::message::{NetworkJoinResponseMessage, NetworkReconfigMessage, QuorumJoinCertificate, ReconfData, ReconfigurationMessage};
 use crate::network_reconfig::NetworkInfo;
-use crate::node_types::client::ClientQuorumView;
 use crate::node_types::NodeType;
-use crate::quorum_reconfig::{QuorumView, QuorumNode};
+use crate::quorum_reconfig::QuorumView;
 
 /// The reconfiguration module.
 /// Provides various utilities for allowing reconfiguration of the network
@@ -35,7 +36,7 @@ use crate::quorum_reconfig::{QuorumView, QuorumNode};
 /// (For example, the network
 
 pub fn bootstrap_reconf_node<NT>(network_info: Arc<NetworkInfo>, node: Arc<NT>)
-                                 -> Result<(ChannelSyncRx<QuorumReconfigurationMessage>,
+                                 -> Result<(ChannelSyncRx<QuorumReconfigurationMessage<QuorumJoinCertificate>>,
                                             ChannelSyncTx<QuorumReconfigurationResponse>)>
     where NT: ReconfigurationNode<ReconfData> + 'static {
     let (reconfig_tx, reconfig_rx) = channel::new_bounded_sync(128);
@@ -65,7 +66,7 @@ pub fn bootstrap_reconf_node<NT>(network_info: Arc<NetworkInfo>, node: Arc<NT>)
 
 /// The reconfigurable node which will handle all reconfiguration requests
 /// This handles the network level reconfiguration, not the quorum level reconfiguration
-struct GeneralNodeInfo {
+pub struct GeneralNodeInfo {
     curr_seq: SeqNo,
     /// Our current view of the network, including nodes we know about, their addresses and public keys
     network_view: Arc<NetworkInfo>,
@@ -74,19 +75,19 @@ struct GeneralNodeInfo {
 }
 
 /// A reconfigurable node, used to handle the reconfiguration of the network as a whole
-struct ReconfigurableNode<NT> {
+pub struct ReconfigurableNode<NT> where NT: Send + 'static {
     /// The general information about the network
     node: GeneralNodeInfo,
     /// The reference to the network node
     network_node: Arc<NT>,
     /// The type of the node we are running.
-    node_type: NodeType,
+    node_type: NodeType<NT>,
 }
 
 /// The current state of our node (network level, not quorum level)
 /// Quorum level operations will only take place when we are a stable member of the protocol
 #[derive(Debug, Clone)]
-enum NetworkNodeState {
+pub enum NetworkNodeState {
     /// The node is currently initializing and will attempt to join the network
     Init,
     /// We have broadcast the join request to the known nodes and are waiting for their responses
@@ -98,26 +99,6 @@ enum NetworkNodeState {
     /// A stable member of the network, up to date with the current membership
     StableMember,
     /// We are currently leaving the network
-    LeavingNetwork,
-}
-
-
-/// A node which wants to partake in the consensus protocol
-struct ReplicaQuorumNode {
-    quorum_view: QuorumNode,
-
-    quorum_node_state: QuorumNodeState,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum QuorumNodeState {
-    /// We are currently initializing and will attempt to join the network
-    Init,
-    /// We are currently joining the network and will attempt to acquire the quorum
-    JoiningNetwork,
-    /// Stable member of the quorum, up to date with the members
-    StableMember,
-    /// Leaving the quorum
     LeavingNetwork,
 }
 
@@ -203,7 +184,10 @@ impl GeneralNodeInfo {
                                 }
                             }
                         }
-                        NetworkReconfigMessage::NetworkHelloRequest(_) => {}
+                        NetworkReconfigMessage::NetworkHelloRequest(hello_request) => {
+                            /// Well how do we handle this?
+                            info!("Received a network hello request from {:?} but we are still not part of the network, so we can't really process it", header.from());
+                        }
                     }
                 }
             }
@@ -226,7 +210,9 @@ impl GeneralNodeInfo {
                     NetworkReconfigMessage::NetworkJoinResponse(_) => {
                         // Ignored, we are already a stable member of the network
                     }
-                    NetworkReconfigMessage::NetworkHelloRequest(_) => {}
+                    NetworkReconfigMessage::NetworkHelloRequest(hello) => {
+                        self.network_view.handle_node_introduced(hello);
+                    }
                 }
             }
             NetworkNodeState::LeavingNetwork => {}
@@ -237,12 +223,35 @@ impl GeneralNodeInfo {
     }
 }
 
-impl<NT> ReconfigurableNode<NT> {
+impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
+
     fn run(mut self) where NT: ReconfigurationNode<ReconfData> + 'static {
         loop {
             self.node.iterate(&self.network_node);
 
             self.node_type.iterate(&self.node, &self.network_node);
         }
+    }
+}
+
+impl<NT> ReconfigurationProtocol<NT> for ReconfigurableNode<NT> where NT: Send + Sync + 'static {
+    type Config = ReconfigurableNetworkConfig;
+    type InformationProvider = NetworkInfo;
+    type Serialization = ReconfData;
+
+    fn init_default_information(config: Self::Config) -> Result<Arc<Self::InformationProvider>> {
+        Ok(Arc::new(NetworkInfo::init_from_config(config)))
+    }
+
+    fn initialize_protocol(information: Arc<Self::InformationProvider>, node: Arc<NT>, node_type: ReconfigurableNodeTypes<QuorumJoinCert<Self::Serialization>>) -> Result<Self> where NT: ReconfigurationNode<Self::Serialization> + 'static, Self: Sized {
+        todo!()
+    }
+
+    fn get_quorum_members(&self) -> Vec<NodeId> {
+        todo!()
+    }
+
+    fn is_join_certificate_valid(&self, certificate: &QuorumJoinCert<Self::Serialization>) -> bool {
+        todo!()
     }
 }

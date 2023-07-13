@@ -26,6 +26,7 @@ use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkN
 use atlas_execution::serialize::ApplicationData;
 use atlas_execution::system_params::SystemParams;
 use atlas_core::messages::{ReplyMessage, SystemMessage};
+use atlas_core::reconfiguration_protocol::{ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::serialize::{ClientMessage, ClientServiceMsg, OrderingProtocolMessage, ServiceMessage, ServiceMsg, StateTransferMessage};
 use atlas_metrics::benchmarks::ClientPerf;
 use atlas_metrics::{measure_ready_rq_time, measure_response_deliver_time, measure_response_rcv_time, measure_sent_rq_info, measure_target_init_time, measure_time_rq_init, start_measurement};
@@ -90,7 +91,7 @@ impl<P> Deref for Callback<P> {
     }
 }
 
-pub struct ClientData<D>
+pub struct ClientData<RF, D>
     where
         D: ApplicationData + 'static,
 {
@@ -108,6 +109,9 @@ pub struct ClientData<D>
     //To call the awaiting tasks
     ready: Vec<Mutex<IntMap<ClientAwaker<D::Reply>>>>,
 
+    //Reconfiguration protocol
+    reconfig_protocol: RF,
+
     /*//We only want to have a single observer client for any and all sessions that the user
     //May have, so we keep this reference in here
     observer: Arc<Mutex<Option<ObserverClient>>>,
@@ -116,7 +120,7 @@ pub struct ClientData<D>
     stats: Option<Arc<ClientPerf>>,
 }
 
-pub trait ClientType<D: ApplicationData + 'static, NT> {
+pub trait ClientType<RF, D, NT> where D: ApplicationData + 'static {
     ///Initialize request in accordance with the type of clients
     fn init_request(
         session_id: SeqNo,
@@ -130,23 +134,23 @@ pub trait ClientType<D: ApplicationData + 'static, NT> {
     ///Initialize the targets for the requests according with the type of request made
     ///
     /// Returns the iterator along with the amount of items contained within it
-    fn init_targets(client: &Client<D, NT>) -> (Self::Iter, usize);
+    fn init_targets(client: &Client<RF, D, NT>) -> (Self::Iter, usize);
 
     ///How many responses does that client need to get the
-    fn needed_responses(client: &Client<D, NT>) -> usize;
+    fn needed_responses(client: &Client<RF, D, NT>) -> usize;
 }
 
 /// Represents a client node in `febft`.
 // TODO: maybe make the clone impl more efficient
-pub struct Client<D: ApplicationData + 'static, NT: 'static> {
+pub struct Client<RF, D, NT> where D: ApplicationData + 'static, NT: 'static {
     session_id: SeqNo,
     operation_counter: SeqNo,
-    data: Arc<ClientData<D>>,
+    data: Arc<ClientData<RF, D>>,
     params: SystemParams,
     node: Arc<NT>,
 }
 
-impl<D: ApplicationData, NT> Clone for Client<D, NT> {
+impl<RF, D: ApplicationData, NT> Clone for Client<RF, D, NT> {
     fn clone(&self) -> Self {
         let session_id = self
             .data
@@ -223,7 +227,10 @@ impl<'a, P> Future for ClientRequestFut<'a, P> {
 }
 
 /// Represents a configuration used to bootstrap a `Client`.
-pub struct ClientConfig<D: ApplicationData + 'static, NT: FullNetworkNode<NetworkInfo, ReconfData, ClientServiceMsg<D>>> {
+pub struct ClientConfig<RF, D, NT> where
+    RF: ReconfigurationProtocol<NT> + 'static,
+    D: ApplicationData + 'static,
+    NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, ClientServiceMsg<D>> {
     pub n: usize,
     pub f: usize,
 
@@ -231,6 +238,8 @@ pub struct ClientConfig<D: ApplicationData + 'static, NT: FullNetworkNode<Networ
 
     /// Check out the docs on `NodeConfig`.
     pub node: NT::Config,
+
+    pub reconfiguration: RF::Config,
 }
 
 ///Keeps track of the replica (or follower, depending on the request mode) votes for a given request
@@ -248,16 +257,18 @@ pub struct ReplicaVotes {
 
 pub type RequestCallback<D: ApplicationData> = Box<dyn FnOnce(Result<D::Reply>) + Send>;
 
-impl<D, NT> Client<D, NT>
+impl<D, RF, NT> Client<RF, D, NT>
     where
+        RF: ReconfigurationProtocol<NT> + 'static,
         D: ApplicationData + 'static,
         NT: 'static
 {
     /// Bootstrap a client in `febft`.
-    pub async fn bootstrap(cfg: ClientConfig<D, NT>) -> Result<Self> where NT: FullNetworkNode<NetworkInfo, ReconfData, ClientServiceMsg<D>> {
+    pub async fn bootstrap(cfg: ClientConfig<RF, D, NT>) -> Result<Self>
+        where NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, ClientServiceMsg<D>> {
         let ClientConfig {
             n, f, node: node_config,
-            unordered_rq_mode,
+            unordered_rq_mode, reconfiguration,
         } = cfg;
 
         // system params
@@ -265,14 +276,16 @@ impl<D, NT> Client<D, NT>
 
         // Actually, we have to get the configuration from here
 
-        let network_info_provider = Arc::new(NetworkInfo::init_from_config());
+        let network_info_provider = RF::init_default_information(reconfiguration)?;
 
         // connect to peer nodes
         //
         // FIXME: can the client receive rogue reply messages?
         // perhaps when it reconnects to a replica after experiencing
         // network problems? for now ignore rogue messages...
-        let node = NT::bootstrap(network_info_provider, node_config).await?;
+        let node = NT::bootstrap(network_info_provider.clone(), node_config).await?;
+
+        let reconfig_protocol = RF::initialize_protocol(network_info_provider, node.clone(), ReconfigurableNodeTypes::Client)?;
 
         let stats = {
             None
@@ -291,6 +304,7 @@ impl<D, NT> Client<D, NT>
             ready: std::iter::repeat_with(|| Mutex::new(IntMap::new()))
                 .take(num_cpus::get())
                 .collect(),
+            reconfig_protocol,
             stats,
         });
 
@@ -309,7 +323,7 @@ impl<D, NT> Client<D, NT>
         let mut conn = Vec::new();
 
         for node_id in NodeId::targets(0..n) {
-            let mut result = cli_node.node_connections().connect_to_node(node_id);
+            let mut result = ProtocolNetworkNode::<ClientServiceMsg<D>>::node_connections(&*cli_node).connect_to_node(node_id);
 
             conn.append(&mut result);
         }
@@ -358,14 +372,15 @@ impl<D, NT> Client<D, NT>
         self.session_id
     }
 
-    pub(super) fn client_data(&self) -> &Arc<ClientData<D>> {
+    pub(super) fn client_data(&self) -> &Arc<ClientData<RF, D>> {
         &self.data
     }
 
     pub(super) fn update_inner<T>(&mut self, operation: D::Request) -> Result<ClientRequestFut<D::Reply>>
         where
-            T: ClientType<D, NT>,
-            NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
+            T: ClientType<RF, D, NT>,
+            NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
+            RF: ReconfigurationProtocol<NT> + 'static {
         let start = Instant::now();
 
         let session_id = self.session_id;
@@ -396,7 +411,7 @@ impl<D, NT> Client<D, NT>
         self.node.broadcast(message, targets);
 
         // await response
-        let ready = get_ready::<D>(session_id, &*self.data);
+        let ready = get_ready::<RF, D>(session_id, &*self.data);
 
         {
             let mut ready_stored = ready.lock().unwrap();
@@ -421,15 +436,17 @@ impl<D, NT> Client<D, NT>
     /// on top of `atlas`.
     pub async fn update<T>(&mut self, operation: D::Request) -> Result<D::Reply>
         where
-            T: ClientType<D, NT>,
-            NT: ProtocolNetworkNode<ClientServiceMsg<D>>
+            T: ClientType<RF, D, NT>,
+            NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
+            RF: ReconfigurationProtocol<NT> + 'static
     {
         self.update_inner::<T>(operation)?.await
     }
 
     pub(super) fn update_callback_inner<T>(&mut self, operation: D::Request) -> u64 where
-        T: ClientType<D, NT>,
-        NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
+        T: ClientType<RF, D, NT>,
+        NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
+        RF: ReconfigurationProtocol<NT> + 'static {
         let start = Instant::now();
 
         let session_id = self.session_id;
@@ -487,8 +504,9 @@ impl<D, NT> Client<D, NT>
         operation: D::Request,
         callback: RequestCallback<D>,
     ) where
-        T: ClientType<D, NT>,
-        NT: ProtocolNetworkNode<ClientServiceMsg<D>>
+        T: ClientType<RF, D, NT>,
+        NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
+        RF: ReconfigurationProtocol<NT> + 'static
     {
         let rq_key = self.update_callback_inner::<T>(operation);
 
@@ -509,7 +527,7 @@ impl<D, NT> Client<D, NT>
         node: Arc<NT>,
         session_id: SeqNo,
         rq_id: SeqNo,
-        client_data: Arc<ClientData<D>>,
+        client_data: Arc<ClientData<RF, D>>,
     ) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         let node = node.clone();
 
@@ -520,7 +538,7 @@ impl<D, NT> Client<D, NT>
             let req_key = get_request_key(session_id, rq_id);
 
             {
-                let bucket = get_ready::<D>(session_id, &*client_data);
+                let bucket = get_ready::<RF, D>(session_id, &*client_data);
 
                 let bucket_guard = bucket.lock().unwrap();
 
@@ -740,7 +758,7 @@ impl<D, NT> Client<D, NT>
     ///This task might become a large bottleneck with the scenario of few clients with high concurrent rqs,
     /// As the replicas will make very large batches and respond to all the sent requests in one go.
     /// This leaves this thread with a very large task to do in a very short time and it just can't keep up
-    fn message_recv_task(params: SystemParams, data: Arc<ClientData<D>>, node: Arc<NT>) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
+    fn message_recv_task(params: SystemParams, data: Arc<ClientData<RF, D>>, node: Arc<NT>) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         // use session id as key
         let mut last_operation_ids: IntMap<SeqNo> = IntMap::new();
         let mut replica_votes: IntMap<ReplicaVotes> = IntMap::new();
@@ -810,7 +828,7 @@ impl<D, NT> Client<D, NT>
 
                         //Get the wakers for this request and deliver the payload
 
-                        let ready = get_ready::<D>(session_id, &*data);
+                        let ready = get_ready::<RF, D>(session_id, &*data);
 
                         Self::deliver_response(
                             node.id(),
@@ -839,7 +857,7 @@ impl<D, NT> Client<D, NT>
                             replica_votes.remove(request_key);
 
                             //Get the wakers for this request and deliver the payload
-                            let ready = get_ready::<D>(session_id, &*data);
+                            let ready = get_ready::<RF, D>(session_id, &*data);
 
                             Self::deliver_error(
                                 node.id(),
@@ -876,11 +894,11 @@ fn get_correct_vec_for<T>(session_id: SeqNo, vec: &Vec<Mutex<T>>) -> &Mutex<T> {
 }
 
 #[inline]
-pub(super) fn register_callback<D: ApplicationData>(session_id: SeqNo,
-                                                    request_key: u64,
-                                                    data: &ClientData<D>,
-                                                    callback: RequestCallback<D>) {
-    let ready = get_ready::<D>(session_id, &*data);
+pub(super) fn register_callback<RF, D: ApplicationData>(session_id: SeqNo,
+                                                        request_key: u64,
+                                                        data: &ClientData<RF, D>,
+                                                        callback: RequestCallback<D>) {
+    let ready = get_ready::<RF, D>(session_id, &*data);
 
     let callback = Callback {
         to_call: callback,
@@ -896,17 +914,17 @@ pub(super) fn register_callback<D: ApplicationData>(session_id: SeqNo,
 }
 
 #[inline]
-fn get_ready<D: ApplicationData>(
+fn get_ready<RF, D: ApplicationData>(
     session_id: SeqNo,
-    data: &ClientData<D>,
+    data: &ClientData<RF, D>,
 ) -> &Mutex<IntMap<ClientAwaker<D::Reply>>> {
     get_correct_vec_for(session_id, &data.ready)
 }
 
 #[inline]
-fn get_request_info<D: ApplicationData>(
+fn get_request_info<RF, D: ApplicationData>(
     session_id: SeqNo,
-    data: &ClientData<D>,
+    data: &ClientData<RF, D>,
 ) -> &Mutex<IntMap<SentRequestInfo>> {
     get_correct_vec_for(session_id, &data.request_info)
 }

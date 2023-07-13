@@ -13,5 +13,4 @@ pub struct ReconfigurableNetworkConfig {
     pub our_address: PeerAddr,
     // The nodes that we already know about (Boostrap nodes of the network)
     pub known_nodes: Vec<NodeTriple>,
-
 }

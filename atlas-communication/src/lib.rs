@@ -52,9 +52,9 @@ pub trait NodeConnections {
 }
 
 /// A full network node implementation
-pub trait FullNetworkNode<NI, RM, PM>: ProtocolNetworkNode<PM> + ReconfigurationNode<RM>
+pub trait FullNetworkNode<NI, RM, PM>: ProtocolNetworkNode<PM> + ReconfigurationNode<RM> + Send + Sync
     where
-        NI: NetworkInformationProvider + 'static,
+        NI: NetworkInformationProvider,
         RM: Serializable + 'static,
         PM: Serializable + 'static {
 
