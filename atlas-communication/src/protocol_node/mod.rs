@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
+use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::error::*;
 use crate::{NodeConnections};
-use crate::message::{StoredMessage, StoredSerializedProtocolMessage};
+use crate::message::{SerializedMessage, StoredMessage, StoredSerializedProtocolMessage};
 use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
 
@@ -79,7 +80,7 @@ pub trait ProtocolNetworkNode<M>: Send + Sync where M: Serializable + 'static {
 
     /// Serialize a message to a given target.
     /// Creates the serialized byte buffer along with the header, so we can send it later.
-    fn serialize_sign_message(&self, message: M::Message, target: NodeId) -> Result<StoredSerializedProtocolMessage<M::Message>>;
+    fn serialize_digest_message(&self, message: M::Message) -> Result<(SerializedMessage<M::Message>, Digest)>;
 
     /// Broadcast the serialized messages provided.
     /// Does not block on the message sent. Returns a result that is

@@ -383,7 +383,7 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for TcpNode<NI, RM, PM>
         }
     }
 
-    fn serialize_sign_message(&self, message: PM::Message, target: NodeId) -> Result<StoredSerializedProtocolMessage<PM::Message>> {
+    fn serialize_digest_message(&self, message: PM::Message) -> Result<(SerializedMessage<PM::Message>, Digest)> {
         let nmk = NetworkMessageKind::<RM, PM>::from_system(message);
 
         let key_pair = Some(&**self.reconfiguration.get_key_pair());
@@ -392,19 +392,14 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for TcpNode<NI, RM, PM>
 
         match crate::cpu_workers::serialize_digest_no_threadpool(&nmk) {
             Ok((buffer, digest)) => {
-                let message = WireMessage::new(self.id, target,
-                                               buffer, nonce, Some(digest), key_pair);
-
-                let (header, message) = message.into_inner();
-
                 let msg = match nmk {
                     NetworkMessageKind::System(sys) => {
-                        StoredSerializedProtocolMessage::new(header, SerializedMessage::new(sys.into(), message))
+                        SerializedMessage::new(sys.into(), buffer)
                     }
                     _ => unreachable!()
                 };
 
-                Ok(msg)
+                Ok((msg, digest))
             }
             Err(err) => {
                 error!("Failed to serialize message {:?}", err);
