@@ -1,6 +1,5 @@
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
-use atlas_communication::{Node};
 use atlas_execution::serialize::ApplicationData;
 use atlas_core::messages::{RequestMessage, SystemMessage};
 use atlas_core::serialize::ClientMessage;

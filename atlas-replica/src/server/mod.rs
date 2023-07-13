@@ -15,8 +15,9 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::{Node, NodeConnections, NodeIncomingRqHandler};
+use atlas_communication::{FullNetworkNode, NodeConnections};
 use atlas_communication::message::StoredMessage;
+use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
 use atlas_execution::app::{Application, Request};
 use atlas_execution::ExecutorHandle;
 use atlas_core::messages::Message;
@@ -34,6 +35,8 @@ use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
 use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_persistent_log::NoPersistentLog;
+use atlas_reconfiguration::message::ReconfData;
+use atlas_reconfiguration::network_reconfig::NetworkInfo;
 use crate::config::ReplicaConfig;
 use crate::metric::{LOG_TRANSFER_PROCESS_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_TAKE_FROM_NETWORK_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
 use crate::persistent_log::SMRPersistentLog;
@@ -93,7 +96,7 @@ impl<S, D, OP, ST, LT, NT, PL> Replica<S, D, OP, ST, LT, NT, PL>
         OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send + 'static,
         LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
         ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
-        NT: Node<ServiceMsg<D, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static,
+        NT: FullNetworkNode<NetworkInfo, ReconfData, ServiceMsg<D, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static,
         PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static, {
     async fn bootstrap(cfg: ReplicaConfig<S, D, OP, ST, LT, NT, PL>, executor: ExecutorHandle<D>) -> Result<Self> {
         let ReplicaConfig {
@@ -240,9 +243,8 @@ impl<S, D, OP, ST, LT, NT, PL> Replica<S, D, OP, ST, LT, NT, PL>
                         let start = Instant::now();
 
                         if let Some(network_message) = network_message {
-                            let (header, message) = network_message.into_inner();
 
-                            let message = message.into_system();
+                            let (header, message) = network_message.into_inner();
 
                             match message {
                                 SystemMessage::ProtocolMessage(protocol) => {
@@ -326,8 +328,6 @@ impl<S, D, OP, ST, LT, NT, PL> Replica<S, D, OP, ST, LT, NT, PL>
 
                 if let Some(message) = message {
                     let (header, message) = message.into_inner();
-
-                    let message = message.into_system();
 
                     match message {
                         SystemMessage::ProtocolMessage(protocol) => {

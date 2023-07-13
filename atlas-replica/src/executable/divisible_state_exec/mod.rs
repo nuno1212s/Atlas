@@ -4,7 +4,7 @@ use atlas_common::error::*;
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::Node;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
 use atlas_execution::app::{Application, BatchReplies, Reply, Request};
 use atlas_execution::{ExecutionRequest, ExecutorHandle};
@@ -54,7 +54,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT>
               ST: StateTransferMessage + 'static,
               LT: LogTransferMessage + 'static,
               T: ExecutorReplier + 'static,
-              NT: Node<ServiceMsg<A::AppData, OP, ST, LT>> + 'static {
+              NT: ProtocolNetworkNode<ServiceMsg<A::AppData, OP, ST, LT>> + 'static {
         let (state, requests) = if let Some(state) = initial_state {
             state
         } else {
@@ -169,7 +169,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT>
         where OP: OrderingProtocolMessage + 'static,
               ST: StateTransferMessage + 'static,
               LT: LogTransferMessage + 'static,
-              NT: Node<ServiceMsg<A::AppData, OP, ST, LT>> + 'static,
+              NT: ProtocolNetworkNode<ServiceMsg<A::AppData, OP, ST, LT>> + 'static,
               T: ExecutorReplier + 'static {
         let send_node = self.send_node.clone();
 

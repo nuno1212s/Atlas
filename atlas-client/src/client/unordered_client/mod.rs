@@ -5,7 +5,8 @@ use std::sync::{Mutex};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
-use atlas_communication::{Node, NodeConnections};
+use atlas_communication::{ NodeConnections};
+use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_communication::tcpip::TlsNodeConnector;
 use atlas_execution::serialize::ApplicationData;
 use atlas_core::messages::{RequestMessage, SystemMessage};
@@ -54,7 +55,7 @@ impl<D, NT> Client<D, NT>
     ///
     /// Returns Err if we are already connecting to or connected to
     /// the given follower.
-    fn connect_to_follower(&self, node_id: NodeId) -> Result<()> where NT: Node<ClientServiceMsg<D>> {
+    fn connect_to_follower(&self, node_id: NodeId) -> Result<()> where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         {
             let connecting = self.data.follower_data.connecting_followers.lock().unwrap();
 

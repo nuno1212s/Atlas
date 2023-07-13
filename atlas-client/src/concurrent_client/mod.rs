@@ -3,10 +3,13 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_common::node_id::NodeId;
-use atlas_communication::Node;
 use atlas_execution::serialize::ApplicationData;
 use atlas_core::serialize::ClientServiceMsg;
 use std::sync::Arc;
+use atlas_communication::FullNetworkNode;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
+use atlas_reconfiguration::message::ReconfData;
+use atlas_reconfiguration::network_reconfig::NetworkInfo;
 use crate::client::ClientData;
 use crate::client::{Client, ClientConfig, ClientType, register_callback, RequestCallback};
 
@@ -23,7 +26,7 @@ pub struct ConcurrentClient<D: ApplicationData + 'static, NT: 'static> {
 
 impl<D, NT> ConcurrentClient<D, NT> where D: ApplicationData + 'static, NT: 'static {
     /// Creates a new concurrent client, with the given configuration
-    pub async fn boostrap_client(cfg: ClientConfig<D, NT>, session_limit: usize) -> Result<Self> where NT: Node<ClientServiceMsg<D>> {
+    pub async fn boostrap_client(cfg: ClientConfig<D, NT>, session_limit: usize) -> Result<Self> where NT: FullNetworkNode<NetworkInfo, ReconfData, ClientServiceMsg<D>> {
         let (tx, rx) = channel::new_bounded_sync(session_limit);
 
         let client = Client::bootstrap(cfg).await?;
@@ -46,7 +49,7 @@ impl<D, NT> ConcurrentClient<D, NT> where D: ApplicationData + 'static, NT: 'sta
     }
 
     /// Creates a new concurrent client, from an already existing client
-    pub fn from_client(client: Client<D, NT>, session_limit: usize) -> Result<Self> where NT: Node<ClientServiceMsg<D>> {
+    pub fn from_client(client: Client<D, NT>, session_limit: usize) -> Result<Self> where NT: FullNetworkNode<NetworkInfo, ReconfData, ClientServiceMsg<D>> {
         let (tx, rx) = channel::new_bounded_sync(session_limit);
 
         let id = client.id();
@@ -78,7 +81,7 @@ impl<D, NT> ConcurrentClient<D, NT> where D: ApplicationData + 'static, NT: 'sta
     /// Updates the replicated state of the application running
     /// on top of `atlas`.
     pub async fn update<T>(&self, request: D::Request) -> Result<D::Reply> where T: ClientType<D, NT> + 'static,
-                                                                                 NT: Node<ClientServiceMsg<D>> {
+                                                                                 NT: FullNetworkNode<NetworkInfo, ReconfData, ClientServiceMsg<D>> {
         let mut session = self.get_session()?;
 
         let result = session.update::<T>(request).await;
@@ -97,7 +100,7 @@ impl<D, NT> ConcurrentClient<D, NT> where D: ApplicationData + 'static, NT: 'sta
     /// to other threads to prevent slowdowns
     pub fn update_callback<T>(&self, request: D::Request, callback: RequestCallback<D>) -> Result<()>
         where T: ClientType<D, NT> + 'static,
-              NT: Node<ClientServiceMsg<D>> {
+              NT: FullNetworkNode<NetworkInfo, ReconfData, ClientServiceMsg<D>> {
 
         let mut session = self.get_session()?;
 

@@ -4,7 +4,8 @@ use atlas_common::error::*;
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::Orderable;
-use atlas_communication::Node;
+use atlas_communication::FullNetworkNode;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{DivisibleStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::serialize::ServiceMsg;
@@ -13,6 +14,8 @@ use atlas_core::state_transfer::log_transfer::{LogTransferProtocol};
 use atlas_execution::app::Application;
 use atlas_execution::state::divisible_state::{AppStateMessage, DivisibleState, InstallStateMessage};
 use atlas_metrics::metrics::metric_duration;
+use atlas_reconfiguration::message::ReconfData;
+use atlas_reconfiguration::network_reconfig::NetworkInfo;
 use crate::config::DivisibleStateReplicaConfig;
 use crate::executable::divisible_state_exec::DivisibleStateExecutor;
 use crate::executable::ReplicaReplier;
@@ -46,7 +49,7 @@ impl<S, A, OP, ST, LT, NT, PL> DivStReplica<S, A, OP, ST, LT, NT, PL> where
     LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
     ST: DivisibleStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
     PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + DivisibleStateLog<S> + 'static,
-    NT: Node<ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static {
+    NT: FullNetworkNode<NetworkInfo, ReconfData, ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static {
     pub async fn bootstrap(cfg: DivisibleStateReplicaConfig<S, A, OP, ST, LT, NT, PL>) -> Result<Self> {
         let DivisibleStateReplicaConfig {
             service, replica_config, st_config

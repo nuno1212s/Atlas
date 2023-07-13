@@ -21,7 +21,8 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::config::NodeConfig;
 use atlas_communication::message::{NetworkMessage, NetworkMessageKind, System};
-use atlas_communication::{Node, NodeConnections, NodeIncomingRqHandler};
+use atlas_communication::{FullNetworkNode, NodeConnections};
+use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
 use atlas_execution::serialize::ApplicationData;
 use atlas_execution::system_params::SystemParams;
 use atlas_core::messages::{ReplyMessage, SystemMessage};
@@ -29,6 +30,8 @@ use atlas_core::serialize::{ClientMessage, ClientServiceMsg, OrderingProtocolMes
 use atlas_metrics::benchmarks::ClientPerf;
 use atlas_metrics::{measure_ready_rq_time, measure_response_deliver_time, measure_response_rcv_time, measure_sent_rq_info, measure_target_init_time, measure_time_rq_init, start_measurement};
 use atlas_metrics::metrics::{metric_duration, metric_increment};
+use atlas_reconfiguration::message::ReconfData;
+use atlas_reconfiguration::network_reconfig::NetworkInfo;
 use crate::metric::{CLIENT_RQ_DELIVER_RESPONSE_ID, CLIENT_RQ_LATENCY_ID, CLIENT_RQ_PER_SECOND_ID, CLIENT_RQ_RECV_PER_SECOND_ID, CLIENT_RQ_RECV_TIME_ID, CLIENT_RQ_SEND_TIME_ID, CLIENT_RQ_TIMEOUT_ID};
 
 use self::unordered_client::{FollowerData, UnorderedClientMode};
@@ -220,7 +223,7 @@ impl<'a, P> Future for ClientRequestFut<'a, P> {
 }
 
 /// Represents a configuration used to bootstrap a `Client`.
-pub struct ClientConfig<D: ApplicationData + 'static, NT: Node<ClientServiceMsg<D>>> {
+pub struct ClientConfig<D: ApplicationData + 'static, NT: FullNetworkNode<NetworkInfo, ReconfData, ClientServiceMsg<D>>> {
     pub n: usize,
     pub f: usize,
 
@@ -251,7 +254,7 @@ impl<D, NT> Client<D, NT>
         NT: 'static
 {
     /// Bootstrap a client in `febft`.
-    pub async fn bootstrap(cfg: ClientConfig<D, NT>) -> Result<Self> where NT: Node<ClientServiceMsg<D>> {
+    pub async fn bootstrap(cfg: ClientConfig<D, NT>) -> Result<Self> where NT: FullNetworkNode<NetworkInfo, ReconfData, ClientServiceMsg<D>> {
         let ClientConfig {
             n, f, node: node_config,
             unordered_rq_mode,
@@ -260,12 +263,16 @@ impl<D, NT> Client<D, NT>
         // system params
         let params = SystemParams::new(n, f)?;
 
+        // Actually, we have to get the configuration from here
+
+        let network_info_provider = Arc::new(NetworkInfo::init_from_config());
+
         // connect to peer nodes
         //
         // FIXME: can the client receive rogue reply messages?
         // perhaps when it reconnects to a replica after experiencing
         // network problems? for now ignore rogue messages...
-        let node = NT::bootstrap(node_config).await?;
+        let node = NT::bootstrap(network_info_provider, node_config).await?;
 
         let stats = {
             None
@@ -342,7 +349,7 @@ impl<D, NT> Client<D, NT>
         &self.data.observer
     }*/
     #[inline]
-    pub fn id(&self) -> NodeId where NT: Node<ClientServiceMsg<D>> {
+    pub fn id(&self) -> NodeId where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         self.node.id()
     }
 
@@ -358,7 +365,7 @@ impl<D, NT> Client<D, NT>
     pub(super) fn update_inner<T>(&mut self, operation: D::Request) -> Result<ClientRequestFut<D::Reply>>
         where
             T: ClientType<D, NT>,
-            NT: Node<ClientServiceMsg<D>> {
+            NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         let start = Instant::now();
 
         let session_id = self.session_id;
@@ -380,14 +387,13 @@ impl<D, NT> Client<D, NT>
         };
 
         {
-
             let mut request_info_guard = request_info.lock().unwrap();
 
             request_info_guard.insert(request_key, sent_info);
         }
 
         // broadcast our request to the node group
-        self.node.broadcast(NetworkMessageKind::from_system(message), targets);
+        self.node.broadcast(message, targets);
 
         // await response
         let ready = get_ready::<D>(session_id, &*self.data);
@@ -416,14 +422,14 @@ impl<D, NT> Client<D, NT>
     pub async fn update<T>(&mut self, operation: D::Request) -> Result<D::Reply>
         where
             T: ClientType<D, NT>,
-            NT: Node<ClientServiceMsg<D>>
+            NT: ProtocolNetworkNode<ClientServiceMsg<D>>
     {
         self.update_inner::<T>(operation)?.await
     }
 
     pub(super) fn update_callback_inner<T>(&mut self, operation: D::Request) -> u64 where
         T: ClientType<D, NT>,
-        NT: Node<ClientServiceMsg<D>> {
+        NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         let start = Instant::now();
 
         let session_id = self.session_id;
@@ -453,7 +459,7 @@ impl<D, NT> Client<D, NT>
             request_info_guard.insert(request_key, sent_info);
         }
 
-        self.node.broadcast(NetworkMessageKind::from_system(message), targets);
+        self.node.broadcast(message, targets);
 
         Self::start_timeout(
             self.node.clone(),
@@ -482,7 +488,7 @@ impl<D, NT> Client<D, NT>
         callback: RequestCallback<D>,
     ) where
         T: ClientType<D, NT>,
-        NT: Node<ClientServiceMsg<D>>
+        NT: ProtocolNetworkNode<ClientServiceMsg<D>>
     {
         let rq_key = self.update_callback_inner::<T>(operation);
 
@@ -504,7 +510,7 @@ impl<D, NT> Client<D, NT>
         session_id: SeqNo,
         rq_id: SeqNo,
         client_data: Arc<ClientData<D>>,
-    ) where NT: Node<ClientServiceMsg<D>> {
+    ) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         let node = node.clone();
 
         async_runtime::spawn(async move {
@@ -734,7 +740,7 @@ impl<D, NT> Client<D, NT>
     ///This task might become a large bottleneck with the scenario of few clients with high concurrent rqs,
     /// As the replicas will make very large batches and respond to all the sent requests in one go.
     /// This leaves this thread with a very large task to do in a very short time and it just can't keep up
-    fn message_recv_task(params: SystemParams, data: Arc<ClientData<D>>, node: Arc<NT>) where NT: Node<ClientServiceMsg<D>> {
+    fn message_recv_task(params: SystemParams, data: Arc<ClientData<D>>, node: Arc<NT>) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         // use session id as key
         let mut last_operation_ids: IntMap<SeqNo> = IntMap::new();
         let mut replica_votes: IntMap<ReplicaVotes> = IntMap::new();
@@ -743,9 +749,7 @@ impl<D, NT> Client<D, NT>
         while let Ok(message) = node.node_incoming_rq_handling().receive_from_replicas(None) {
             let start = Instant::now();
 
-            let NetworkMessage { header, message } = message.unwrap();
-
-            let sys_msg = message.into();
+            let (header, sys_msg) = message.unwrap().into_inner();
 
             match &sys_msg {
                 SystemMessage::OrderedReply(msg_info)
@@ -800,7 +804,6 @@ impl<D, NT> Client<D, NT>
                     // wait for the amount of votes that we require identical replies
                     // In a BFT system, this is by default f+1
                     if count >= votes.needed_votes_count {
-
                         let votes = replica_votes.remove(request_key).unwrap();
 
                         last_operation_ids.insert(session_id.into(), operation_id);
@@ -820,7 +823,6 @@ impl<D, NT> Client<D, NT>
                                 _ => unreachable!(),
                             },
                         );
-
                     } else {
                         //If we do not have f+1 replies yet, check if it's still possible to get those
                         //Replies by taking a look at the target count and currently received replies count

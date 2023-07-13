@@ -13,9 +13,10 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::{Node};
+use atlas_communication::{FullNetworkNode};
 use atlas_communication::message::{NetworkMessageKind};
 use atlas_communication::metric::REPLICA_RQ_PASSING_TIME_ID;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_execution::app::{BatchReplies, Reply, Request, UnorderedBatch, UpdateBatch};
 use atlas_execution::{ExecutionRequest, ExecutorHandle};
 use atlas_execution::serialize::ApplicationData;
@@ -23,6 +24,8 @@ use atlas_core::messages::{Message, ReplyMessage, SystemMessage};
 use atlas_core::ordering_protocol::OrderingProtocol;
 use atlas_core::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
 use atlas_metrics::metrics::metric_duration;
+use atlas_reconfiguration::message::ReconfData;
+use atlas_reconfiguration::network_reconfig::NetworkInfo;
 use crate::metric::{EXECUTION_LATENCY_TIME_ID, EXECUTION_TIME_TAKEN_ID, REPLIES_PASSING_TIME_ID, REPLIES_SENT_TIME_ID};
 use crate::server::client_replier::ReplyHandle;
 
@@ -38,7 +41,7 @@ pub trait ExecutorReplier: Send {
             OP: OrderingProtocolMessage + 'static,
             ST: StateTransferMessage + 'static,
             LT: LogTransferMessage + 'static,
-            NT: Node<ServiceMsg<D, OP, ST, LT>> + 'static;
+            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LT>> + 'static;
 }
 
 pub struct FollowerReplier;
@@ -52,7 +55,7 @@ impl ExecutorReplier for FollowerReplier {
             OP: OrderingProtocolMessage + 'static,
             ST: StateTransferMessage + 'static,
             LT: LogTransferMessage + 'static,
-            NT: Node<ServiceMsg<D, OP, ST, LT>> + 'static {
+            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LT>> {
         if let None = seq {
             //Followers only deliver replies to the unordered requests, since it's not part of the quorum
             // And the requests it executes are only forwarded to it
@@ -73,7 +76,7 @@ impl ExecutorReplier for ReplicaReplier {
             OP: OrderingProtocolMessage + 'static,
             ST: StateTransferMessage + 'static,
             LT: LogTransferMessage + 'static,
-            NT: Node<ServiceMsg<D, OP, ST, LT>> + 'static {
+            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LT>> + 'static {
         if batch.len() == 0 {
             //Ignore empty batches.
             return;
@@ -99,7 +102,7 @@ impl ExecutorReplier for ReplicaReplier {
                 // but for now this will do
                 if let Some((message, last_peer_id)) = curr_send.take() {
                     let flush = peer_id != last_peer_id;
-                    send_node.send(NetworkMessageKind::from_system(message), last_peer_id, flush);
+                    send_node.send(message, last_peer_id, flush);
                 }
 
                 // store previous reply message and peer id,
@@ -113,7 +116,7 @@ impl ExecutorReplier for ReplicaReplier {
 
             // deliver last reply
             if let Some((message, last_peer_id)) = curr_send {
-                send_node.send(NetworkMessageKind::from_system(message), last_peer_id, true);
+                send_node.send(message, last_peer_id, true);
             } else {
                 // slightly optimize code path;
                 // the previous if branch will always execute

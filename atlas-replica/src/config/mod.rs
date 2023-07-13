@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::config::NodeConfig;
-use atlas_communication::Node;
+use atlas_communication::FullNetworkNode;
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_execution::app::{Application};
 use atlas_core::ordering_protocol::OrderingProtocol;
@@ -16,6 +16,8 @@ use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 use atlas_persistent_log::PersistentLog;
+use atlas_reconfiguration::message::ReconfData;
+use atlas_reconfiguration::network_reconfig::NetworkInfo;
 use crate::persistent_log::SMRPersistentLog;
 
 pub struct MonolithicStateReplicaConfig<S, A, OP, ST, LT, NT, PL>
@@ -24,7 +26,7 @@ pub struct MonolithicStateReplicaConfig<S, A, OP, ST, LT, NT, PL>
           OP: StatefulOrderProtocol<A::AppData, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization>,
           ST: MonolithicStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
           LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
-          NT: Node<ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>>,
+          NT: FullNetworkNode<NetworkInfo, ReconfData, ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>>,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + MonolithicStateLog<S> {
     /// The application logic.
     pub service: A,
@@ -41,7 +43,7 @@ pub struct DivisibleStateReplicaConfig<S, A, OP, ST, LT, NT, PL>
           OP: StatefulOrderProtocol<A::AppData, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization>,
           ST: DivisibleStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
           LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
-          NT: Node<ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>>,
+          NT: FullNetworkNode<NetworkInfo, ReconfData, ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>>,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + DivisibleStateLog<S> {
     /// The application logic.
     pub service: A,
@@ -58,7 +60,7 @@ pub struct ReplicaConfig<S, D, OP, ST, LT, NT, PL> where
     OP: StatefulOrderProtocol<D, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization>,
     ST: StateTransferProtocol<S, NT, PL> + 'static,
     LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
-    NT: Node<ServiceMsg<D, OP::Serialization, ST::Serialization, LT::Serialization>>,
+    NT: FullNetworkNode<NetworkInfo, ReconfData, ServiceMsg<D, OP::Serialization, ST::Serialization, LT::Serialization>>,
     PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> {
     /// ID of the Node in question
     pub id: NodeId,
