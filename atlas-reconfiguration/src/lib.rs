@@ -1,4 +1,31 @@
-extern crate core;
+#![feature(async_fn_in_trait)]
+
+use std::collections::BTreeSet;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
+
+use log::{error, info, warn};
+#[cfg(feature = "serialize_serde")]
+use serde::{Deserialize, Serialize};
+
+use atlas_common::{async_runtime as rt, channel};
+use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::error::*;
+use atlas_common::node_id::NodeId;
+use atlas_common::ordering::SeqNo;
+use atlas_communication::message::{Header, Reconfig};
+use atlas_communication::NodeConnections;
+use atlas_communication::reconfiguration_node::{ReconfigurationIncomingHandler, ReconfigurationNode};
+use atlas_core::reconfiguration_protocol::{QuorumJoinCert, ReconfigResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
+use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
+
+use crate::config::ReconfigurableNetworkConfig;
+use crate::message::{NetworkJoinResponseMessage, NetworkReconfigMessage, NetworkReconfigMsgType, NodeTriple, QuorumJoinCertificate, ReconfData, ReconfigMessage, ReconfigurationMessage};
+use crate::network_reconfig::NetworkInfo;
+use crate::node_types::client::ClientQuorumView;
+use crate::node_types::NodeType;
+use crate::node_types::replica::ReplicaQuorumView;
+use crate::quorum_reconfig::QuorumView;
 
 pub mod config;
 pub mod message;
@@ -7,62 +34,14 @@ pub mod quorum_reconfig;
 mod metrics;
 mod node_types;
 
-use std::collections::BTreeSet;
-#[cfg(feature = "serialize_serde")]
-use serde::{Deserialize, Serialize};
-use atlas_common::error::*;
-use std::sync::Arc;
-use log::{error, info};
-use atlas_common::channel;
-use atlas_common::async_runtime as rt;
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
-use atlas_common::node_id::NodeId;
-use atlas_common::ordering::SeqNo;
-use atlas_communication::message::Header;
-use atlas_communication::NodeConnections;
-use atlas_communication::reconfiguration_node::{ReconfigurationIncomingHandler, ReconfigurationNode};
-use atlas_core::reconfiguration_protocol::{QuorumJoinCert, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
-use crate::config::ReconfigurableNetworkConfig;
-use crate::message::{NetworkJoinResponseMessage, NetworkReconfigMessage, QuorumJoinCertificate, ReconfData, ReconfigurationMessage};
-use crate::network_reconfig::NetworkInfo;
-use crate::node_types::NodeType;
-use crate::quorum_reconfig::QuorumView;
+const TIMEOUT_DUR: Duration = Duration::from_secs(3);
 
 /// The reconfiguration module.
 /// Provides various utilities for allowing reconfiguration of the network
 /// Such as message definitions, important types and etc.
 ///
 /// This module will then be used by the parts of the system which must be reconfigurable
-/// (For example, the network
-
-pub fn bootstrap_reconf_node<NT>(network_info: Arc<NetworkInfo>, node: Arc<NT>)
-                                 -> Result<(ChannelSyncRx<QuorumReconfigurationMessage<QuorumJoinCertificate>>,
-                                            ChannelSyncTx<QuorumReconfigurationResponse>)>
-    where NT: ReconfigurationNode<ReconfData> + 'static {
-    let (reconfig_tx, reconfig_rx) = channel::new_bounded_sync(128);
-
-    let (reconfig_resp_tx, reconfig_resp_rx) = channel::new_bounded_sync(128);
-
-    let reconf_node = GeneralNodeInfo {
-        curr_seq: SeqNo::ZERO,
-        network_view: network_info,
-        current_state: NetworkNodeState::Init,
-    };
-
-    let reconf_node = ReconfigurableNode {
-        node: reconf_node,
-        network_node: node,
-        node_type: NodeType::new_replica(),
-    };
-
-    std::thread::Builder::new()
-        .name(format!("Reconfiguration Node Thread"))
-        .spawn(move || {
-            reconf_node.run();
-        }).unwrap();
-
-    Ok((reconfig_rx, reconfig_resp_tx))
-}
+/// (For example, the network node, the client node, etc)
 
 /// The reconfigurable node which will handle all reconfiguration requests
 /// This handles the network level reconfiguration, not the quorum level reconfiguration
@@ -70,7 +49,7 @@ pub struct GeneralNodeInfo {
     curr_seq: SeqNo,
     /// Our current view of the network, including nodes we know about, their addresses and public keys
     network_view: Arc<NetworkInfo>,
-    /// The current state of the network node, to keep track of which protoclos we are executing
+    /// The current state of the network node, to keep track of which protocols we are executing
     current_state: NetworkNodeState,
 }
 
@@ -80,8 +59,20 @@ pub struct ReconfigurableNode<NT> where NT: Send + 'static {
     node: GeneralNodeInfo,
     /// The reference to the network node
     network_node: Arc<NT>,
+    /// Handle to the timeouts module
+    timeouts: Timeouts,
+    // Receive messages from the other protocols
+    channel_rx: ChannelSyncRx<ReconfigMessage>,
     /// The type of the node we are running.
-    node_type: NodeType<NT>,
+    node_type: NodeType<QuorumJoinCertificate>,
+}
+
+/// The handle to the current reconfigurable node information.
+///
+pub struct ReconfigurableNodeProtocol {
+    network_info: Arc<NetworkInfo>,
+    quorum_info: Arc<RwLock<QuorumView>>,
+    channel_tx: ChannelSyncTx<ReconfigMessage>
 }
 
 /// The current state of our node (network level, not quorum level)
@@ -110,26 +101,35 @@ enum IterationResult {
 }
 
 impl GeneralNodeInfo {
-    /// Attempt
-    fn iterate<NT>(&mut self, network_node: &Arc<NT>) where NT: ReconfigurationNode<ReconfData> + 'static {
+    fn next_seq(&mut self) -> SeqNo {
+        self.curr_seq += SeqNo::ONE;
+
+        self.curr_seq
+    }
+
+    /// Attempt to iterate and move our current state forward
+    fn iterate<NT>(&mut self, network_node: &Arc<NT>, timeouts: &Timeouts) where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.current_state {
             NetworkNodeState::Init => {
                 let known_nodes: Vec<NodeId> = self.network_view.known_nodes().into_iter()
                     .filter(|node| *node != self.network_view.node_id()).collect();
 
-                let join_message = ReconfigurationMessage::NetworkReconfig(NetworkReconfigMessage::NetworkJoinRequest(
-                    self.network_view.node_triple()
+                let join_message = ReconfigurationMessage::NetworkReconfig(NetworkReconfigMessage::new(
+                    self.next_seq(),
+                    NetworkReconfigMsgType::NetworkJoinRequest(self.network_view.node_triple()),
                 ));
 
                 let contacted = known_nodes.len();
 
                 if known_nodes.is_empty() {
+                    info!("No known nodes, joining network as a stable member");
                     self.current_state = NetworkNodeState::StableMember;
                 }
 
                 let mut node_results = Vec::new();
 
                 for node in &known_nodes {
+                    info!("{:?} // Connecting to node {:?}", self.network_view.node_id(), node);
                     let mut node_connection_results = network_node.node_connections().connect_to_node(*node);
 
                     node_results.push((*node, node_connection_results));
@@ -143,7 +143,11 @@ impl GeneralNodeInfo {
                     }
                 }
 
+                info!("Broadcasting reconfiguration network join message");
+
                 let _ = network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter());
+
+                timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted / 2 + 1) as u32, self.curr_seq);
 
                 self.current_state = NetworkNodeState::JoiningNetwork {
                     contacted,
@@ -157,20 +161,31 @@ impl GeneralNodeInfo {
         }
     }
 
-    fn handle_network_reconfig_msg<NT>(&mut self, network_node: Arc<NT>, header: Header, message: NetworkReconfigMessage)
+    fn handle_network_reconfig_msg<NT>(&mut self, network_node: &Arc<NT>,timeouts: &Timeouts, header: Header, message: NetworkReconfigMessage)
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.current_state {
             NetworkNodeState::JoiningNetwork { contacted, responded } => {
+                let (seq, message) = message.into_inner();
+
                 // Avoid accepting double answers
-                if responded.insert(header.from()) {
-                    match message {
-                        NetworkReconfigMessage::NetworkJoinRequest(_) => {
-                            info!("Received a network join request from {:?} but we are still not part of the network, so we can't answer", header.from());
+
+                match message {
+                    NetworkReconfigMsgType::NetworkJoinRequest(join_request) => {
+                        info!("Received a network join request from {:?} while joining the network", header.from());
+                        self.handle_join_request(network_node, header, seq, join_request);
+                    }
+                    NetworkReconfigMsgType::NetworkJoinResponse(join_response) => {
+                        if seq != self.curr_seq {
+                            warn!("Received a message with an invalid sequence number while joining the network {:?} vs {:?} (Ours)", seq, self.curr_seq);
+                            return;
                         }
-                        NetworkReconfigMessage::NetworkJoinResponse(join_response) => {
+
+                        if responded.insert(header.from()) {
                             match join_response {
                                 NetworkJoinResponseMessage::Successful(network_information) => {
                                     info!("We were accepted into the network by the node {:?}", header.from());
+
+                                    timeouts.cancel_reconfig_timeout(Some(self.curr_seq));
 
                                     self.network_view.handle_successfull_network_join(network_information);
 
@@ -181,36 +196,32 @@ impl GeneralNodeInfo {
                                 }
                                 NetworkJoinResponseMessage::Rejected(rejection_reason) => {
                                     error!("We were rejected from the network: {:?} by the node {:?}", rejection_reason, header.from());
+
+                                    timeouts.received_reconfig_request(header.from(), seq);
                                 }
                             }
                         }
-                        NetworkReconfigMessage::NetworkHelloRequest(hello_request) => {
-                            /// Well how do we handle this?
-                            info!("Received a network hello request from {:?} but we are still not part of the network, so we can't really process it", header.from());
-                        }
+                    }
+                    NetworkReconfigMsgType::NetworkHelloRequest(hello_request) => {
+                        info!("Received a network hello request from {:?} but we are still not part of the network", header.from());
+
+                        self.network_view.handle_node_introduced(hello_request);
                     }
                 }
             }
             NetworkNodeState::IntroductionPhase { .. } => {}
             NetworkNodeState::StableMember => {
+
+                let (seq, message) = message.into_inner();
+
                 match message {
-                    NetworkReconfigMessage::NetworkJoinRequest(join_request) => {
-                        let network = network_node.clone();
-
-                        let target = header.from();
-
-                        let network_view = self.network_view.clone();
-
-                        rt::spawn(async move {
-                            let result = network_view.can_introduce_node(join_request).await;
-
-                            let _ = network.send_reconfig_message(ReconfigurationMessage::NetworkReconfig(NetworkReconfigMessage::NetworkJoinResponse(result)), target);
-                        });
+                    NetworkReconfigMsgType::NetworkJoinRequest(join_request) => {
+                        self.handle_join_request(network_node, header, seq, join_request);
                     }
-                    NetworkReconfigMessage::NetworkJoinResponse(_) => {
+                    NetworkReconfigMsgType::NetworkJoinResponse(_) => {
                         // Ignored, we are already a stable member of the network
                     }
-                    NetworkReconfigMessage::NetworkHelloRequest(hello) => {
+                    NetworkReconfigMsgType::NetworkHelloRequest(hello) => {
                         self.network_view.handle_node_introduced(hello);
                     }
                 }
@@ -221,20 +232,62 @@ impl GeneralNodeInfo {
             }
         }
     }
+
+    fn handle_join_request<NT>(&self, network_node: &Arc<NT>, header: Header, seq: SeqNo, node: NodeTriple)
+        where NT: ReconfigurationNode<ReconfData> + 'static {
+        let network = network_node.clone();
+
+        let target = header.from();
+
+        let network_view = self.network_view.clone();
+
+        rt::spawn(async move {
+            let result = network_view.can_introduce_node(node).await;
+
+            let reconfig_message = NetworkReconfigMessage::new(seq, NetworkReconfigMsgType::NetworkJoinResponse(result));
+
+            let _ = network.send_reconfig_message(ReconfigurationMessage::NetworkReconfig(reconfig_message), target);
+        });
+    }
 }
 
 impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
-
     fn run(mut self) where NT: ReconfigurationNode<ReconfData> + 'static {
         loop {
-            self.node.iterate(&self.network_node);
+
+            self.node.iterate(&self.network_node, &self.timeouts);
 
             self.node_type.iterate(&self.node, &self.network_node);
+
+            let optional_message = self.network_node.reconfiguration_message_handler().try_receive_reconfig_message().unwrap();
+
+            if let Some(message) = optional_message {
+                let (header, message) = message.into_inner();
+
+                match message {
+                    ReconfigurationMessage::NetworkReconfig(network_reconfig) => {
+                        self.node.handle_network_reconfig_msg(&self.network_node, &self.timeouts, header, network_reconfig);
+                    }
+                    ReconfigurationMessage::QuorumReconfig(quorum_reconfig) => {
+                        self.node_type.handle_view_state_message(&self.node, &self.network_node, header, quorum_reconfig);
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_local_messages(&mut self) where NT: ReconfigurationNode<ReconfData> + 'static {
+        while let Ok(received_message) = self.channel_rx.try_recv() {
+            match received_message {
+                ReconfigMessage::TimeoutReceived(timeout) => {
+                    info!("We have received timeouts {:?}", timeout)
+                }
+            }
         }
     }
 }
 
-impl<NT> ReconfigurationProtocol<NT> for ReconfigurableNode<NT> where NT: Send + Sync + 'static {
+impl ReconfigurationProtocol for ReconfigurableNodeProtocol {
     type Config = ReconfigurableNetworkConfig;
     type InformationProvider = NetworkInfo;
     type Serialization = ReconfData;
@@ -243,12 +296,61 @@ impl<NT> ReconfigurationProtocol<NT> for ReconfigurableNode<NT> where NT: Send +
         Ok(Arc::new(NetworkInfo::init_from_config(config)))
     }
 
-    fn initialize_protocol(information: Arc<Self::InformationProvider>, node: Arc<NT>, node_type: ReconfigurableNodeTypes<QuorumJoinCert<Self::Serialization>>) -> Result<Self> where NT: ReconfigurationNode<Self::Serialization> + 'static, Self: Sized {
-        todo!()
+    async fn initialize_protocol<NT>(information: Arc<Self::InformationProvider>,
+                                     node: Arc<NT>, timeouts: Timeouts,
+                                     node_type: ReconfigurableNodeTypes<QuorumJoinCert<Self::Serialization>>)
+                                     -> Result<Self> where NT: ReconfigurationNode<Self::Serialization> + 'static, Self: Sized {
+        let general_info = GeneralNodeInfo {
+            curr_seq: SeqNo::ZERO,
+            current_state: NetworkNodeState::Init,
+            network_view: information.clone(),
+        };
+
+        let quorum_view = Arc::new(RwLock::new(QuorumView::empty()));
+
+        let node_type = match node_type {
+            ReconfigurableNodeTypes::Client => {
+                NodeType::Client(ClientQuorumView::new(quorum_view.clone()))
+            }
+            ReconfigurableNodeTypes::Replica(channel_tx, channel_rx) => {
+                NodeType::Replica(ReplicaQuorumView::new(quorum_view.clone(), channel_tx, channel_rx))
+            }
+        };
+
+        let (channel_tx, channel_rx) = channel::new_bounded_sync(128);
+
+        let reconfigurable_node = ReconfigurableNode {
+            node: general_info,
+            network_node: node.clone(),
+            timeouts,
+            channel_rx,
+            node_type,
+        };
+
+        std::thread::Builder::new()
+            .name(format!("Reconfiguration Protocol Thread"))
+            .spawn(move || {
+                reconfigurable_node.run();
+            }).expect("Failed to launch reconfiguration protocol thread");
+
+        let node_handle = ReconfigurableNodeProtocol {
+            network_info: information.clone(),
+            quorum_info: quorum_view,
+            channel_tx,
+        };
+
+        Ok(node_handle)
+    }
+
+    fn handle_timeout(&self, timeouts: Vec<RqTimeout>) -> Result<ReconfigResponse>{
+
+        self.channel_tx.send(ReconfigMessage::TimeoutReceived(timeouts)).unwrap();
+
+        Ok(ReconfigResponse::Running)
     }
 
     fn get_quorum_members(&self) -> Vec<NodeId> {
-        todo!()
+        self.quorum_info.read().unwrap().quorum_members().clone()
     }
 
     fn is_join_certificate_valid(&self, certificate: &QuorumJoinCert<Self::Serialization>) -> bool {

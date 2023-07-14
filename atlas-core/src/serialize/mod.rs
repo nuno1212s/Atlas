@@ -138,6 +138,7 @@ pub trait StatefulOrderProtocolMessage: Send {
 
 /// Reconfiguration protocol messages
 pub trait ReconfigurationProtocolMessage: Serializable {
+    
     #[cfg(feature = "serialize_capnp")]
     type QuorumJoinCertificate: Send + Clone;
 

@@ -10,6 +10,7 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::crypto::signature::Signature;
 use atlas_communication::serialize::Serializable;
 use atlas_core::serialize::ReconfigurationProtocolMessage;
+use atlas_core::timeouts::{RqTimeout, TimeoutKind};
 
 use crate::{QuorumView};
 use crate::network_reconfig::KnownNodes;
@@ -119,10 +120,18 @@ pub enum ReconfigurationMessage {
     QuorumReconfig(QuorumReconfigMessage),
 }
 
+/// Network reconfiguration message
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct NetworkReconfigMessage {
+    seq: SeqNo,
+    message_type: NetworkReconfigMsgType
+}
+
 /// Network reconfiguration messages (Related only to the network view)
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum NetworkReconfigMessage {
+pub enum NetworkReconfigMsgType {
     NetworkJoinRequest(NodeTriple),
     NetworkJoinResponse(NetworkJoinResponseMessage),
     NetworkHelloRequest(NodeTriple),
@@ -163,9 +172,24 @@ pub enum QuorumReconfigMessage {
     QuorumLeaveResponse(QuorumLeaveResponse),
 }
 
+/// Messages that will be sent via channel to the reconfiguration module
+pub enum ReconfigMessage {
+    TimeoutReceived(Vec<RqTimeout>)
+}
+
 impl QuorumNodeJoinApproval {
     pub fn new(network_view_seq: SeqNo, requesting_node: NodeId, origin_node: NodeId) -> Self {
         Self { network_view_seq, requesting_node, origin_node }
+    }
+}
+
+impl NetworkReconfigMessage {
+    pub fn new(seq: SeqNo, message_type: NetworkReconfigMsgType) -> Self {
+        Self { seq, message_type }
+    }
+
+    pub fn into_inner(self) -> (SeqNo, NetworkReconfigMsgType) {
+        (self.seq, self.message_type)
     }
 }
 

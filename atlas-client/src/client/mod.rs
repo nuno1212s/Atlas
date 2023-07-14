@@ -13,7 +13,8 @@ use std::time::Instant;
 use futures_timer::Delay;
 use intmap::IntMap;
 use log::{error, debug, info};
-use atlas_common::async_runtime;
+use atlas_common::{async_runtime, channel};
+use atlas_common::channel::ChannelSyncRx;
 use atlas_common::crypto::hash::Digest;
 
 use atlas_common::error::*;
@@ -25,9 +26,10 @@ use atlas_communication::{FullNetworkNode, NodeConnections};
 use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
 use atlas_execution::serialize::ApplicationData;
 use atlas_execution::system_params::SystemParams;
-use atlas_core::messages::{ReplyMessage, SystemMessage};
+use atlas_core::messages::{Message, ReplyMessage, SystemMessage};
 use atlas_core::reconfiguration_protocol::{ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::serialize::{ClientMessage, ClientServiceMsg, OrderingProtocolMessage, ServiceMessage, ServiceMsg, StateTransferMessage};
+use atlas_core::timeouts::Timeouts;
 use atlas_metrics::benchmarks::ClientPerf;
 use atlas_metrics::{measure_ready_rq_time, measure_response_deliver_time, measure_response_rcv_time, measure_sent_rq_info, measure_target_init_time, measure_time_rq_init, start_measurement};
 use atlas_metrics::metrics::{metric_duration, metric_increment};
@@ -228,7 +230,7 @@ impl<'a, P> Future for ClientRequestFut<'a, P> {
 
 /// Represents a configuration used to bootstrap a `Client`.
 pub struct ClientConfig<RF, D, NT> where
-    RF: ReconfigurationProtocol<NT> + 'static,
+    RF: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
     NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, ClientServiceMsg<D>> {
     pub n: usize,
@@ -259,7 +261,7 @@ pub type RequestCallback<D: ApplicationData> = Box<dyn FnOnce(Result<D::Reply>) 
 
 impl<D, RF, NT> Client<RF, D, NT>
     where
-        RF: ReconfigurationProtocol<NT> + 'static,
+        RF: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
         NT: 'static
 {
@@ -285,7 +287,19 @@ impl<D, RF, NT> Client<RF, D, NT>
         // network problems? for now ignore rogue messages...
         let node = NT::bootstrap(network_info_provider.clone(), node_config).await?;
 
-        let reconfig_protocol = RF::initialize_protocol(network_info_provider, node.clone(), ReconfigurableNodeTypes::Client)?;
+        let default_timeout = Duration::from_secs(3);
+
+        let (exec_tx, exec_rx) = channel::new_bounded_sync(128);
+
+        let timeouts = Timeouts::new::<D>(node.id(), Duration::from_millis(1),
+                                          default_timeout, exec_tx.clone());
+
+        // TODO: Make timeouts actually work properly with the clients (including making the normal
+        //timeouts utilize this same system)
+
+        let reconfig_protocol = RF::initialize_protocol(network_info_provider, node.clone(),
+                                                        timeouts.clone(),
+                                                        ReconfigurableNodeTypes::Client).await?;
 
         let stats = {
             None
@@ -315,7 +329,7 @@ impl<D, RF, NT> Client<RF, D, NT>
         // spawn receiving task
         std::thread::Builder::new()
             .name(format!("Client {:?} message processing thread", node.id()))
-            .spawn(move || Self::message_recv_task(params, task_data, node))
+            .spawn(move || Self::message_recv_task(params, task_data, node, timeouts, exec_rx))
             .expect("Failed to launch message processing thread");
 
         let session_id = data.session_counter.fetch_add(1, Ordering::Relaxed).into();
@@ -380,7 +394,7 @@ impl<D, RF, NT> Client<RF, D, NT>
         where
             T: ClientType<RF, D, NT>,
             NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
-            RF: ReconfigurationProtocol<NT> + 'static {
+            RF: ReconfigurationProtocol + 'static {
         let start = Instant::now();
 
         let session_id = self.session_id;
@@ -438,7 +452,7 @@ impl<D, RF, NT> Client<RF, D, NT>
         where
             T: ClientType<RF, D, NT>,
             NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
-            RF: ReconfigurationProtocol<NT> + 'static
+            RF: ReconfigurationProtocol + 'static
     {
         self.update_inner::<T>(operation)?.await
     }
@@ -446,7 +460,7 @@ impl<D, RF, NT> Client<RF, D, NT>
     pub(super) fn update_callback_inner<T>(&mut self, operation: D::Request) -> u64 where
         T: ClientType<RF, D, NT>,
         NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
-        RF: ReconfigurationProtocol<NT> + 'static {
+        RF: ReconfigurationProtocol + 'static {
         let start = Instant::now();
 
         let session_id = self.session_id;
@@ -506,7 +520,7 @@ impl<D, RF, NT> Client<RF, D, NT>
     ) where
         T: ClientType<RF, D, NT>,
         NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
-        RF: ReconfigurationProtocol<NT> + 'static
+        RF: ReconfigurationProtocol + 'static
     {
         let rq_key = self.update_callback_inner::<T>(operation);
 
@@ -758,7 +772,8 @@ impl<D, RF, NT> Client<RF, D, NT>
     ///This task might become a large bottleneck with the scenario of few clients with high concurrent rqs,
     /// As the replicas will make very large batches and respond to all the sent requests in one go.
     /// This leaves this thread with a very large task to do in a very short time and it just can't keep up
-    fn message_recv_task(params: SystemParams, data: Arc<ClientData<RF, D>>, node: Arc<NT>) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
+    fn message_recv_task(params: SystemParams, data: Arc<ClientData<RF, D>>,
+                         node: Arc<NT>, timeouts: Timeouts, timeout_rx: ChannelSyncRx<Message>) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         // use session id as key
         let mut last_operation_ids: IntMap<SeqNo> = IntMap::new();
         let mut replica_votes: IntMap<ReplicaVotes> = IntMap::new();
@@ -873,6 +888,21 @@ impl<D, RF, NT> Client<RF, D, NT>
                     continue;
                 }
                 _ => {}
+            }
+
+            Self::receive_from_timeouts(&data, &timeout_rx)
+        }
+    }
+
+    fn receive_from_timeouts(data: &Arc<ClientData<RF, D>>, exec_rx: &ChannelSyncRx<Message>) {
+        while let Ok(timeout) = exec_rx.try_recv() {
+            match timeout {
+                Message::Timeout(timeout) => {
+                    data.reconfig_protocol.handle_timeout(timeout).expect("Failed to deliver timeout");
+                }
+                _ => {
+                    todo!()
+                }
             }
         }
     }

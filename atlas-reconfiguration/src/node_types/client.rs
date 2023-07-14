@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use log::error;
 
@@ -26,7 +26,7 @@ enum ClientState {
 ///
 pub(crate) struct ClientQuorumView {
     current_state: ClientState,
-    current_quorum_view: QuorumView,
+    current_quorum_view: Arc<RwLock<QuorumView>>,
 
     /// The set of messages that we have received that are part of the current quorum view
     /// That agree on the current
@@ -34,10 +34,10 @@ pub(crate) struct ClientQuorumView {
 }
 
 impl ClientQuorumView {
-    pub fn new() -> Self {
+    pub fn new(quorum_view: Arc<RwLock<QuorumView>>) -> Self {
         ClientQuorumView {
             current_state: ClientState::Init,
-            current_quorum_view: QuorumView::empty(),
+            current_quorum_view: quorum_view,
             quorum_view_certificate: vec![],
         }
     }
@@ -100,7 +100,11 @@ impl ClientQuorumView {
 
                     if let Some((quorum_digest, quorum_certs)) = received_messages.first() {
                         if quorum_certs.len() >= needed_messages {
-                            self.current_quorum_view = quorum_certs.first().unwrap().quorum_view().clone();
+                            {
+                                let mut write_guard = self.current_quorum_view.write().unwrap();
+
+                                *write_guard = quorum_certs.first().unwrap().quorum_view().clone();
+                            }
 
                             self.quorum_view_certificate = quorum_certs.clone();
 
@@ -142,7 +146,7 @@ impl ClientQuorumView {
                            quorum_view_state.sender(), quorum_view_state.digest());
                 }
 
-                let needed_messages = (self.current_quorum_view.quorum_members().len() / 3 * 2) + 1;
+                let needed_messages = (self.current_quorum_view.read().unwrap().quorum_members().len() / 3 * 2) + 1;
 
                 if received.len() >= needed_messages {
                     // We have received all of the messages that we are going to receive, so we can now
@@ -160,7 +164,10 @@ impl ClientQuorumView {
 
                     if let Some((quorum_digest, quorum_certs)) = received_messages.first() {
                         if quorum_certs.len() >= needed_messages {
-                            self.current_quorum_view = quorum_certs.first().unwrap().quorum_view().clone();
+                            {
+                                let mut write_guard = self.current_quorum_view.write().unwrap();
+                                *write_guard = quorum_certs.first().unwrap().quorum_view().clone();
+                            }
 
                             self.quorum_view_certificate = quorum_certs.clone();
 
@@ -172,7 +179,7 @@ impl ClientQuorumView {
                 }
             }
             ClientState::Stable => {
-                if self.current_quorum_view.sequence_number() < quorum_view_state.quorum_view().sequence_number() {
+                if self.current_quorum_view.read().unwrap().sequence_number() < quorum_view_state.quorum_view().sequence_number() {
                     // We have received a message from a node that is not in the current quorum view
                     // so we need to update the quorum view
 

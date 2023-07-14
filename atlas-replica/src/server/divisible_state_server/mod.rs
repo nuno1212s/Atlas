@@ -26,7 +26,7 @@ use crate::server::client_replier::Replier;
 use crate::server::Replica;
 
 pub struct DivStReplica<RP, S, A, OP, ST, LT, NT, PL>
-    where RP: ReconfigurationProtocol<NT> + 'static,
+    where RP: ReconfigurationProtocol + 'static,
           S: DivisibleState + 'static,
           A: Application<S> + Send + 'static,
           OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
@@ -45,7 +45,7 @@ pub struct DivStReplica<RP, S, A, OP, ST, LT, NT, PL>
 }
 
 impl<RP, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, S, A, OP, ST, LT, NT, PL> where
-    RP: ReconfigurationProtocol<NT> + 'static,
+    RP: ReconfigurationProtocol + 'static,
     S: DivisibleState + Send + 'static,
     A: Application<S> + Send + 'static,
     OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send + 'static,

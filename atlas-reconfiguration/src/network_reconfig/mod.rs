@@ -1,12 +1,15 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
+
 use futures::future::join_all;
 use log::debug;
+
 use atlas_common::channel::OneShotRx;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::node_id::NodeId;
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::reconfiguration_node::NetworkInformationProvider;
+
 use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{KnownNodesMessage, NetworkJoinRejectionReason, NetworkJoinResponseMessage, NodeTriple};
 
@@ -105,7 +108,6 @@ impl NetworkInfo {
 
     /// Handle a node having introduced itself to us by inserting it into our known nodes
     pub(crate) fn handle_node_introduced(&self, node: NodeTriple) {
-
         debug!("Received a node introduction message from node {:?}. Handling it", node);
 
         let mut write_guard = self.known_nodes.write().unwrap();
@@ -132,6 +134,8 @@ impl NetworkInfo {
 
             write_guard.node_keys.insert(node_id, public_key);
             write_guard.node_addrs.insert(node_id, node.addr().clone());
+        } else {
+            debug!("Node {:?} has already been introduced to us. Ignoring",node);
         }
     }
 

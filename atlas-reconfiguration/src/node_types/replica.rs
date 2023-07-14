@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use log::error;
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
@@ -29,20 +29,20 @@ pub(crate) struct ReplicaQuorumView<JC> {
     /// The current state of the replica
     current_state: ReplicaState,
     /// The current quorum view we know of
-    current_view: QuorumView,
+    current_view: Arc<RwLock<QuorumView>>,
 
     quorum_communication: ChannelSyncTx<QuorumReconfigurationMessage<JC>>,
     quorum_responses: ChannelSyncRx<QuorumReconfigurationResponse>,
 }
 
 impl<JC> ReplicaQuorumView<JC> {
-    pub fn new() -> Self {
-        let (quorum_tx, quorum_rx) = channel::new_bounded_sync(128);
-        let (quorum_response_tx, quorum_response_rx) = channel::new_bounded_sync(128);
-
+    pub fn new(
+        quorum_view: Arc<RwLock<QuorumView>>,
+        quorum_tx: ChannelSyncTx<QuorumReconfigurationMessage<JC>>,
+        quorum_response_rx: ChannelSyncRx<QuorumReconfigurationResponse>) -> Self {
         Self {
             current_state: ReplicaState::Init,
-            current_view: QuorumView::empty(),
+            current_view: quorum_view,
             quorum_communication: quorum_tx,
             quorum_responses: quorum_response_rx,
         }
@@ -105,7 +105,11 @@ impl<JC> ReplicaQuorumView<JC> {
 
                     if let Some((quorum_digest, quorum_certs)) = received_messages.first() {
                         if quorum_certs.len() >= needed_messages {
-                            self.current_view = quorum_certs.first().unwrap().quorum_view().clone();
+                            {
+                                let mut write_guard = self.current_view.write().unwrap();
+
+                                *write_guard = quorum_certs.first().unwrap().quorum_view().clone();
+                            }
 
                             self.start_join_quorum(node, network_node);
                         }
@@ -122,7 +126,7 @@ impl<JC> ReplicaQuorumView<JC> {
 
     pub fn start_join_quorum<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>)
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        let current_quorum_members = self.current_view.quorum_members().clone();
+        let current_quorum_members = self.current_view.read().unwrap().quorum_members().clone();
 
         self.current_state = ReplicaState::JoiningQuorum(current_quorum_members.len(), Default::default(), Default::default());
 

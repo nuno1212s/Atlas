@@ -6,13 +6,14 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::error::*;
 use atlas_communication::message::{Header, NetworkMessage, StoredMessage};
 use atlas_execution::serialize::ApplicationData;
-use crate::serialize::{OrderingProtocolMessage, ServiceMsg};
+use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Serialize, Deserialize};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::globals::ReadOnly;
 use atlas_common::node_id::NodeId;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
 use crate::state_transfer::Checkpoint;
 use crate::timeouts::{TimedOut, Timeout};
 
@@ -27,7 +28,7 @@ pub enum Message {
     ProcessedTimeout(TimedOut, TimedOut),
 }
 
-impl Debug for Message  {
+impl Debug for Message {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Message::Timeout(_) => {
@@ -59,7 +60,7 @@ pub enum SystemMessage<D: ApplicationData, P, ST, LT> {
     ///A state transfer protocol message
     StateTransferMessage(StateTransfer<ST>),
     ///A Log trasnfer protocol message
-    LogTransferMessage(LogTransfer<LT>)
+    LogTransferMessage(LogTransfer<LT>),
 }
 
 impl<D, P, ST, LT> SystemMessage<D, P, ST, LT> where D: ApplicationData {

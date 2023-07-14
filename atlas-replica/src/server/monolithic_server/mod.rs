@@ -31,7 +31,7 @@ use crate::server::Replica;
 
 /// Replica type made to handle monolithic states and executors
 pub struct MonReplica<RP, S, A, OP, ST, LT, NT, PL>
-    where RP: ReconfigurationProtocol<NT> + 'static,
+    where RP: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + Send + 'static,
           OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
@@ -51,7 +51,7 @@ pub struct MonReplica<RP, S, A, OP, ST, LT, NT, PL>
 
 impl<RP, S, A, OP, ST, LT, NT, PL> MonReplica<RP, S, A, OP, ST, LT, NT, PL>
     where
-    RP: ReconfigurationProtocol<NT> + 'static,
+    RP: ReconfigurationProtocol + 'static,
         S: MonolithicState + 'static,
         A: Application<S> + Send + 'static,
         OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send + 'static,

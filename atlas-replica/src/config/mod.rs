@@ -22,7 +22,7 @@ use atlas_reconfiguration::network_reconfig::NetworkInfo;
 use crate::persistent_log::SMRPersistentLog;
 
 pub struct MonolithicStateReplicaConfig<RF, S, A, OP, ST, LT, NT, PL>
-    where RF: ReconfigurationProtocol<NT> + 'static,
+    where RF: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + 'static,
           OP: StatefulOrderProtocol<A::AppData, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization>,
@@ -41,7 +41,7 @@ pub struct MonolithicStateReplicaConfig<RF, S, A, OP, ST, LT, NT, PL>
 
 pub struct DivisibleStateReplicaConfig<RF, S, A, OP, ST, LT, NT, PL>
     where
-        RF: ReconfigurationProtocol<NT> + 'static,
+        RF: ReconfigurationProtocol + 'static,
         S: DivisibleState + 'static,
         A: Application<S> + 'static,
         OP: StatefulOrderProtocol<A::AppData, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization>,
@@ -60,7 +60,7 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, ST, LT, NT, PL>
 
 /// Represents a configuration used to bootstrap a `Replica`.
 pub struct ReplicaConfig<RF, S, D, OP, ST, LT, NT, PL> where
-    RF: ReconfigurationProtocol<NT> + 'static,
+    RF: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
     OP: StatefulOrderProtocol<D, NT, PL> + 'static + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization>,
     ST: StateTransferProtocol<S, NT, PL> + 'static,

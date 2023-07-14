@@ -72,7 +72,7 @@ pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'sta
                                                        LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
                                                        ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
                                                        PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static,
-                                                       RP: ReconfigurationProtocol<NT> + 'static {
+                                                       RP: ReconfigurationProtocol + 'static {
     replica_phase: ReplicaPhase<D>,
     // The ordering protocol, responsible for ordering requests
     ordering_protocol: OP,
@@ -83,11 +83,11 @@ pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'sta
     // The networking layer for a Node in the network (either Client or Replica)
     node: Arc<NT>,
     // The handle to the execution and timeouts handler
-    execution_rx: ChannelSyncRx<Message>,
-    execution_tx: ChannelSyncTx<Message>,
+    execution: (ChannelSyncRx<Message>, ChannelSyncTx<Message>),
     // THe handle for processed timeouts
     processed_timeout: (ChannelSyncTx<(Vec<RqTimeout>, Vec<RqTimeout>)>, ChannelSyncRx<(Vec<RqTimeout>, Vec<RqTimeout>)>),
     persistent_log: PL,
+    // The reconfiguration protocol handle
     reconfig_protocol: RP,
 
     st: PhantomData<(S, ST)>,
@@ -95,7 +95,7 @@ pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'sta
 
 impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
     where
-        RP: ReconfigurationProtocol<NT> + 'static,
+        RP: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
         OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send + 'static,
         LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
@@ -126,20 +126,24 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         let (reconf_tx, reconf_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
         let (reply_tx, reply_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
 
-        let reconfig_protocol = RP::initialize_protocol(network_info, node.clone(), ReconfigurableNodeTypes::Replica(reconf_tx, reply_rx))?;
+        let default_timeout = Duration::from_secs(3);
+
+        let (exec_tx, exec_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
+
+        // start timeouts handler
+        let timeouts = Timeouts::new::<D>(log_node_id.clone(), Duration::from_millis(1),
+                                          default_timeout, exec_tx.clone());
+
+        let replica_node_args = ReconfigurableNodeTypes::Replica(reconf_tx, reply_rx);
+
+        let reconfig_protocol = RP::initialize_protocol(network_info, node.clone(), timeouts.clone(), replica_node_args).await?;
 
         debug!("{:?} // Initializing timeouts", log_node_id);
 
-        let (exec_tx, exec_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
 
         let (rq_pre_processor, batch_input) = initialize_request_pre_processor
             ::<WDRoundRobin, D, OP::Serialization, ST::Serialization, LT::Serialization, NT>(4, node.clone());
 
-        let default_timeout = Duration::from_secs(3);
-
-// start timeouts handler
-        let timeouts = Timeouts::new::<D>(log_node_id.clone(), Duration::from_millis(1),
-                                          default_timeout, exec_tx.clone());
 
         let persistent_log = PL::init_log::<String, NoPersistentLog, OP, ST>(executor.clone(), db_path)?;
 
@@ -157,43 +161,6 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         };
 
         let log_transfer_protocol = LT::initialize(lt_config, timeouts.clone(), node.clone(), persistent_log.clone())?;
-
-        info!("{:?} // Connecting to other replicas.", log_node_id);
-
-        let mut connections = Vec::new();
-
-        for node_id in NodeId::targets(0..n) {
-            if node_id == log_node_id {
-                continue;
-            }
-
-            info!("{:?} // Connecting to node {:?}", log_node_id, node_id);
-
-            let mut connection_results = ProtocolNetworkNode::node_connections(&*node).connect_to_node(node_id);
-
-            connections.push((node_id, connection_results));
-        }
-
-        'outer: for (peer_id, conn_result) in connections {
-            for conn in conn_result {
-                match conn.await {
-                    Ok(result) => {
-                        if let Err(err) = result {
-                            error!("{:?} // Failed to connect to {:?} for {:?}", log_node_id, peer_id, err);
-                            continue 'outer;
-                        }
-                    }
-                    Err(error) => {
-                        error!("Failed to connect to the given node. {:?}", error);
-                        continue 'outer;
-                    }
-                }
-            }
-
-            info!("{:?} // Established a new connection to node {:?}.", log_node_id, peer_id);
-        }
-
-        info!("{:?} // Connected to all other replicas.", log_node_id);
 
         info!("{:?} // Finished bootstrapping node.", log_node_id);
 
@@ -213,8 +180,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
             timeouts,
             executor_handle: executor,
             node,
-            execution_rx: exec_rx,
-            execution_tx: exec_tx,
+            execution: (exec_rx, exec_tx),
             processed_timeout: timeout_channel,
             persistent_log,
             reconfig_protocol,
@@ -439,7 +405,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
     /// FIXME: Do this with a select?
     fn receive_internal(&mut self, state_transfer: &mut ST) -> Result<()> {
-        while let Ok(recvd) = self.execution_rx.try_recv() {
+        while let Ok(recvd) = self.execution.0.try_recv() {
             match recvd {
                 Message::Timeout(timeout) => {
                     self.timeout_received(state_transfer, timeout)?;
@@ -462,6 +428,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         let mut client_rq = Vec::with_capacity(timeouts.len());
         let mut cst_rq = Vec::new();
         let mut log_transfer = Vec::new();
+        let mut reconfiguration = Vec::new();
 
         for timeout in timeouts {
             match timeout.timeout_kind() {
@@ -473,6 +440,9 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                 }
                 TimeoutKind::LogTransfer(_) => {
                     log_transfer.push(timeout);
+                }
+                TimeoutKind::Reconfiguration(_) => {
+                    reconfiguration.push(timeout);
                 }
             }
         }
@@ -503,6 +473,12 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                 }
                 _ => {}
             };
+        }
+
+        if !reconfiguration.is_empty() {
+            debug!("{:?} // Received reconfiguration timeouts: {}", self.node.id(), reconfiguration.len());
+
+            self.reconfig_protocol.handle_timeout(reconfiguration)?;
         }
 
         metric_duration(TIMEOUT_PROCESS_TIME_ID, start.elapsed());

@@ -26,7 +26,7 @@ pub struct ConcurrentClient<RF, D: ApplicationData + 'static, NT: 'static> {
 
 impl<RF, D, NT> ConcurrentClient<RF, D, NT>
     where D: ApplicationData + 'static,
-          RF: ReconfigurationProtocol<NT>, NT: 'static {
+          RF: ReconfigurationProtocol, NT: 'static {
     /// Creates a new concurrent client, with the given configuration
     pub async fn boostrap_client(cfg: ClientConfig<RF, D, NT>, session_limit: usize) -> Result<Self> where
         NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, ClientServiceMsg<D>> {
