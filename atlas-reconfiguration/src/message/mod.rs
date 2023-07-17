@@ -8,6 +8,7 @@ use atlas_common::peer_addr::PeerAddr;
 use serde::{Serialize, Deserialize};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::crypto::signature::Signature;
+use atlas_communication::message::StoredMessage;
 use atlas_communication::serialize::Serializable;
 use atlas_core::serialize::ReconfigurationProtocolMessage;
 use atlas_core::timeouts::{RqTimeout, TimeoutKind};
@@ -112,44 +113,33 @@ pub enum NetworkJoinRejectionReason {
     NotNecessary,
 }
 
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct ReconfigurationMessage {
+    seq: SeqNo,
+    message_type: ReconfigurationMessageType,
+}
+
 /// Reconfiguration message type
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum ReconfigurationMessage {
+pub enum ReconfigurationMessageType {
     NetworkReconfig(NetworkReconfigMessage),
     QuorumReconfig(QuorumReconfigMessage),
 }
 
-/// Network reconfiguration message
-#[derive(Clone)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub struct NetworkReconfigMessage {
-    seq: SeqNo,
-    message_type: NetworkReconfigMsgType
-}
 
 /// Network reconfiguration messages (Related only to the network view)
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum NetworkReconfigMsgType {
+pub enum NetworkReconfigMessage {
     NetworkJoinRequest(NodeTriple),
     NetworkJoinResponse(NetworkJoinResponseMessage),
     NetworkHelloRequest(NodeTriple),
 }
 
 /// A certificate that a given node sent a quorum view
-#[derive(Clone)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub struct QuorumViewCert {
-    /// The quorum view that was sent
-    quorum_view: QuorumView,
-    /// The digest of the quorum view
-    digest: Digest,
-    /// The node that sent the quorum view
-    sender: NodeId,
-    /// The signature of the quorum view (digest) by the node id
-    signature: Signature
-}
+pub type QuorumViewCert = StoredMessage<QuorumView>;
 
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
@@ -157,7 +147,7 @@ pub enum QuorumReconfigMessage {
     /// A state request for the current network view
     NetworkViewStateRequest,
     /// The response to the state request
-    NetworkViewState(QuorumViewCert),
+    NetworkViewState(QuorumView),
     /// A request to join the current quorum
     QuorumEnterRequest(QuorumEnterRequest),
     /// The response to the request to join the quorum, 2f+1 responses
@@ -165,7 +155,7 @@ pub enum QuorumReconfigMessage {
     /// to be passed to the ordering protocol as a QuorumJoinCertificate
     QuorumEnterResponse(QuorumEnterResponse),
     /// A message to indicate that a node has entered the quorum
-    QuorumUpdated(QuorumViewCert),
+    QuorumUpdated(QuorumView),
     /// A request to leave the current quorum
     QuorumLeaveRequest(QuorumLeaveRequest),
     /// The response to the request to leave the quorum
@@ -183,12 +173,12 @@ impl QuorumNodeJoinApproval {
     }
 }
 
-impl NetworkReconfigMessage {
-    pub fn new(seq: SeqNo, message_type: NetworkReconfigMsgType) -> Self {
+impl ReconfigurationMessage {
+    pub fn new(seq: SeqNo, message_type: ReconfigurationMessageType) -> Self {
         Self { seq, message_type }
     }
 
-    pub fn into_inner(self) -> (SeqNo, NetworkReconfigMsgType) {
+    pub fn into_inner(self) -> (SeqNo, ReconfigurationMessageType) {
         (self.seq, self.message_type)
     }
 }
@@ -264,21 +254,5 @@ impl ReconfigurationProtocolMessage for ReconfData {
 impl QuorumEnterRequest {
     pub fn new(node_triple: NodeTriple) -> Self {
         Self { node_triple }
-    }
-}
-
-impl QuorumViewCert {
-    
-    pub fn quorum_view(&self) -> &QuorumView {
-        &self.quorum_view
-    }
-    pub fn digest(&self) -> Digest {
-        self.digest
-    }
-    pub fn sender(&self) -> NodeId {
-        self.sender
-    }
-    pub fn signature(&self) -> Signature {
-        self.signature
     }
 }

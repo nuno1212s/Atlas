@@ -1,14 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 
-use log::error;
+use log::{debug, error};
 
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
+use atlas_communication::message::Header;
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
+use atlas_core::timeouts::Timeouts;
 
-use crate::{GeneralNodeInfo};
-use crate::message::{QuorumReconfigMessage, QuorumViewCert, ReconfData, ReconfigurationMessage};
+use crate::{GeneralNodeInfo, QuorumProtocolResponse, SeqNoGen, TIMEOUT_DUR};
+use crate::message::{QuorumReconfigMessage, QuorumViewCert, ReconfData, ReconfigurationMessage, ReconfigurationMessageType};
 use crate::quorum_reconfig::QuorumView;
 
 enum ClientState {
@@ -42,7 +44,7 @@ impl ClientQuorumView {
         }
     }
 
-    pub fn iterate<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>)
+    pub fn iterate<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> {
         match &mut self.current_state {
             ClientState::Init => {
@@ -52,18 +54,26 @@ impl ClientQuorumView {
 
                 let contacted_nodes = known_nodes.len();
 
-                let _ = network_node.broadcast_reconfig_message(ReconfigurationMessage::QuorumReconfig(reconf_message), known_nodes.into_iter());
+                let message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(reconf_message));
 
-                self.current_state = ClientState::Initializing(contacted_nodes, Default::default(), Default::default())
+                let _ = network_node.broadcast_reconfig_message(message, known_nodes.into_iter());
+
+                timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted_nodes / 2 + 1) as u32, seq_no.curr_seq());
+
+                self.current_state = ClientState::Initializing(contacted_nodes, Default::default(), Default::default());
+
+                QuorumProtocolResponse::Running
             }
             _ => {
                 //Nothing to do here
+                QuorumProtocolResponse::Nil
             }
         }
     }
 
     /// Handle a view state message being received
-    pub fn handle_view_state_message<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>, quorum_view_state: QuorumViewCert)
+    pub fn handle_view_state_message<NT>(&mut self, seq_no: &SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, quorum_view_state: QuorumViewCert)
+                                         -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.current_state {
             ClientState::Init => {
@@ -72,14 +82,17 @@ impl ClientQuorumView {
             ClientState::Initializing(sent_messages, received, received_message) => {
                 // We are still initializing, so we need to add this message to the list of received messages
 
-                if received.insert(quorum_view_state.sender()) {
-                    let entry = received_message.entry(quorum_view_state.digest())
+                let sender = quorum_view_state.header().from();
+                let digest = quorum_view_state.header().digest().clone();
+
+                if received.insert(sender) {
+                    let entry = received_message.entry(digest)
                         .or_insert(Default::default());
 
                     entry.push(quorum_view_state.clone());
                 } else {
                     error!("Received duplicate message from node {:?} with digest {:?}",
-                           quorum_view_state.sender(), quorum_view_state.digest());
+                           sender, digest);
                 }
 
                 let needed_messages = *sent_messages / 2 + 1;
@@ -103,12 +116,14 @@ impl ClientQuorumView {
                             {
                                 let mut write_guard = self.current_quorum_view.write().unwrap();
 
-                                *write_guard = quorum_certs.first().unwrap().quorum_view().clone();
+                                *write_guard = quorum_certs.first().unwrap().message().clone();
                             }
 
                             self.quorum_view_certificate = quorum_certs.clone();
 
                             self.current_state = ClientState::Stable;
+
+                            return QuorumProtocolResponse::Done;
                         }
                     } else {
                         error!("Received no messages from any nodes");
@@ -122,10 +137,12 @@ impl ClientQuorumView {
                 // We are already stable, so we don't need to do anything
             }
         }
+
+        QuorumProtocolResponse::Running
     }
 
     /// Handle a node having entered the quorum view
-    pub fn handle_quorum_entered_received<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>,
+    pub fn handle_quorum_entered_received<NT>(&mut self, seq_no: &SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>,
                                               quorum_view_state: QuorumViewCert)
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.current_state {
@@ -136,14 +153,20 @@ impl ClientQuorumView {
                 // We are not ready to handle this message yet
             }
             ClientState::Updating(received, received_message) => {
-                if received.insert(quorum_view_state.sender()) {
-                    let entry = received_message.entry(quorum_view_state.digest())
+                let sender = quorum_view_state.header().from();
+                let digest = quorum_view_state.header().digest().clone();
+
+                debug!("Received quorum view state message from node {:?} with digest {:?}",
+                       sender, digest);
+
+                if received.insert(sender) {
+                    let entry = received_message.entry(digest)
                         .or_insert(Default::default());
 
                     entry.push(quorum_view_state.clone());
                 } else {
                     error!("Received duplicate message from node {:?} with digest {:?}",
-                           quorum_view_state.sender(), quorum_view_state.digest());
+                           sender, digest);
                 }
 
                 let needed_messages = (self.current_quorum_view.read().unwrap().quorum_members().len() / 3 * 2) + 1;
@@ -166,7 +189,7 @@ impl ClientQuorumView {
                         if quorum_certs.len() >= needed_messages {
                             {
                                 let mut write_guard = self.current_quorum_view.write().unwrap();
-                                *write_guard = quorum_certs.first().unwrap().quorum_view().clone();
+                                *write_guard = quorum_certs.first().unwrap().message().clone();
                             }
 
                             self.quorum_view_certificate = quorum_certs.clone();
@@ -179,17 +202,23 @@ impl ClientQuorumView {
                 }
             }
             ClientState::Stable => {
-                if self.current_quorum_view.read().unwrap().sequence_number() < quorum_view_state.quorum_view().sequence_number() {
+                let sender = quorum_view_state.header().from();
+                let digest = quorum_view_state.header().digest().clone();
+
+                debug!("Received quorum view state message from node {:?} with digest {:?}",
+                       sender, digest);
+
+                if self.current_quorum_view.read().unwrap().sequence_number() < quorum_view_state.message().sequence_number() {
                     // We have received a message from a node that is not in the current quorum view
                     // so we need to update the quorum view
 
                     let mut received = BTreeSet::new();
 
-                    received.insert(quorum_view_state.sender());
+                    received.insert(sender);
 
                     let mut received_message = BTreeMap::new();
 
-                    let entry: &mut Vec<QuorumViewCert> = received_message.entry(quorum_view_state.digest())
+                    let entry: &mut Vec<QuorumViewCert> = received_message.entry(digest)
                         .or_insert(Default::default());
 
                     entry.push(quorum_view_state.clone());
@@ -200,5 +229,13 @@ impl ClientQuorumView {
                 //TODO: Change to the update state
             }
         }
+    }
+
+    pub(crate) fn handle_view_state_request<NT>(&self, p0: &mut SeqNoGen, p1: &GeneralNodeInfo, p2: &Arc<NT>, p3: Header) -> QuorumProtocolResponse where NT: 'static + ReconfigurationNode<ReconfData> {
+        todo!()
+    }
+
+    pub fn handle_timeout<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse {
+        QuorumProtocolResponse::Nil
     }
 }
