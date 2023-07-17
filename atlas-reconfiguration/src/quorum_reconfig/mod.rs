@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::message::{NodeTriple, QuorumEnterRejectionReason, QuorumEnterResponse, QuorumNodeJoinApproval};
 
+pub mod node_types;
+
 pub type QuorumPredicate =
 fn(Arc<QuorumNode>, NodeTriple) -> OneShotRx<Option<QuorumEnterRejectionReason>>;
 

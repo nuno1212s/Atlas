@@ -1,14 +1,13 @@
 use std::sync::Arc;
 use log::info;
-use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
 use atlas_core::timeouts::Timeouts;
 use crate::message::{QuorumReconfigMessage, QuorumViewCert, ReconfData};
-use crate::node_types::client::ClientQuorumView;
-use crate::node_types::replica::ReplicaQuorumView;
 use crate::{GeneralNodeInfo, QuorumProtocolResponse, SeqNoGen};
+use crate::quorum_reconfig::node_types::client::ClientQuorumView;
+use crate::quorum_reconfig::node_types::replica::ReplicaQuorumView;
 
 pub mod client;
 pub mod replica;

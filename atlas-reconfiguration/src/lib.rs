@@ -1,30 +1,28 @@
 #![feature(async_fn_in_trait)]
 
-use std::collections::BTreeSet;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use log::{error, info, warn};
+use log::{info, warn};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 
-use atlas_common::{async_runtime as rt, channel};
+use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
-use atlas_communication::message::{Header, Reconfig};
 use atlas_communication::NodeConnections;
 use atlas_communication::reconfiguration_node::{ReconfigurationIncomingHandler, ReconfigurationNode};
 use atlas_core::reconfiguration_protocol::{QuorumJoinCert, ReconfigResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 
 use crate::config::ReconfigurableNetworkConfig;
-use crate::message::{QuorumJoinCertificate, ReconfData, ReconfigMessage, ReconfigurationMessage, ReconfigurationMessageType};
+use crate::message::{QuorumJoinCertificate, ReconfData, ReconfigMessage, ReconfigurationMessageType};
 use crate::network_reconfig::{GeneralNodeInfo, NetworkInfo, NetworkNodeState};
-use crate::node_types::client::ClientQuorumView;
-use crate::node_types::NodeType;
-use crate::node_types::replica::ReplicaQuorumView;
+use crate::quorum_reconfig::node_types::client::ClientQuorumView;
+use crate::quorum_reconfig::node_types::NodeType;
+use crate::quorum_reconfig::node_types::replica::ReplicaQuorumView;
 use crate::quorum_reconfig::QuorumView;
 
 pub mod config;
@@ -32,7 +30,6 @@ pub mod message;
 pub mod network_reconfig;
 pub mod quorum_reconfig;
 mod metrics;
-mod node_types;
 
 const TIMEOUT_DUR: Duration = Duration::from_secs(3);
 

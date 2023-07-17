@@ -1,3 +1,5 @@
+pub(crate) mod signatures;
+
 use std::fmt::Debug;
 
 use atlas_common::node_id::NodeId;
@@ -85,8 +87,7 @@ pub struct KnownNodesMessage {
     nodes: Vec<NodeTriple>,
 }
 
-#[derive(Clone)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct NodeTriple {
     node_id: NodeId,
     addr: PeerAddr,
@@ -98,7 +99,7 @@ pub struct NodeTriple {
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum NetworkJoinResponseMessage {
-    Successful(KnownNodesMessage),
+    Successful(Signature, KnownNodesMessage),
     Rejected(NetworkJoinRejectionReason),
 }
 
@@ -128,6 +129,7 @@ pub enum ReconfigurationMessageType {
     QuorumReconfig(QuorumReconfigMessage),
 }
 
+pub type NetworkJoinCert = (NodeId, Signature);
 
 /// Network reconfiguration messages (Related only to the network view)
 #[derive(Clone)]
@@ -135,7 +137,8 @@ pub enum ReconfigurationMessageType {
 pub enum NetworkReconfigMessage {
     NetworkJoinRequest(NodeTriple),
     NetworkJoinResponse(NetworkJoinResponseMessage),
-    NetworkHelloRequest(NodeTriple),
+    NetworkHelloRequest(NodeTriple, Vec<NetworkJoinCert>),
+    NetworkHelloReply(KnownNodesMessage)
 }
 
 /// A certificate that a given node sent a quorum view

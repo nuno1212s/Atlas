@@ -1,5 +1,6 @@
 //! Public key cryptographic operations.
 
+use std::fmt::{Debug, Formatter};
 #[cfg(feature = "serialize_serde")]
 use serde::{Serialize, Deserialize};
 
@@ -136,6 +137,12 @@ impl Signature {
             { ring_ed25519::Signature::from_bytes(raw_bytes)? }
         };
         Ok(Signature { inner })
+    }
+}
+
+impl Debug for Signature {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:x?}", self.inner.as_ref().chunks(4).next().unwrap())
     }
 }
 
