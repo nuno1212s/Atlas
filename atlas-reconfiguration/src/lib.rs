@@ -210,6 +210,8 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                                         info!("Received a reconfiguration timeout while we are stable, this does not make sense");
                                     }
                                 }
+
+                                self.timeouts.cancel_reconfig_timeout(Some(*seq));
                             }
                             _ => unreachable!("Received a timeout that is not a reconfiguration timeout")
                         }

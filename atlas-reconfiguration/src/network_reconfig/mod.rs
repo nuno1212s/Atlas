@@ -151,8 +151,15 @@ impl NetworkInfo {
             }
         }
 
-        if certificates.len() < (self.bootstrap_nodes.len() * 2 / 3) + 1 {
-            error!("Received a node hello message from node {:?} with less certificates than 2n/3 bootstrap nodes. Ignoring it", node);
+        let mut required = (self.bootstrap_nodes.len() * 2 / 3) + 1;
+
+        if self.bootstrap_nodes.contains(&node.node_id()) {
+            // If the node is a bootstrap node, then we don't need one of the nodes
+            required -= 1;
+        }
+
+        if certificates.len() < required {
+            error!("Received a node hello message from node {:?} with less certificates than 2n/3 bootstrap nodes {:?} vs required {:?}. Ignoring it", node, certificates.len(), required);
             return false;
         }
 
@@ -485,7 +492,7 @@ impl GeneralNodeInfo {
                         if responded.insert(header.from()) {
                             match join_response {
                                 NetworkJoinResponseMessage::Successful(signature, network_information) => {
-                                    info!("We were accepted into the network by the node {:?}", header.from());
+                                    info!("We were accepted into the network by the node {:?}, current certificate count {:?}", header.from(), certificates.len());
 
                                     timeouts.cancel_reconfig_timeout(Some(seq_gen.curr_seq()));
 
@@ -493,7 +500,8 @@ impl GeneralNodeInfo {
 
                                     certificates.push((header.from(), signature));
 
-                                    if certificates.len() > (*contacted * 2 / 3) + 1 {
+                                    if certificates.len() >= (*contacted * 2 / 3) + 1 {
+                                        info!("We have enough certificates to join the network {}, moving to introduction phase", certificates.len());
 
                                         let introduction_message = ReconfigurationMessage::new(
                                             seq_gen.next_seq(),
@@ -514,6 +522,8 @@ impl GeneralNodeInfo {
                                     timeouts.received_reconfig_request(header.from(), seq);
                                 }
                             }
+                        } else {
+                            warn!("Received a network join response from {:?} but we had already seen it", header.from());
                         }
 
                         return NetworkProtocolResponse::Running;

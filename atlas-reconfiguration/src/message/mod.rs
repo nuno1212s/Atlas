@@ -1,23 +1,21 @@
-pub(crate) mod signatures;
-
 use std::fmt::Debug;
 
+#[cfg(feature = "serialize_serde")]
+use serde::{Deserialize, Serialize};
+
+use atlas_common::crypto::signature::Signature;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
-
 use atlas_common::peer_addr::PeerAddr;
-#[cfg(feature = "serialize_serde")]
-use serde::{Serialize, Deserialize};
-use atlas_common::crypto::hash::Digest;
-use atlas_common::crypto::signature::Signature;
 use atlas_communication::message::StoredMessage;
 use atlas_communication::serialize::Serializable;
 use atlas_core::serialize::ReconfigurationProtocolMessage;
-use atlas_core::timeouts::{RqTimeout, TimeoutKind};
+use atlas_core::timeouts::RqTimeout;
 
-use crate::{QuorumView};
+use crate::QuorumView;
 use crate::network_reconfig::KnownNodes;
 
+pub(crate) mod signatures;
 
 /// Used to request to join the current quorum
 #[derive(Clone)]
