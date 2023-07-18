@@ -56,7 +56,7 @@ impl<JC> NodeType<JC> {
 
     pub fn handle_reconfigure_message<NT>(&mut self, seq_gen: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, seq: SeqNo, quorum_reconfig: QuorumReconfigMessage) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        info!("Received a view state message from {:?} with header {:?}", header.from(), header);
+        info!("Received a quorum reconfig message {:?} from {:?} with header {:?}",quorum_reconfig, header.from(), header, );
 
         match quorum_reconfig {
             QuorumReconfigMessage::NetworkViewStateRequest => {

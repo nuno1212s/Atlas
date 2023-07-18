@@ -9,7 +9,10 @@ use crate::serialize::ReconfigurationProtocolMessage;
 use crate::timeouts::{RqTimeout, Timeouts};
 
 pub enum QuorumReconfigurationMessage<JC> {
-    RequestQuorumViewAlteration(JC),
+    /// The reconfiguration protocol has reached stability and we can now start to execute the
+    /// Quorum protocol, with the given base nodes
+    ReconfigurationProtocolStable(Vec<NodeId>),
+    RequestQuorumViewAlteration(NodeId, JC),
 }
 
 pub enum QuorumReconfigurationResponse {

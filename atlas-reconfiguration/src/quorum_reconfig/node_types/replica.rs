@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 
-use log::error;
+use log::{debug, error, info};
 
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::hash::Digest;
@@ -101,9 +101,13 @@ impl<JC> ReplicaQuorumView<JC> {
                 } else {
                     error!("Received duplicate message from node {:?} with digest {:?}",
                            sender, digest);
+
+                    return QuorumProtocolResponse::Running;
                 }
 
                 let needed_messages = *sent_messages / 2 + 1;
+
+                debug!("Received {:?} messages out of {:?} needed", received.len(), needed_messages);
 
                 if received.len() >= needed_messages {
                     // We have received all of the messages that we are going to receive, so we can now
@@ -120,6 +124,7 @@ impl<JC> ReplicaQuorumView<JC> {
                     });
 
                     if let Some((quorum_digest, quorum_certs)) = received_messages.first() {
+
                         if quorum_certs.len() >= needed_messages {
                             {
                                 let mut write_guard = self.current_view.write().unwrap();
@@ -127,7 +132,10 @@ impl<JC> ReplicaQuorumView<JC> {
                                 *write_guard = quorum_certs.first().unwrap().message().clone();
                             }
 
-                            self.start_join_quorum(seq_no, node, network_node);
+                            return self.start_join_quorum(seq_no, node, network_node);
+                        } else {
+                            error!("Received {:?} messages for quorum view {:?}, but needed {:?} messages",
+                                   quorum_certs.len(), quorum_digest, needed_messages);
                         }
                     } else {
                         error!("Received no messages from any nodes");
@@ -176,16 +184,31 @@ impl<JC> ReplicaQuorumView<JC> {
         }
     }
 
-    pub fn start_join_quorum<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>)
+    pub fn start_join_quorum<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
+
         let current_quorum_members = self.current_view.read().unwrap().quorum_members().clone();
 
-        self.current_state = ReplicaState::JoiningQuorum(current_quorum_members.len(), Default::default(), Default::default());
+        if current_quorum_members.is_empty() || current_quorum_members.contains(&node.network_view.node_id())  {
 
-        let reconf_message = QuorumReconfigMessage::QuorumEnterRequest(QuorumEnterRequest::new(node.network_view.node_triple()));
+            info!("We are already a part of the quorum, moving to stable");
 
-        let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(reconf_message));
+            self.current_state = ReplicaState::Stable;
 
-        let _ = network_node.broadcast_reconfig_message(reconfig_message, current_quorum_members.into_iter());
+            QuorumProtocolResponse::Done
+
+        } else {
+            info!("Starting join quorum procedure, contacting {:?}", current_quorum_members);
+
+            self.current_state = ReplicaState::JoiningQuorum(current_quorum_members.len(), Default::default(), Default::default());
+
+            let reconf_message = QuorumReconfigMessage::QuorumEnterRequest(QuorumEnterRequest::new(node.network_view.node_triple()));
+
+            let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(reconf_message));
+
+            let _ = network_node.broadcast_reconfig_message(reconfig_message, current_quorum_members.into_iter());
+
+            QuorumProtocolResponse::Running
+        }
     }
 }

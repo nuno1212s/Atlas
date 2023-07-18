@@ -144,7 +144,6 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         let (rq_pre_processor, batch_input) = initialize_request_pre_processor
             ::<WDRoundRobin, D, OP::Serialization, ST::Serialization, LT::Serialization, NT>(4, node.clone());
 
-
         let persistent_log = PL::init_log::<String, NoPersistentLog, OP, ST>(executor.clone(), db_path)?;
 
         let log = persistent_log.read_state(OperationMode::BlockingSync)?;

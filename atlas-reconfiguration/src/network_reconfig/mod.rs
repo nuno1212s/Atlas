@@ -269,6 +269,10 @@ impl NetworkInfo {
             self.address.clone(),
         )
     }
+
+    pub fn bootstrap_nodes(&self) -> &Vec<NodeId> {
+        &self.bootstrap_nodes
+    }
 }
 
 impl NetworkInformationProvider for NetworkInfo {

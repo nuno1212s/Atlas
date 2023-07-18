@@ -663,8 +663,8 @@ impl Debug for Header {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let version = self.version;
         let length = self.length;
-        let signature = self.signature;
-        let digest = self.digest;
+        let signature = self.signature.chunks(4).next().unwrap();
+        let digest = self.digest.chunks(4).next().unwrap();
         let nonce = self.nonce;
         let from = self.from;
         let to = self.to;

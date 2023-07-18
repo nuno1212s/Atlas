@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
@@ -255,5 +255,22 @@ impl ReconfigurationProtocolMessage for ReconfData {
 impl QuorumEnterRequest {
     pub fn new(node_triple: NodeTriple) -> Self {
         Self { node_triple }
+    }
+}
+
+impl Debug for QuorumReconfigMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+
+        // Debug implementation for QuorumReconfigMessage
+        match self {
+            QuorumReconfigMessage::NetworkViewStateRequest => write!(f, "NetworkViewStateRequest"),
+            QuorumReconfigMessage::NetworkViewState(quorum_view) => write!(f, "NetworkViewState()"),
+            QuorumReconfigMessage::QuorumEnterRequest(quorum_enter_request) => write!(f, "QuorumEnterRequest()"),
+            QuorumReconfigMessage::QuorumEnterResponse(quorum_enter_response) => write!(f, "QuorumEnterResponse()"),
+            QuorumReconfigMessage::QuorumUpdated(quorum_view) => write!(f, "QuorumUpdated()"),
+            QuorumReconfigMessage::QuorumLeaveRequest(quorum_leave_request) => write!(f, "QuorumLeaveRequest()"),
+            QuorumReconfigMessage::QuorumLeaveResponse(quorum_leave_response) => write!(f, "QuorumLeaveResponse()"),
+        }
+
     }
 }

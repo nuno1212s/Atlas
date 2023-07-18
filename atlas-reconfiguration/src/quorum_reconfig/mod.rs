@@ -102,6 +102,13 @@ impl QuorumView {
         }
     }
 
+    pub fn with_bootstrap_nodes(bootstrap_nodes: Vec<NodeId>) -> Self {
+        QuorumView {
+            sequence_number: SeqNo::ZERO,
+            quorum_members: bootstrap_nodes,
+        }
+    }
+
     pub fn sequence_number(&self) -> SeqNo {
         self.sequence_number
     }

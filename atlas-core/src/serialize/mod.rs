@@ -20,6 +20,8 @@ pub trait NetworkView: Orderable + Clone {
 
     fn quorum(&self) -> usize;
 
+    fn quorum_members(&self) -> &Vec<NodeId>;
+
     fn f(&self) -> usize;
 
     fn n(&self) -> usize;
@@ -138,13 +140,11 @@ pub trait StatefulOrderProtocolMessage: Send {
 
 /// Reconfiguration protocol messages
 pub trait ReconfigurationProtocolMessage: Serializable {
-    
     #[cfg(feature = "serialize_capnp")]
     type QuorumJoinCertificate: Send + Clone;
 
     #[cfg(feature = "serialize_serde")]
     type QuorumJoinCertificate: for<'a> Deserialize<'a> + Serialize + Send + Clone;
-
 }
 
 /// The type that encapsulates all the serializing, so we don't have to constantly use SystemMessage
@@ -190,6 +190,10 @@ impl NetworkView for NoView {
     }
 
     fn quorum(&self) -> usize {
+        unimplemented!()
+    }
+
+    fn quorum_members(&self) -> &Vec<NodeId> {
         unimplemented!()
     }
 

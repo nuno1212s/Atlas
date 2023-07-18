@@ -12,6 +12,7 @@ use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::messages::{LogTransfer, SystemMessage};
 use atlas_core::ordering_protocol::{OrderingProtocol, SerProof, View};
 use atlas_core::persistent_log::StatefulOrderingProtocolLog;
+use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_core::serialize::{NetworkView, OrderingProtocolMessage, OrderProtocolLog, ServiceMsg, StatefulOrderProtocolMessage, StateTransferMessage};
 use atlas_core::state_transfer::log_transfer::{LogTM, LogTransferProtocol, LTResult, LTTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
@@ -62,14 +63,12 @@ pub type Serialization<LT: LogTransferProtocol<D, OP, NT, PL>, D, OP, NT, PL> = 
 
 pub struct CollabLogTransfer<D, OP, NT, PL>
     where D: ApplicationData + 'static,
-          OP: StatefulOrderProtocol<D, NT, PL> + 'static
+          OP: StatefulOrderProtocol<D, NT, PL> + 'static,
 {
     // The current sequence number of the log transfer protocol
     curr_seq: SeqNo,
-
     // The default timeout for the log transfer protocol
     default_timeout: Duration,
-
     /// The current state of the log transfer protocol
     log_transfer_state: LogTransferState<View<OP::Serialization>, SerProof<OP::Serialization>, DecLog<OP::StateSerialization>>,
     /// Reference to the timeouts module
@@ -102,7 +101,7 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
         let view = order_protocol.view();
 
-        self.node.broadcast(SystemMessage::from_log_transfer_message(message), NodeId::targets(0..view.n()));
+        self.node.broadcast(SystemMessage::from_log_transfer_message(message), view.quorum_members().iter());
 
         Ok(())
     }
@@ -244,9 +243,9 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
 
         self.timeouts.timeout_lt_request(self.default_timeout, view.quorum() as u32, message.sequence_number());
 
-        let targets = NodeId::targets(0..view.n());
+        let targets = view.quorum_members();
 
-        self.node.broadcast(SystemMessage::from_log_transfer_message(message), targets);
+        self.node.broadcast(SystemMessage::from_log_transfer_message(message), targets.iter());
 
         Ok(())
     }
@@ -255,7 +254,6 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
         where NT: ProtocolNetworkNode<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
               ST: StateTransferMessage + 'static,
               PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization> {
-
         let (header, message) = message.into_inner();
 
         debug!("{:?} // Off context Log Transfer Message {:?} from {:?} with seq {:?}", self.node.id(),message.payload(), header.from(), message.sequence_number());

@@ -124,7 +124,9 @@ impl TimeoutWorker {
             TimeoutWorkerMessage::ClearCstTimeouts(seq) => {
                 self.handle_clear_cst_rqs(seq);
             }
-            TimeoutWorkerMessage::ClearReconfigTimeouts(_) => {}
+            TimeoutWorkerMessage::ClearReconfigTimeouts(seq) => {
+                self.handle_clear_reconfig_rqs(seq);
+            }
         }
     }
 
@@ -166,7 +168,17 @@ impl TimeoutWorker {
                 }
             }).collect();
 
-            for (phase, timeout) in timeout_per_phase {
+            for (phase, mut timeout) in timeout_per_phase {
+
+                let timeout = timeout.into_iter().filter(|kind| {
+                    //Only reset the client request timeouts
+
+                    match kind {
+                        TimeoutKind::ClientRequestTimeout(_) => { true }
+                        _ => false
+                    }
+                }).collect();
+
                 let message = RqTimeoutMessage {
                     timeout: self.default_timeout,
                     notifications_needed: 1,

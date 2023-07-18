@@ -237,7 +237,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocol {
                                      -> Result<Self> where NT: ReconfigurationNode<Self::Serialization> + 'static, Self: Sized {
         let general_info = GeneralNodeInfo::new(information.clone(), NetworkNodeState::Init);
 
-        let quorum_view = Arc::new(RwLock::new(QuorumView::empty()));
+        let quorum_view = Arc::new(RwLock::new(QuorumView::with_bootstrap_nodes(information.bootstrap_nodes().clone())));
 
         let node_type = match node_type {
             ReconfigurableNodeTypes::Client => {
