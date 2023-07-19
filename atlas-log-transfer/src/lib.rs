@@ -101,7 +101,7 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
         let view = order_protocol.view();
 
-        self.node.broadcast(SystemMessage::from_log_transfer_message(message), view.quorum_members().iter());
+        self.node.broadcast(SystemMessage::from_log_transfer_message(message), view.quorum_members().clone().into_iter());
 
         Ok(())
     }
@@ -245,7 +245,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
 
         let targets = view.quorum_members();
 
-        self.node.broadcast(SystemMessage::from_log_transfer_message(message), targets.iter());
+        self.node.broadcast(SystemMessage::from_log_transfer_message(message), targets.clone().into_iter());
 
         Ok(())
     }

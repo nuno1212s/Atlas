@@ -13,7 +13,7 @@ use atlas_common::persistentdb::KVDB;
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_core::ordering_protocol::{ProtocolMessage, SerProof, SerProofMetadata, View};
+use atlas_core::ordering_protocol::{LoggableMessage, ProtocolMessage, SerProof, SerProofMetadata, View};
 use atlas_core::state_transfer::{Checkpoint};
 use atlas_execution::serialize::ApplicationData;
 use crate::{CallbackType, ChannelMsg, DivisibleStateMessage, InstallState, MonolithicStateMessage, PWMessage, ResponseMessage, serialize};
@@ -129,7 +129,7 @@ impl<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage> Persisten
         Self::translate_error(self.next_worker().send((PWMessage::View(view), callback)))
     }
 
-    pub(super) fn queue_message(&self, message: Arc<ReadOnly<StoredMessage<ProtocolMessage<OPM>>>>,
+    pub(super) fn queue_message(&self, message: Arc<ReadOnly<StoredMessage<LoggableMessage<OPM>>>>,
                                 callback: Option<CallbackType>) -> Result<()> {
         Self::translate_error(self.next_worker().send((PWMessage::Message(message), callback)))
     }
@@ -314,7 +314,7 @@ fn read_decision_log<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMe
     Ok(Some(PS::init_dec_log(proofs)))
 }
 
-fn read_messages_for_seq<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, PS: PersistableOrderProtocol<OPM, SOPM>>(db: &KVDB, seq: SeqNo) -> Result<Vec<StoredMessage<ProtocolMessage<OPM>>>> {
+fn read_messages_for_seq<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, PS: PersistableOrderProtocol<OPM, SOPM>>(db: &KVDB, seq: SeqNo) -> Result<Vec<StoredMessage<LoggableMessage<OPM>>>> {
     let start_seq = serialize::make_message_key(seq, None)?;
     let end_seq = serialize::make_message_key(seq.next(), None)?;
 
@@ -404,7 +404,7 @@ pub(super) fn write_proof<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProto
     Ok(())
 }
 
-pub(super) fn write_message<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, PS: PersistableOrderProtocol<OPM, SOPM>>(db: &KVDB, message: &StoredMessage<ProtocolMessage<OPM>>) -> Result<()> {
+pub(super) fn write_message<OPM: OrderingProtocolMessage, SOPM: StatefulOrderProtocolMessage, PS: PersistableOrderProtocol<OPM, SOPM>>(db: &KVDB, message: &StoredMessage<LoggableMessage<OPM>>) -> Result<()> {
     let mut buf = Vec::with_capacity(Header::LENGTH + message.header().payload_length());
 
     message.header().serialize_into(&mut buf[..Header::LENGTH]).unwrap();

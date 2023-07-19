@@ -12,7 +12,7 @@ use atlas_capnp::objects_capnp;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_core::ordering_protocol::{ProtocolMessage, SerProofMetadata, View};
+use atlas_core::ordering_protocol::{LoggableMessage, ProtocolMessage, SerProofMetadata, View};
 use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
@@ -93,7 +93,7 @@ pub(super) fn serialize_view<W, OPM>(w: &mut W, view: &View<OPM>) -> Result<usiz
     res
 }
 
-pub(super) fn serialize_message<W, OPM>(w: &mut W, msg: &ProtocolMessage<OPM>) -> Result<usize>
+pub(super) fn serialize_message<W, OPM>(w: &mut W, msg: &LoggableMessage<OPM>) -> Result<usize>
     where W: Write,
           OPM: OrderingProtocolMessage {
     #[cfg(feature = "serialize_serde")]
@@ -129,7 +129,7 @@ pub(super) fn deserialize_view<R, OPM>(r: &mut R) -> Result<View<OPM>>
     res
 }
 
-pub(super) fn deserialize_message<R, OPM>(r: &mut R) -> Result<ProtocolMessage<OPM>>
+pub(super) fn deserialize_message<R, OPM>(r: &mut R) -> Result<LoggableMessage<OPM>>
     where R: Read, OPM: OrderingProtocolMessage {
     #[cfg(feature = "serialize_serde")]
         let res = serde::deserialize_message::<R, OPM>(r);

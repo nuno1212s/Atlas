@@ -20,6 +20,7 @@ use crate::timeouts::{RqTimeout, Timeout, Timeouts};
 pub type View<OP> = <OP as OrderingProtocolMessage>::ViewInfo;
 
 pub type ProtocolMessage<OP> = <OP as OrderingProtocolMessage>::ProtocolMessage;
+pub type LoggableMessage<OP> = <OP as OrderingProtocolMessage>::LoggableMessage;
 pub type SerProof<OP> = <OP as OrderingProtocolMessage>::Proof;
 pub type SerProofMetadata<OP> = <OP as OrderingProtocolMessage>::ProofMetadata;
 

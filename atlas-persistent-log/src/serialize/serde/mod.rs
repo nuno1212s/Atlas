@@ -1,11 +1,11 @@
 use std::io::{Read, Write};
 use atlas_common::error::*;
-use atlas_core::ordering_protocol::{ProtocolMessage, SerProofMetadata, View};
+use atlas_core::ordering_protocol::{LoggableMessage, ProtocolMessage, SerProofMetadata, View};
 use atlas_core::serialize::OrderingProtocolMessage;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 
-pub(super) fn deserialize_message<R, OPM>(read: &mut R) -> Result<ProtocolMessage<OPM>>
+pub(super) fn deserialize_message<R, OPM>(read: &mut R) -> Result<LoggableMessage<OPM>>
     where R: Read,
           OPM: OrderingProtocolMessage {
     bincode::serde::decode_from_std_read(read, bincode::config::standard()).wrapped_msg(
@@ -29,7 +29,7 @@ pub(super) fn serialize_proof_metadata<W, OPM>(write: &mut W, proof: &SerProofMe
         "Failed to serialize proof metadata")
 }
 
-pub(super) fn serialize_message<W, OPM>(write: &mut W, message: &ProtocolMessage<OPM>) -> Result<usize>
+pub(super) fn serialize_message<W, OPM>(write: &mut W, message: &LoggableMessage<OPM>) -> Result<usize>
     where W: Write,
           OPM: OrderingProtocolMessage {
     bincode::serde::encode_into_std_write(message, write, bincode::config::standard()).wrapped_msg(

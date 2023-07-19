@@ -46,11 +46,20 @@ pub trait OrderingProtocolMessage: Send {
     #[cfg(feature = "serialize_serde")]
     type ViewInfo: NetworkView + for<'a> Deserialize<'a> + Serialize + Send + Clone + Debug;
 
+    /// The general protocol type for all messages in the ordering protocol
     #[cfg(feature = "serialize_capnp")]
     type ProtocolMessage: Orderable + Send + Clone;
 
     #[cfg(feature = "serialize_serde")]
     type ProtocolMessage: Orderable + for<'a> Deserialize<'a> + Serialize + Send + Clone + Debug;
+
+    /// A shortcut type to messages that are going to be logged. (this is useful for situations
+    /// where we don't log all message types that we send)
+    #[cfg(feature = "serialize_capnp")]
+    type LoggableMessage: Orderable + Send + Clone;
+
+    #[cfg(feature = "serialize_serde")]
+    type LoggableMessage: Orderable + for<'a> Deserialize<'a> + Serialize + Send + Clone + Debug;
 
     /// A proof of a given Sequence number in the consensus protocol
     /// This is used when requesting the latest consensus id in the state transfer protocol,
@@ -139,7 +148,7 @@ pub trait StatefulOrderProtocolMessage: Send {
 }
 
 /// Reconfiguration protocol messages
-pub trait ReconfigurationProtocolMessage: Serializable {
+pub trait ReconfigurationProtocolMessage: Serializable + Send {
     #[cfg(feature = "serialize_capnp")]
     type QuorumJoinCertificate: Send + Clone;
 
@@ -210,6 +219,8 @@ impl OrderingProtocolMessage for NoProtocol {
     type ViewInfo = NoView;
 
     type ProtocolMessage = ();
+
+    type LoggableMessage = ();
 
     type Proof = ();
 
