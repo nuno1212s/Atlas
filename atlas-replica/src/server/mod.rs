@@ -3,41 +3,37 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
-use futures_timer::Delay;
 
 use log::{debug, error, info, trace};
-use atlas_common::{channel, threadpool};
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 
-use atlas_common::async_runtime as rt;
+use atlas_common::channel;
+use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
-use atlas_common::globals::ReadOnly;
-use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::{FullNetworkNode, NodeConnections};
 use atlas_communication::message::StoredMessage;
 use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
-use atlas_execution::app::{Application, Request};
-use atlas_execution::ExecutorHandle;
 use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
 use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
 use atlas_core::ordering_protocol::OrderProtocolExecResult;
 use atlas_core::ordering_protocol::OrderProtocolPoll;
-use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, OperationMode};
-use atlas_core::reconfiguration_protocol::{ReconfigurableNodeTypes, ReconfigurationProtocol};
+use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
+use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
+use atlas_core::persistent_log::{OperationMode, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog};
+use atlas_core::reconfiguration_protocol::{QuorumJoinCert, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
-use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ServiceMsg, StateTransferMessage};
-use atlas_core::state_transfer::{Checkpoint, StateTransferProtocol, STResult, STTimeoutResult};
+use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ReconfigurationProtocolMessage, ServiceMsg, StateTransferMessage};
+use atlas_core::state_transfer::{StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::state_transfer::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
+use atlas_execution::app::Application;
+use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_persistent_log::NoPersistentLog;
-use atlas_reconfiguration::message::ReconfData;
-use atlas_reconfiguration::network_reconfig::NetworkInfo;
+
 use crate::config::ReplicaConfig;
 use crate::metric::{LOG_TRANSFER_PROCESS_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_TAKE_FROM_NETWORK_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
 use crate::persistent_log::SMRPersistentLog;
@@ -86,6 +82,12 @@ pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'sta
     execution: (ChannelSyncRx<Message>, ChannelSyncTx<Message>),
     // THe handle for processed timeouts
     processed_timeout: (ChannelSyncTx<(Vec<RqTimeout>, Vec<RqTimeout>)>, ChannelSyncRx<(Vec<RqTimeout>, Vec<RqTimeout>)>),
+
+    // Receive reconfiguration messages from the reconfiguration protocol
+    reconf_receive: ChannelSyncRx<QuorumReconfigurationMessage<QuorumJoinCert<RP::Serialization>>>,
+    // reconfiguration protocol send
+    reconf_tx: ChannelSyncTx<QuorumReconfigurationResponse>,
+
     persistent_log: PL,
     // The reconfiguration protocol handle
     reconfig_protocol: RP,
@@ -97,7 +99,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
     where
         RP: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
-        OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send + 'static,
+        OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization, NT> + Send + 'static,
         LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
         ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
         NT: FullNetworkNode<RP::InformationProvider, RP::Serialization, ServiceMsg<D, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static,
@@ -124,22 +126,36 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         let node = NT::bootstrap(network_info.clone(), node_config).await?;
 
         let (reconf_tx, reconf_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
-        let (reply_tx, reply_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
+        let (reconf_response_tx, reply_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
 
         let default_timeout = Duration::from_secs(3);
 
         let (exec_tx, exec_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
 
+        debug!("{:?} // Initializing timeouts", log_node_id);
         // start timeouts handler
         let timeouts = Timeouts::new::<D>(log_node_id.clone(), Duration::from_millis(1),
                                           default_timeout, exec_tx.clone());
 
         let replica_node_args = ReconfigurableNodeTypes::Replica(reconf_tx, reply_rx);
 
+        debug!("{:?} // Initializing reconfiguration protocol", log_node_id);
         let reconfig_protocol = RP::initialize_protocol(network_info, node.clone(), timeouts.clone(), replica_node_args).await?;
 
-        debug!("{:?} // Initializing timeouts", log_node_id);
+        info!("{:?} // Waiting for reconfiguration protocol to stabilize", log_node_id);
 
+        let quorum = loop {
+            let message = reconf_rx.recv().unwrap();
+
+            match message {
+                QuorumReconfigurationMessage::ReconfigurationProtocolStable(quorum) => {
+                    break quorum;
+                }
+                QuorumReconfigurationMessage::RequestQuorumJoin(_, _) => {
+                    info!("Received request for quorum view alteration, but we are even done with reconfiguration stabilization?");
+                }
+            }
+        };
 
         let (rq_pre_processor, batch_input) = initialize_request_pre_processor
             ::<WDRoundRobin, D, OP::Serialization, ST::Serialization, LT::Serialization, NT>(4, node.clone());
@@ -150,7 +166,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
         let op_args = OrderingProtocolArgs(executor.clone(), timeouts.clone(),
                                            rq_pre_processor.clone(),
-                                           batch_input, node.clone(), persistent_log.clone());
+                                           batch_input, node.clone(), persistent_log.clone(), quorum);
 
         let ordering_protocol = if let Some((view, log)) = log {
 // Initialize the ordering protocol
@@ -181,6 +197,8 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
             node,
             execution: (exec_rx, exec_tx),
             processed_timeout: timeout_channel,
+            reconf_receive: reconf_rx,
+            reconf_tx: reconf_response_tx,
             persistent_log,
             reconfig_protocol,
             st: Default::default(),
@@ -411,6 +429,20 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 //info!("{:?} // Received and ignored timeout with {} timeouts {:?}", self.node.id(), timeout.len(), timeout);
                 }
                 _ => {}
+            }
+        }
+
+        while let Ok(received) = self.reconf_receive.try_recv() {
+            match received {
+                QuorumReconfigurationMessage::RequestQuorumJoin(node, certificate) => {
+                    info!("Received request for quorum view alteration, but we are even done with reconfiguration stabilization?");
+
+                    let result = self.ordering_protocol.attempt_network_view_change(certificate)?;
+                    
+                }
+                QuorumReconfigurationMessage::ReconfigurationProtocolStable(_) => {
+                    info!("Received reconfiguration protocol stable, but we are even done with reconfiguration stabilization?");
+                }
             }
         }
 

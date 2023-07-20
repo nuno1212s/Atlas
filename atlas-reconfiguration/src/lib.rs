@@ -239,12 +239,14 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocol {
 
         let quorum_view = Arc::new(RwLock::new(QuorumView::with_bootstrap_nodes(information.bootstrap_nodes().clone())));
 
+        let predicates = vec![];
+
         let node_type = match node_type {
             ReconfigurableNodeTypes::Client => {
                 NodeType::Client(ClientQuorumView::new(quorum_view.clone()))
             }
             ReconfigurableNodeTypes::Replica(channel_tx, channel_rx) => {
-                NodeType::Replica(ReplicaQuorumView::new(quorum_view.clone(), channel_tx, channel_rx))
+                NodeType::Replica(ReplicaQuorumView::new(quorum_view.clone(), channel_tx, channel_rx, predicates))
             }
         };
 

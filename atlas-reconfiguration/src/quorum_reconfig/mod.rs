@@ -11,7 +11,7 @@ use crate::message::{NodeTriple, QuorumEnterRejectionReason, QuorumEnterResponse
 pub mod node_types;
 
 pub type QuorumPredicate =
-fn(Arc<QuorumNode>, NodeTriple) -> OneShotRx<Option<QuorumEnterRejectionReason>>;
+fn(QuorumView, NodeTriple) -> OneShotRx<Option<QuorumEnterRejectionReason>>;
 
 pub struct QuorumNode {
     node_id: NodeId,
@@ -73,7 +73,7 @@ impl QuorumNode {
         let mut results = Vec::with_capacity(self.predicates.len());
 
         for x in &self.predicates {
-            let rx = x(self.clone(), node_id.clone());
+            let rx = x(self.current_network_view.clone(), node_id.clone());
 
             results.push(rx);
         }
@@ -106,6 +106,17 @@ impl QuorumView {
         QuorumView {
             sequence_number: SeqNo::ZERO,
             quorum_members: bootstrap_nodes,
+        }
+    }
+
+    pub fn next_with_added_node(&self, node_id: NodeId) -> Self {
+        QuorumView {
+            sequence_number: self.sequence_number.next(),
+            quorum_members: {
+                let mut members = self.quorum_members.clone();
+                members.push(node_id);
+                members
+            },
         }
     }
 

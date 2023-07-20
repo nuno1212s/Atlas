@@ -27,7 +27,7 @@ pub type SerProofMetadata<OP> = <OP as OrderingProtocolMessage>::ProofMetadata;
 pub struct OrderingProtocolArgs<D, NT, PL>(pub ExecutorHandle<D>, pub Timeouts,
                                            pub RequestPreProcessor<D::Request>,
                                            pub BatchOutput<D::Request>, pub Arc<NT>,
-                                           pub PL) where D: ApplicationData;
+                                           pub PL, pub Vec<NodeId>) where D: ApplicationData;
 
 /// The trait for an ordering protocol to be implemented in Atlas
 pub trait OrderingProtocol<D, NT, PL>: Orderable where D: ApplicationData + 'static {

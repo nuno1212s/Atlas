@@ -6,6 +6,7 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::Orderable;
 use atlas_communication::FullNetworkNode;
 use atlas_communication::protocol_node::ProtocolNetworkNode;
+use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{DivisibleStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
@@ -29,7 +30,7 @@ pub struct DivStReplica<RP, S, A, OP, ST, LT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
           S: DivisibleState + 'static,
           A: Application<S> + Send + 'static,
-          OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
+          OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization, NT> + 'static,
           ST: DivisibleStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + 'static + DivisibleStateLog<S>,
@@ -48,7 +49,7 @@ impl<RP, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, S, A, OP, ST, LT, NT, PL> wh
     RP: ReconfigurationProtocol + 'static,
     S: DivisibleState + Send + 'static,
     A: Application<S> + Send + 'static,
-    OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send + 'static,
+    OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization, NT> + Send + 'static,
     LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
     ST: DivisibleStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
     PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + DivisibleStateLog<S> + 'static,

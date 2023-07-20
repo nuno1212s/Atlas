@@ -143,7 +143,7 @@ impl ClientQuorumView {
 
     /// Handle a node having entered the quorum view
     pub fn handle_quorum_entered_received<NT>(&mut self, seq_no: &SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>,
-                                              quorum_view_state: QuorumViewCert)
+                                              quorum_view_state: QuorumViewCert) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.current_state {
             ClientState::Init => {
@@ -195,11 +195,15 @@ impl ClientQuorumView {
                             self.quorum_view_certificate = quorum_certs.clone();
 
                             self.current_state = ClientState::Stable;
+
+                            return QuorumProtocolResponse::Done;
                         }
                     } else {
                         error!("Received no messages from any nodes");
                     }
                 }
+
+                return QuorumProtocolResponse::Running;
             }
             ClientState::Stable => {
                 let sender = quorum_view_state.header().from();
@@ -224,16 +228,23 @@ impl ClientQuorumView {
                     entry.push(quorum_view_state.clone());
 
                     self.current_state = ClientState::Updating(received, received_message);
-                }
 
+                    return QuorumProtocolResponse::Running;
+                } else {
+                    return QuorumProtocolResponse::Nil;
+                }
                 //TODO: Change to the update state
             }
         }
+
+        return QuorumProtocolResponse::Nil
     }
 
-    pub(crate) fn handle_view_state_request<NT>(&self, p0: &mut SeqNoGen, p1: &GeneralNodeInfo, p2: &Arc<NT>, p3: Header) -> QuorumProtocolResponse where NT: 'static + ReconfigurationNode<ReconfData> {
+    pub(crate) fn handle_view_state_request<NT>(&self, p0: &mut SeqNoGen, p1: &GeneralNodeInfo, p2: &Arc<NT>, p3: Header) -> QuorumProtocolResponse
+        where NT: 'static + ReconfigurationNode<ReconfData> {
         todo!()
     }
+
 
     pub fn handle_timeout<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse {
         QuorumProtocolResponse::Nil

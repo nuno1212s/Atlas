@@ -9,6 +9,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{channel, threadpool};
 use atlas_common::globals::ReadOnly;
 use atlas_communication::{FullNetworkNode};
+use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
 use atlas_core::persistent_log::{MonolithicStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_core::serialize::{ReconfigurationProtocolMessage, ServiceMsg};
@@ -34,7 +35,7 @@ pub struct MonReplica<RP, S, A, OP, ST, LT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + Send + 'static,
-          OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
+          OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization, NT> + 'static,
           ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + 'static + MonolithicStateLog<S>, {
@@ -51,10 +52,10 @@ pub struct MonReplica<RP, S, A, OP, ST, LT, NT, PL>
 
 impl<RP, S, A, OP, ST, LT, NT, PL> MonReplica<RP, S, A, OP, ST, LT, NT, PL>
     where
-    RP: ReconfigurationProtocol + 'static,
+        RP: ReconfigurationProtocol + 'static,
         S: MonolithicState + 'static,
         A: Application<S> + Send + 'static,
-        OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + Send + 'static,
+        OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization, NT> + Send + 'static,
         LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
         ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
         PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + MonolithicStateLog<S> + 'static,

@@ -28,8 +28,7 @@ use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 /// This module will then be used by the parts of the system which must be reconfigurable
 /// (For example, the network
 
-pub type NetworkPredicate =
-fn(Arc<NetworkInfo>, NodeTriple) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
+pub type NetworkPredicate = fn(Arc<NetworkInfo>, NodeTriple) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
 
 
 /// Our current view of the network and the information about our own node

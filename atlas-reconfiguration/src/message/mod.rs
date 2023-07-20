@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use atlas_common::crypto::signature::Signature;
 use atlas_common::node_id::NodeId;
-use atlas_common::ordering::SeqNo;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::message::StoredMessage;
 use atlas_communication::serialize::Serializable;
@@ -30,7 +30,7 @@ pub struct QuorumEnterRequest {
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumNodeJoinApproval {
-    network_view_seq: SeqNo,
+    quorum_seq: SeqNo,
 
     requesting_node: NodeId,
     origin_node: NodeId,
@@ -42,11 +42,11 @@ pub struct QuorumNodeJoinApproval {
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumJoinCertificate {
     network_view_seq: SeqNo,
-    approvals: Vec<QuorumNodeJoinApproval>,
+    approvals: Vec<StoredMessage<QuorumNodeJoinApproval>>,
 }
 
 /// Reason message for the rejection of quorum entering request
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumEnterRejectionReason {
     NotAuthorized,
@@ -170,7 +170,7 @@ pub enum ReconfigMessage {
 
 impl QuorumNodeJoinApproval {
     pub fn new(network_view_seq: SeqNo, requesting_node: NodeId, origin_node: NodeId) -> Self {
-        Self { network_view_seq, requesting_node, origin_node }
+        Self { quorum_seq: network_view_seq, requesting_node, origin_node }
     }
 }
 
@@ -256,6 +256,16 @@ impl QuorumEnterRequest {
     pub fn new(node_triple: NodeTriple) -> Self {
         Self { node_triple }
     }
+
+    pub fn into_inner(self) -> NodeTriple {
+        self.node_triple
+    }
+}
+
+impl QuorumJoinCertificate {
+    pub fn new(network_view_seq: SeqNo, approvals: Vec<StoredMessage<QuorumNodeJoinApproval>>) -> Self {
+        Self { network_view_seq, approvals }
+    }
 }
 
 impl Debug for QuorumReconfigMessage {
@@ -272,5 +282,11 @@ impl Debug for QuorumReconfigMessage {
             QuorumReconfigMessage::QuorumLeaveResponse(quorum_leave_response) => write!(f, "QuorumLeaveResponse()"),
         }
 
+    }
+}
+
+impl Orderable for QuorumNodeJoinApproval {
+    fn sequence_number(&self) -> SeqNo {
+        self.quorum_seq
     }
 }
