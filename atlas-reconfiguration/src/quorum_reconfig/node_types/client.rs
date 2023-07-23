@@ -2,11 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 
 use log::{debug, error};
+use atlas_common::channel::ChannelSyncTx;
 
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::Header;
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
+use atlas_core::reconfiguration_protocol::QuorumUpdateMessage;
 use atlas_core::timeouts::Timeouts;
 
 use crate::{GeneralNodeInfo, QuorumProtocolResponse, SeqNoGen, TIMEOUT_DUR};
@@ -33,14 +35,17 @@ pub(crate) struct ClientQuorumView {
     /// The set of messages that we have received that are part of the current quorum view
     /// That agree on the current
     quorum_view_certificate: Vec<QuorumViewCert>,
+
+    channel_message: ChannelSyncTx<QuorumUpdateMessage>
 }
 
 impl ClientQuorumView {
-    pub fn new(quorum_view: Arc<RwLock<QuorumView>>) -> Self {
+    pub fn new(quorum_view: Arc<RwLock<QuorumView>>, message: ChannelSyncTx<QuorumUpdateMessage>, min_stable_quorum: usize) -> Self {
         ClientQuorumView {
             current_state: ClientState::Init,
             current_quorum_view: quorum_view,
             quorum_view_certificate: vec![],
+            channel_message: message,
         }
     }
 
@@ -56,7 +61,7 @@ impl ClientQuorumView {
 
                 let message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(reconf_message));
 
-                let _ = network_node.broadcast_reconfig_message(message, known_nodes.into_iter());
+                network_node.broadcast_reconfig_message(message, known_nodes.into_iter()).unwrap();
 
                 timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted_nodes / 2 + 1) as u32, seq_no.curr_seq());
 

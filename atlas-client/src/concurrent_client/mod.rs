@@ -7,6 +7,8 @@ use atlas_core::serialize::ClientServiceMsg;
 use std::sync::Arc;
 use atlas_communication::FullNetworkNode;
 use atlas_communication::protocol_node::ProtocolNetworkNode;
+use atlas_core::ordering_protocol::OrderProtocolTolerance;
+use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_reconfiguration::message::ReconfData;
 use atlas_reconfiguration::network_reconfig::NetworkInfo;
@@ -28,11 +30,12 @@ impl<RF, D, NT> ConcurrentClient<RF, D, NT>
     where D: ApplicationData + 'static,
           RF: ReconfigurationProtocol, NT: 'static {
     /// Creates a new concurrent client, with the given configuration
-    pub async fn boostrap_client(cfg: ClientConfig<RF, D, NT>, session_limit: usize) -> Result<Self> where
-        NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, ClientServiceMsg<D>> {
+    pub async fn boostrap_client<ROP>(cfg: ClientConfig<RF, D, NT>, session_limit: usize) -> Result<Self> where
+        NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, ClientServiceMsg<D>>,
+        ROP: OrderProtocolTolerance + 'static {
         let (tx, rx) = channel::new_bounded_sync(session_limit);
 
-        let client = Client::bootstrap(cfg).await?;
+        let client = Client::bootstrap::<ROP>(cfg).await?;
 
         let id = client.id();
         let data = client.client_data().clone();

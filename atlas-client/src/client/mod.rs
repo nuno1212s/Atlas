@@ -27,7 +27,9 @@ use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkN
 use atlas_execution::serialize::ApplicationData;
 use atlas_execution::system_params::SystemParams;
 use atlas_core::messages::{Message, ReplyMessage, SystemMessage};
-use atlas_core::reconfiguration_protocol::{ReconfigurableNodeTypes, ReconfigurationProtocol};
+use atlas_core::ordering_protocol::OrderProtocolTolerance;
+use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
+use atlas_core::reconfiguration_protocol::{QuorumUpdateMessage, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::serialize::{ClientMessage, ClientServiceMsg, OrderingProtocolMessage, ServiceMessage, ServiceMsg, StateTransferMessage};
 use atlas_core::timeouts::Timeouts;
 use atlas_metrics::benchmarks::ClientPerf;
@@ -113,6 +115,9 @@ pub struct ClientData<RF, D>
 
     //Reconfiguration protocol
     reconfig_protocol: RF,
+
+    // Receive messages from the reconfiguration protocol
+    reconfig_protocol_rx: ChannelSyncRx<QuorumUpdateMessage>,
 
     /*//We only want to have a single observer client for any and all sessions that the user
     //May have, so we keep this reference in here
@@ -266,8 +271,9 @@ impl<D, RF, NT> Client<RF, D, NT>
         NT: 'static
 {
     /// Bootstrap a client in `febft`.
-    pub async fn bootstrap(cfg: ClientConfig<RF, D, NT>) -> Result<Self>
-        where NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, ClientServiceMsg<D>> {
+    pub async fn bootstrap<ROP>(cfg: ClientConfig<RF, D, NT>) -> Result<Self>
+        where NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, ClientServiceMsg<D>>,
+              ROP: OrderProtocolTolerance + 'static, {
         let ClientConfig {
             n, f, node: node_config,
             unordered_rq_mode, reconfiguration,
@@ -294,16 +300,19 @@ impl<D, RF, NT> Client<RF, D, NT>
         let timeouts = Timeouts::new::<D>(node.id(), Duration::from_millis(1),
                                           default_timeout, exec_tx.clone());
 
+        let (reconf_tx, reconf_rx) = channel::new_bounded_sync(128);
+
         // TODO: Make timeouts actually work properly with the clients (including making the normal
         //timeouts utilize this same system)
 
-        let reconfig_protocol = RF::initialize_protocol(network_info_provider, node.clone(),
+        let reconfig_protocol = RF::initialize_protocol(network_info_provider,
+                                                        node.clone(),
                                                         timeouts.clone(),
-                                                        ReconfigurableNodeTypes::Client).await?;
+                                                        ReconfigurableNodeTypes::Client(reconf_tx),
+                                                        ROP::get_n_for_f(1)).await?;
 
         let stats = {
             None
-            //Some(Arc::new(ClientPerf::new()))
         };
 
         // create shared data
@@ -319,6 +328,7 @@ impl<D, RF, NT> Client<RF, D, NT>
                 .take(num_cpus::get())
                 .collect(),
             reconfig_protocol,
+            reconfig_protocol_rx: reconf_rx,
             stats,
         });
 
@@ -388,6 +398,10 @@ impl<D, RF, NT> Client<RF, D, NT>
 
     pub(super) fn client_data(&self) -> &Arc<ClientData<RF, D>> {
         &self.data
+    }
+
+    pub(super) fn get_quorum_view(&self) -> Vec<NodeId> {
+        self.data.reconfig_protocol.get_quorum_members()
     }
 
     pub(super) fn update_inner<T>(&mut self, operation: D::Request) -> Result<ClientRequestFut<D::Reply>>
@@ -899,6 +913,19 @@ impl<D, RF, NT> Client<RF, D, NT>
             match timeout {
                 Message::Timeout(timeout) => {
                     data.reconfig_protocol.handle_timeout(timeout).expect("Failed to deliver timeout");
+                }
+                _ => {
+                    todo!()
+                }
+            }
+        }
+    }
+
+    fn receive_reconf_updates(data: &Arc<ClientData<RF, D>>) {
+        while let Ok(update) = data.reconfig_protocol_rx.try_recv() {
+            match update {
+                QuorumUpdateMessage::UpdatedQuorumView(update) => {
+
                 }
                 _ => {
                     todo!()

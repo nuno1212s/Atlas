@@ -23,7 +23,7 @@ pub struct QuorumNode {
 
 /// The current view of nodes in the network, as in which of them
 /// are currently partaking in the consensus
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumView {
     sequence_number: SeqNo,

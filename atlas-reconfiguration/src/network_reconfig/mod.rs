@@ -122,8 +122,8 @@ impl NetworkInfo {
     }
 
     /// Handle a node having introduced itself to us by inserting it into our known nodes
-    pub(crate) fn handle_node_introduced(&self, node: NodeTriple) {
-        debug!("Received a node introduction message from node {:?}. Handling it", node);
+    pub(crate) fn handle_node_introduced(&self, node: NodeTriple) -> bool {
+        debug!("Handling a node having been introduced {:?}. Handling it", node);
 
         let mut write_guard = self.known_nodes.write().unwrap();
 
@@ -172,17 +172,24 @@ impl NetworkInfo {
     }
 
     /// Handle us having received a successfull network join response, with the list of known nodes
-    pub(crate) fn handle_successfull_network_join(&self, known_nodes: KnownNodesMessage) {
+    pub(crate) fn handle_received_network_view(&self, known_nodes: KnownNodesMessage) -> Vec<NodeId> {
         let mut write_guard = self.known_nodes.write().unwrap();
 
-        debug!("Successfully joined the network. Updating our known nodes list with the received list {:?}", known_nodes);
+        debug!("Updating our known nodes list with the received list {:?}", known_nodes);
+
+        let mut new_nodes = Vec::with_capacity(known_nodes.known_nodes().len());
 
         for node in known_nodes.into_nodes() {
-            Self::handle_single_node_introduced(&mut *write_guard, node);
+            let node_id = node.node_id();
+            if Self::handle_single_node_introduced(&mut *write_guard, node) {
+                new_nodes.push(node_id);
+            }
         }
+
+        new_nodes
     }
 
-    fn handle_single_node_introduced(write_guard: &mut KnownNodes, node: NodeTriple) {
+    fn handle_single_node_introduced(write_guard: &mut KnownNodes, node: NodeTriple) -> bool {
         let node_id = node.node_id();
 
         if !write_guard.node_keys.contains_key(&node_id) {
@@ -190,8 +197,12 @@ impl NetworkInfo {
 
             write_guard.node_keys.insert(node_id, public_key);
             write_guard.node_addrs.insert(node_id, node.addr().clone());
+
+            true
         } else {
             debug!("Node {:?} has already been introduced to us. Ignoring",node);
+
+            false
         }
     }
 
@@ -313,7 +324,7 @@ impl KnownNodes {
         let mut known_nodes = Self::empty();
 
         for node in nodes {
-            NetworkInfo::handle_single_node_introduced(&mut known_nodes, node)
+            NetworkInfo::handle_single_node_introduced(&mut known_nodes, node);
         }
 
         known_nodes
@@ -391,11 +402,13 @@ impl GeneralNodeInfo {
                             error!("Error while connecting to another node: {:?}", err);
                         }
                     }
+
+                    info!("{:?} // Connected to node {:?}",self.network_view.node_id(), node);
                 }
 
-                info!("Broadcasting reconfiguration network join message");
+                info!("Broadcasting reconfiguration network join message to known nodes {:?}", known_nodes);
 
-                let _ = network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter());
+                network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter()).unwrap();
 
                 timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted / 2 + 1) as u32, seq.curr_seq());
 
@@ -457,9 +470,9 @@ impl GeneralNodeInfo {
                     ReconfigurationMessageType::NetworkReconfig(NetworkReconfigMessage::NetworkJoinRequest(self.network_view.node_triple())),
                 );
 
-                info!("Broadcasting reconfiguration network join message");
+                info!("Received timeout, broadcasting reconfiguration network join message to known nodes {:?}", known_nodes);
 
-                let _ = network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter());
+                network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter()).unwrap();
 
                 timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted / 2 + 1) as u32, seq_gen.curr_seq());
 
@@ -499,19 +512,26 @@ impl GeneralNodeInfo {
 
                                     timeouts.cancel_reconfig_timeout(Some(seq_gen.curr_seq()));
 
-                                    self.network_view.handle_successfull_network_join(network_information);
+                                    let unknown_nodes = self.network_view.handle_received_network_view(network_information);
+
+                                    for node_id in unknown_nodes {
+                                        if !network_node.node_connections().is_connected_to_node(&node_id) {
+                                            warn!("{:?} // Connecting to node {:?} as we don't know it yet", self.network_view.node_id(), node_id);
+                                            network_node.node_connections().connect_to_node(node_id);
+                                        }
+                                    }
 
                                     certificates.push((header.from(), signature));
 
                                     if certificates.len() >= (*contacted * 2 / 3) + 1 {
-                                        info!("We have enough certificates to join the network {}, moving to introduction phase", certificates.len());
+                                        warn!("We have enough certificates to join the network {}, moving to introduction phase", certificates.len());
 
                                         let introduction_message = ReconfigurationMessage::new(
                                             seq_gen.next_seq(),
                                             ReconfigurationMessageType::NetworkReconfig(NetworkReconfigMessage::NetworkHelloRequest(self.network_view.node_triple(), certificates.clone())),
                                         );
 
-                                        network_node.broadcast_reconfig_message(introduction_message, self.network_view.known_nodes().into_iter());
+                                        network_node.broadcast_reconfig_message(introduction_message, self.network_view.known_nodes().into_iter()).unwrap();
 
                                         self.current_state = NetworkNodeState::IntroductionPhase {
                                             contacted: 0,
@@ -577,7 +597,15 @@ impl GeneralNodeInfo {
                     }
                     NetworkReconfigMessage::NetworkHelloReply(known_nodes) => {
                         if responded.insert(header.from()) {
-                            self.network_view.handle_successfull_network_join(known_nodes);
+                            let unknown_nodes = self.network_view.handle_received_network_view(known_nodes);
+
+                            for node_id in unknown_nodes {
+                                if !network_node.node_connections().is_connected_to_node(&node_id) {
+                                    warn!("{:?} // Connecting to node {:?} as we don't know it yet", self.network_view.node_id(), node_id);
+
+                                    network_node.node_connections().connect_to_node(node_id);
+                                }
+                            }
                         }
 
                         if responded.len() >= (*contacted * 2 / 3) + 1 {

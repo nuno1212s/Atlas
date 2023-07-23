@@ -21,7 +21,7 @@ use atlas_core::ordering_protocol::OrderProtocolPoll;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{OperationMode, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog};
-use atlas_core::reconfiguration_protocol::{QuorumJoinCert, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
+use atlas_core::reconfiguration_protocol::{QuorumAlterationResponse, QuorumJoinCert, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ReconfigurationProtocolMessage, ServiceMsg, StateTransferMessage};
@@ -140,22 +140,34 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         let replica_node_args = ReconfigurableNodeTypes::Replica(reconf_tx, reply_rx);
 
         debug!("{:?} // Initializing reconfiguration protocol", log_node_id);
-        let reconfig_protocol = RP::initialize_protocol(network_info, node.clone(), timeouts.clone(), replica_node_args).await?;
+        let reconfig_protocol = RP::initialize_protocol(network_info, node.clone(), timeouts.clone(), replica_node_args, OP::get_n_for_f(1)).await?;
 
         info!("{:?} // Waiting for reconfiguration protocol to stabilize", log_node_id);
 
-        let quorum = loop {
+        let mut quorum = loop {
             let message = reconf_rx.recv().unwrap();
 
             match message {
                 QuorumReconfigurationMessage::ReconfigurationProtocolStable(quorum) => {
+                    reconf_response_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful)).unwrap();
+
                     break quorum;
                 }
                 QuorumReconfigurationMessage::RequestQuorumJoin(_, _) => {
-                    info!("Received request for quorum view alteration, but we are even done with reconfiguration stabilization?");
+                    error!("Received request for quorum view alteration, but we are even done with reconfiguration stabilization?");
+
+                    return Err(Error::simple_with_msg(ErrorKind::ReconfigurationNotStable, "Received alteration request before stable quorum was reached"));
                 }
             }
         };
+
+        if quorum.len() < OP::get_n_for_f(1) {
+            error!("Received a stable message, but the quorum is not big enough?");
+
+            return Err(Error::simple_with_msg(ErrorKind::ReconfigurationNotStable, "The reconfiguration protocol is not stable with , but we received a stable message?"));
+        }
+
+        info!("{:?} // Reconfiguration protocol stabilized with {} nodes ({:?}), starting replica", log_node_id, quorum.len(), quorum);
 
         let (rq_pre_processor, batch_input) = initialize_request_pre_processor
             ::<WDRoundRobin, D, OP::Serialization, ST::Serialization, LT::Serialization, NT>(4, node.clone());
@@ -438,7 +450,6 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                     info!("Received request for quorum view alteration, but we are even done with reconfiguration stabilization?");
 
                     let result = self.ordering_protocol.attempt_network_view_change(certificate)?;
-                    
                 }
                 QuorumReconfigurationMessage::ReconfigurationProtocolStable(_) => {
                     info!("Received reconfiguration protocol stable, but we are even done with reconfiguration stabilization?");

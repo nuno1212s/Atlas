@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 use futures::future::join_all;
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 
 use atlas_common::async_runtime as rt;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
@@ -31,7 +31,7 @@ enum ReplicaState {
     LeavingQuorum,
 }
 
-pub(crate) struct ReplicaQuorumView<JC> {
+pub(crate) struct ReplicaQuorumView {
     /// The current state of the replica
     current_state: ReplicaState,
     /// The current quorum view we know of
@@ -40,23 +40,26 @@ pub(crate) struct ReplicaQuorumView<JC> {
     /// Predicates that must be satisfied for a node to be allowed to join the quorum
     predicates: Vec<QuorumPredicate>,
     /// Channel to communicate with the ordering protocol
-    quorum_communication: ChannelSyncTx<QuorumReconfigurationMessage<JC>>,
+    quorum_communication: ChannelSyncTx<QuorumReconfigurationMessage<QuorumJoinCertificate>>,
     /// Channel to receive responses from the quorum
     quorum_responses: ChannelSyncRx<QuorumReconfigurationResponse>,
+    min_stable_quorum: usize,
 }
 
-impl<JC> ReplicaQuorumView<JC> {
+impl ReplicaQuorumView {
     pub fn new(
         quorum_view: Arc<RwLock<QuorumView>>,
-        quorum_tx: ChannelSyncTx<QuorumReconfigurationMessage<JC>>,
+        quorum_tx: ChannelSyncTx<QuorumReconfigurationMessage<QuorumJoinCertificate>>,
         quorum_response_rx: ChannelSyncRx<QuorumReconfigurationResponse>,
-        predicates: Vec<QuorumPredicate>) -> Self {
+        predicates: Vec<QuorumPredicate>,
+        min_stable_quorum: usize) -> Self {
         Self {
             current_state: ReplicaState::Init,
             current_view: quorum_view,
             predicates,
             quorum_communication: quorum_tx,
             quorum_responses: quorum_response_rx,
+            min_stable_quorum,
         }
     }
 
@@ -64,17 +67,19 @@ impl<JC> ReplicaQuorumView<JC> {
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match self.current_state {
             ReplicaState::Init => {
-                let reconf_message = QuorumReconfigMessage::NetworkViewStateRequest;
+                let reconf_message = ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::NetworkViewStateRequest);
 
                 let known_nodes = node.network_view.known_nodes();
 
                 let contacted_nodes = known_nodes.len();
 
-                let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(reconf_message));
+                info!("Broadcasting network view state request to {:?} nodes", known_nodes);
 
-                let _ = network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter());
+                let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), reconf_message);
 
-                timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted_nodes / 2 + 1) as u32, seq_no.curr_seq());
+                network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter()).unwrap();
+
+                timeouts.timeout_reconfig_request(TIMEOUT_DUR, ((contacted_nodes * 2 / 3) + 1) as u32, seq_no.curr_seq());
 
                 self.current_state = ReplicaState::Initializing(contacted_nodes, Default::default(), Default::default());
 
@@ -88,7 +93,7 @@ impl<JC> ReplicaQuorumView<JC> {
     }
 
     pub fn handle_view_state_message<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo,
-                                         network_node: &Arc<NT>, quorum_view_state: QuorumViewCert)
+                                         network_node: &Arc<NT>, timeouts: &Timeouts, quorum_view_state: QuorumViewCert)
                                          -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.current_state {
@@ -139,7 +144,7 @@ impl<JC> ReplicaQuorumView<JC> {
                                 *write_guard = quorum_certs.first().unwrap().message().clone();
                             }
 
-                            return self.start_join_quorum(seq_no, node, network_node);
+                            return self.start_join_quorum(seq_no, node, network_node, timeouts);
                         } else {
                             error!("Received {:?} messages for quorum view {:?}, but needed {:?} messages",
                                    quorum_certs.len(), quorum_digest, needed_messages);
@@ -161,6 +166,8 @@ impl<JC> ReplicaQuorumView<JC> {
         where NT: ReconfigurationNode<ReconfData> + 'static {
         let quorum_view = self.current_view.read().unwrap().clone();
 
+        debug!("Received view state request from node {:?} with seq {:?}, replying with {:?}", header.from(), seq, quorum_view);
+
         network_node.send_reconfig_message(ReconfigurationMessage::new(seq, ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::NetworkViewState(quorum_view))), header.from());
 
         QuorumProtocolResponse::Nil
@@ -178,9 +185,26 @@ impl<JC> ReplicaQuorumView<JC> {
 
                 let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(reconf_message));
 
-                let _ = network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter());
+                network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter()).unwrap();
 
                 self.current_state = ReplicaState::Initializing(contacted_nodes, Default::default(), Default::default());
+
+                QuorumProtocolResponse::Running
+            }
+            ReplicaState::JoiningQuorum(_, _, _) => {
+                let enter_request = QuorumEnterRequest::new(node.network_view.node_triple());
+
+                let quorum_enter_request = QuorumReconfigMessage::QuorumEnterRequest(enter_request);
+
+                let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(quorum_enter_request));
+
+                let quorum_members = self.current_view.read().unwrap().quorum_members().clone();
+
+                let contacted_nodes = quorum_members.len();
+
+                network_node.broadcast_reconfig_message(reconfig_message, quorum_members.into_iter()).unwrap();
+
+                self.current_state = ReplicaState::JoiningQuorum(contacted_nodes, Default::default(), Default::default());
 
                 QuorumProtocolResponse::Running
             }
@@ -191,16 +215,37 @@ impl<JC> ReplicaQuorumView<JC> {
         }
     }
 
-    pub fn start_join_quorum<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>) -> QuorumProtocolResponse
+    pub fn start_join_quorum<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         let current_quorum_members = self.current_view.read().unwrap().quorum_members().clone();
 
         if current_quorum_members.is_empty() || current_quorum_members.contains(&node.network_view.node_id()) {
-            info!("We are already a part of the quorum, moving to stable");
+            warn!("We are already a part of the quorum, moving to stable");
 
             self.current_state = ReplicaState::Stable;
 
-            QuorumProtocolResponse::Done
+            if current_quorum_members.len() >= self.min_stable_quorum {
+                self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members)).unwrap();
+
+                loop {
+                    let join_response = self.quorum_responses.recv().unwrap();
+                    // Wait for the response from the ordering protocol
+                    match join_response {
+                        QuorumReconfigurationResponse::QuorumAlterationResponse(response) => {
+                            return match response {
+                                QuorumAlterationResponse::Successful => {
+                                    self.handle_quorum_entered()
+                                }
+                                QuorumAlterationResponse::Failed() => {
+                                    self.start_join_quorum(seq_no, node, network_node, timeouts)
+                                }
+                            };
+                        }
+                    }
+                }
+            } else {
+                QuorumProtocolResponse::Running
+            }
         } else {
             info!("Starting join quorum procedure, contacting {:?}", current_quorum_members);
 
@@ -210,7 +255,9 @@ impl<JC> ReplicaQuorumView<JC> {
 
             let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(reconf_message));
 
-            let _ = network_node.broadcast_reconfig_message(reconfig_message, current_quorum_members.into_iter());
+            timeouts.timeout_reconfig_request(TIMEOUT_DUR, ((current_quorum_members.len() * 2 / 3) + 1) as u32, seq_no.curr_seq());
+
+            network_node.broadcast_reconfig_message(reconfig_message, current_quorum_members.into_iter()).unwrap();
 
             QuorumProtocolResponse::Running
         }
@@ -248,10 +295,17 @@ impl<JC> ReplicaQuorumView<JC> {
                             if let Some(reason) = join_result.unwrap() {
                                 let result = QuorumEnterResponse::Rejected(reason);
 
-                                network_node.send_reconfig_message(ReconfigurationMessage::new(seq, ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::QuorumEnterResponse(result))), header.from());
+                                let quorum_reconfig_msg = ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::QuorumEnterResponse(result));
+
+                                let reconf_message = ReconfigurationMessage::new(seq, quorum_reconfig_msg);
+
+                                network_node.send_reconfig_message(reconf_message, header.from()).unwrap();
+
                                 return;
                             }
                         }
+
+                        debug!("Node {:?} has been approved to join the quorum, replying with node join approval", node_triple.node_id());
 
                         // If all predicates pass, then he should be in the clear
                         let join_approval =
@@ -264,7 +318,7 @@ impl<JC> ReplicaQuorumView<JC> {
                         network_node.send_reconfig_message(ReconfigurationMessage::new(seq, ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::QuorumEnterResponse(join_approval))), header.from());
                     });
 
-                    QuorumProtocolResponse::Done
+                    QuorumProtocolResponse::Nil
                 } else {
                     let enter_response = QuorumReconfigMessage::QuorumEnterResponse(QuorumEnterResponse::Rejected(QuorumEnterRejectionReason::NodeIsNotQuorumParticipant));
 
@@ -279,7 +333,7 @@ impl<JC> ReplicaQuorumView<JC> {
         }
     }
 
-    pub fn handle_quorum_enter_response<NT>(&mut self, seq_gen: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, message: QuorumEnterResponse) -> QuorumProtocolResponse
+    pub fn handle_quorum_enter_response<NT>(&mut self, seq_gen: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts, header: Header, message: QuorumEnterResponse) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.current_state {
             ReplicaState::JoiningQuorum(contacted, received, join_approvals) => {
@@ -296,7 +350,11 @@ impl<JC> ReplicaQuorumView<JC> {
                     }
                 }
 
+                timeouts.received_reconfig_request(header.from(), seq_gen.curr_seq());
+
                 let necessary_response = (*contacted * 2 / 3) + 1;
+
+                debug!("Received Quorum Enter Response. Joining Quorum State: {:?} responses out of {:?} needed", received.len(), necessary_response);
 
                 if received.len() >= necessary_response {
                     let mut collected_join_approvals = Vec::with_capacity(join_approvals.len());
@@ -319,12 +377,13 @@ impl<JC> ReplicaQuorumView<JC> {
                         return QuorumProtocolResponse::Running;
                     }
 
-                    let certificate = QuorumJoinCertificate::new(*seq, approvals.clone());
+                    let certificate = QuorumJoinCertificate::new(seq, approvals.clone());
 
                     self.quorum_communication.send(QuorumReconfigurationMessage::RequestQuorumJoin(node.network_view.node_id(), certificate));
 
                     loop {
                         let join_response = self.quorum_responses.recv().unwrap();
+
                         // Wait for the response from the ordering protocol
                         match join_response {
                             QuorumReconfigurationResponse::QuorumAlterationResponse(response) => {
@@ -333,7 +392,7 @@ impl<JC> ReplicaQuorumView<JC> {
                                         self.handle_quorum_entered()
                                     }
                                     QuorumAlterationResponse::Failed() => {
-                                        self.start_join_quorum(seq_gen, node, network_node)
+                                        self.start_join_quorum(seq_gen, node, network_node, timeouts)
                                     }
                                 };
                             }
@@ -371,5 +430,4 @@ impl<JC> ReplicaQuorumView<JC> {
         // Only send this message to nodes that do not partake in the quorum, as those will be notified of a change by their own ordering protocols
         network_node.broadcast_reconfig_message(ReconfigurationMessage::new(seq_gen.next_seq(), reconf_message), known_nodes);
     }
-
 }

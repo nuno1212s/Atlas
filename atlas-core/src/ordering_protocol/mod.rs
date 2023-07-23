@@ -29,8 +29,14 @@ pub struct OrderingProtocolArgs<D, NT, PL>(pub ExecutorHandle<D>, pub Timeouts,
                                            pub BatchOutput<D::Request>, pub Arc<NT>,
                                            pub PL, pub Vec<NodeId>) where D: ApplicationData;
 
+pub trait OrderProtocolTolerance {
+
+    fn get_n_for_f(f: usize) -> usize;
+
+}
+
 /// The trait for an ordering protocol to be implemented in Atlas
-pub trait OrderingProtocol<D, NT, PL>: Orderable where D: ApplicationData + 'static {
+pub trait OrderingProtocol<D, NT, PL>: OrderProtocolTolerance + Orderable where D: ApplicationData + 'static {
     /// The type which implements OrderingProtocolMessage, to be implemented by the developer
     type Serialization: OrderingProtocolMessage + 'static;
 

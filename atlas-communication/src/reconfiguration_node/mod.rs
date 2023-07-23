@@ -9,10 +9,10 @@ use atlas_common::peer_addr::PeerAddr;
 use atlas_common::channel;
 
 use std::sync::{Arc};
+use std::time::Duration;
 
 /// Represents the network information that a node needs to know about other nodes
 pub trait NetworkInformationProvider: Send + Sync {
-
     /// Get the node id of our own node
     fn get_own_addr(&self) -> PeerAddr;
 
@@ -24,7 +24,6 @@ pub trait NetworkInformationProvider: Send + Sync {
 
     /// Get the peer addr for a given node
     fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr>;
-
 }
 
 /// Handling of incoming requests
@@ -34,7 +33,7 @@ pub trait ReconfigurationIncomingHandler<T> {
 
     /// Try to receive a reconfiguration message from other nodes
     /// If no messages are already available at the time of the call, then it will return None
-    fn try_receive_reconfig_message(&self) -> Result<Option<T>>;
+    fn try_receive_reconfig_message(&self, timeout: Option<Duration>) -> Result<Option<T>>;
 }
 
 /// Trait for handling reconfiguration messages and etc
@@ -76,7 +75,6 @@ impl<T> ReconfigurationMessageHandler<T> {
     }
 
     pub fn push_request(&self, message: T) -> Result<()> {
-
         if let Err(err) = self.reconfiguration_message_handling.0.send(message) {
             return Err(Error::simple_with_msg(ErrorKind::CommunicationChannel, format!("Failed to send reconfiguration message to the message channel. Error: {:?}", err).as_str()));
         }
@@ -90,18 +88,37 @@ impl<T> ReconfigurationIncomingHandler<T> for ReconfigurationMessageHandler<T> {
         self.reconfiguration_message_handling.1.recv().wrapped_msg(ErrorKind::CommunicationChannel, "Failed to receive message")
     }
 
-    fn try_receive_reconfig_message(&self) -> Result<Option<T>> {
-        match self.reconfiguration_message_handling.1.try_recv() {
-            Ok(msg) => {
-                Ok(Some(msg))
-            }
-            Err(err) => {
-                match err {
-                    TryRecvError::ChannelEmpty | TryRecvError::Timeout => {
-                        Ok(None)
+    fn try_receive_reconfig_message(&self, timeout: Option<Duration>) -> Result<Option<T>> {
+        if let Some(timeout) = timeout
+        {
+            match self.reconfiguration_message_handling.1.recv_timeout(timeout) {
+                Ok(msg) => {
+                    Ok(Some(msg))
+                }
+                Err(err) => {
+                    match err {
+                        TryRecvError::ChannelEmpty | TryRecvError::Timeout => {
+                            Ok(None)
+                        }
+                        TryRecvError::ChannelDc => {
+                            Err(Error::simple_with_msg(ErrorKind::CommunicationChannel, "Reconfig message channel has disconnected?"))
+                        }
                     }
-                    TryRecvError::ChannelDc => {
-                        Err(Error::simple_with_msg(ErrorKind::CommunicationChannel, "Reconfig message channel has disconnected?"))
+                }
+            }
+        } else {
+            match self.reconfiguration_message_handling.1.try_recv() {
+                Ok(msg) => {
+                    Ok(Some(msg))
+                }
+                Err(err) => {
+                    match err {
+                        TryRecvError::ChannelEmpty | TryRecvError::Timeout => {
+                            Ok(None)
+                        }
+                        TryRecvError::ChannelDc => {
+                            Err(Error::simple_with_msg(ErrorKind::CommunicationChannel, "Reconfig message channel has disconnected?"))
+                        }
                     }
                 }
             }

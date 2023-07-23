@@ -8,10 +8,15 @@ use atlas_communication::reconfiguration_node::{NetworkInformationProvider, Reco
 use crate::serialize::ReconfigurationProtocolMessage;
 use crate::timeouts::{RqTimeout, Timeouts};
 
+/// Messages to be sent by the reconfiguration protocol
+/// to the ordering protocol relating changes that have undergone in the
+/// Quorum View.
 pub enum QuorumReconfigurationMessage<JC> {
     /// The reconfiguration protocol has reached stability and we can now start to execute the
     /// Quorum protocol, with the given base nodes
     ReconfigurationProtocolStable(Vec<NodeId>),
+    // We have been granted permission into an existing quorum, and we must
+    // now indicate to the ordering protocol that he can attempt to join the quorum
     RequestQuorumJoin(NodeId, JC),
 }
 
@@ -24,8 +29,15 @@ pub enum QuorumAlterationResponse {
     Failed(),
 }
 
+/// Analogous to the `QuorumReconfigurationMessage`, this is the message that the ordering protocol
+/// will send to the reconfiguration protocol to notify it of changes in the quorum view
+/// This is aimed for clients, which only listen to quorum updates, they don't actually participate
+pub enum QuorumUpdateMessage {
+    UpdatedQuorumView(Vec<NodeId>),
+}
+
 pub enum ReconfigurableNodeTypes<JC> {
-    Client,
+    Client(ChannelSyncTx<QuorumUpdateMessage>),
     Replica(ChannelSyncTx<QuorumReconfigurationMessage<JC>>,
             ChannelSyncRx<QuorumReconfigurationResponse>),
 }
@@ -34,7 +46,7 @@ pub type QuorumJoinCert<RP: ReconfigurationProtocolMessage> = RP::QuorumJoinCert
 
 pub enum ReconfigResponse {
     Running,
-    Stop
+    Stop,
 }
 
 /// The trait defining the necessary functionality for a reconfiguration protocol (at least at the moment)
@@ -64,7 +76,8 @@ pub trait ReconfigurationProtocol: Send + Sync + 'static {
     /// updates
     async fn initialize_protocol<NT>(information: Arc<Self::InformationProvider>,
                                      node: Arc<NT>, timeouts: Timeouts,
-                                     node_type: ReconfigurableNodeTypes<QuorumJoinCert<Self::Serialization>>) -> Result<Self>
+                                     node_type: ReconfigurableNodeTypes<QuorumJoinCert<Self::Serialization>>,
+                                     min_stable_node_count: usize) -> Result<Self>
         where NT: ReconfigurationNode<Self::Serialization> + 'static, Self: Sized;
 
     /// Handle a timeout from the timeouts layer
