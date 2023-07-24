@@ -62,5 +62,6 @@ pub trait FullNetworkNode<NI, RM, PM>: ProtocolNetworkNode<PM> + Reconfiguration
     type Config;
 
     /// Bootstrap the node
-    async fn bootstrap(network_info_provider: Arc<NI>, node_config: Self::Config) -> Result<Arc<Self>>;
+    async fn bootstrap(network_info_provider: Arc<NI>, node_config: Self::Config) -> Result<Self>
+        where Self: Sized;
 }

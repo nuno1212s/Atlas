@@ -501,7 +501,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TcpNode<NI, RM, PM>
 {
     type Config = NodeConfig;
 
-    async fn bootstrap(network_info_provider: Arc<NI>, cfg: Self::Config) -> Result<Arc<Self>> where NI: NetworkInformationProvider {
+    async fn bootstrap(network_info_provider: Arc<NI>, cfg: Self::Config) -> Result<Self> where NI: NetworkInformationProvider {
         let id = cfg.id;
 
         debug!("Initializing sockets.");
@@ -545,7 +545,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TcpNode<NI, RM, PM>
 
         debug!("{:?} // Initializing node reference", id);
 
-        let node = Arc::new(TcpNode {
+        let node = TcpNode {
             id,
             first_cli: cfg.first_cli,
             rng,
@@ -553,7 +553,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TcpNode<NI, RM, PM>
             peer_connections,
             reconfig_handling: reconfig_message_handler,
             client_pooling: peers,
-        });
+        };
 
         // success
         Ok(node)

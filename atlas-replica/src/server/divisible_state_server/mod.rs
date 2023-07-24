@@ -11,7 +11,7 @@ use atlas_core::ordering_protocol::reconfigurable_order_protocol::Reconfigurable
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{DivisibleStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_core::serialize::ServiceMsg;
+use atlas_core::smr::networking::SMRNetworkNode;
 use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
 use atlas_execution::app::Application;
 use atlas_execution::state::divisible_state::{AppStateMessage, DivisibleState, InstallStateMessage};
@@ -29,7 +29,7 @@ pub struct DivStReplica<RP, S, A, OP, ST, LT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
           S: DivisibleState + 'static,
           A: Application<S> + Send + 'static,
-          OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization, NT> + 'static,
+          OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + 'static,
           ST: DivisibleStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + 'static + DivisibleStateLog<S>,
@@ -48,16 +48,15 @@ impl<RP, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, S, A, OP, ST, LT, NT, PL> wh
     RP: ReconfigurationProtocol + 'static,
     S: DivisibleState + Send + 'static,
     A: Application<S> + Send + 'static,
-    OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization, NT> + Send + 'static,
+    OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
     LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
     ST: DivisibleStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
     PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + DivisibleStateLog<S> + 'static,
-    NT: FullNetworkNode<RP::InformationProvider, RP::Serialization, ServiceMsg<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static {
+    NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization> + 'static, {
     pub async fn bootstrap(cfg: DivisibleStateReplicaConfig<RP, S, A, OP, ST, LT, NT, PL>) -> Result<Self> {
         let DivisibleStateReplicaConfig {
             service, replica_config, st_config
         } = cfg;
-
 
         let (executor_handle, executor_receiver) = DivisibleStateExecutor::<S, A, NT>::init_handle();
 
@@ -66,15 +65,15 @@ impl<RP, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, S, A, OP, ST, LT, NT, PL> wh
         let node = inner_replica.node.clone();
 
         //CURRENTLY DISABLED, USING THREADPOOL INSTEAD
-        let reply_handle = Replier::new(node.id(), node.clone());
+        let reply_handle = Replier::new(ProtocolNetworkNode::id(&*node), node.clone());
 
         let (state_tx, checkpoint_rx) =
-            DivisibleStateExecutor::init::<OP::Serialization, ST::Serialization, LT::Serialization, ReplicaReplier>
-                (reply_handle, executor_receiver, None, service, inner_replica.node.clone())?;
+            DivisibleStateExecutor::init::<ReplicaReplier>
+                (reply_handle, executor_receiver, None, service, node.clone())?;
 
         let state_transfer_protocol = ST::initialize(st_config, inner_replica.timeouts.clone(),
-                                                     inner_replica.node.clone(),
-                                                     inner_replica.persistent_log.clone(), state_tx.clone())?;
+                                                     node.clone(), inner_replica.persistent_log.clone(),
+                                                     state_tx.clone())?;
 
         let view = inner_replica.ordering_protocol.view();
 
@@ -111,7 +110,10 @@ impl<RP, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, S, A, OP, ST, LT, NT, PL> wh
 
             let (descriptor, state_parts) = checkpoint.into_state();
 
-            self.state_transfer_protocol.handle_state_received_from_app(self.inner_replica.ordering_protocol.view(), descriptor, state_parts)?;
+            let current_view = self.inner_replica.ordering_protocol.view();
+
+            self.state_transfer_protocol.handle_state_received_from_app(current_view, descriptor, state_parts)?;
+
             self.inner_replica.ordering_protocol.checkpointed(seq_no)?;
         }
 

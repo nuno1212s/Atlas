@@ -47,13 +47,11 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
         where Self: Sized;
 
     /// Request the latest state from the rest of replicas
-    fn request_latest_log(&mut self,
-                              order_protocol: &mut OP) -> Result<()>
+    fn request_latest_log(&mut self, order_protocol: &mut OP) -> Result<()>
         where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
     /// Handle a state transfer protocol message that was received while executing the ordering protocol
-    fn handle_off_ctx_message(&mut self,
-                                  order_protocol: &mut OP,
+    fn handle_off_ctx_message(&mut self, order_protocol: &mut OP,
                                   message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
                                   -> Result<()>
         where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
@@ -61,8 +59,7 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
     /// Process a state transfer protocol message, received from other replicas
     /// We also provide a mutable reference to the stateful ordering protocol, so the
     /// state can be installed (if that's the case)
-    fn process_message(&mut self,
-                           order_protocol: &mut OP,
+    fn process_message(&mut self, order_protocol: &mut OP,
                            message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
                            -> Result<LTResult<D>>
         where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;

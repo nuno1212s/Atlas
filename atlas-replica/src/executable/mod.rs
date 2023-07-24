@@ -23,6 +23,7 @@ use atlas_execution::serialize::ApplicationData;
 use atlas_core::messages::{Message, ReplyMessage, SystemMessage};
 use atlas_core::ordering_protocol::OrderingProtocol;
 use atlas_core::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
+use atlas_core::smr::exec::{ReplyNode, ReplyType};
 use atlas_metrics::metrics::metric_duration;
 use atlas_reconfiguration::message::ReconfData;
 use atlas_reconfiguration::network_reconfig::NetworkInfo;
@@ -33,34 +34,28 @@ const EXECUTING_BUFFER: usize = 16384;
 //const REPLY_CONCURRENCY: usize = 4;
 
 pub trait ExecutorReplier: Send {
-    fn execution_finished<D, OP, ST, LT, NT>(
+    fn execution_finished<D, NT>(
         node: Arc<NT>,
         seq: Option<SeqNo>,
         batch: BatchReplies<D::Reply>,
     ) where D: ApplicationData + 'static,
-            OP: OrderingProtocolMessage + 'static,
-            ST: StateTransferMessage + 'static,
-            LT: LogTransferMessage + 'static,
-            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LT>> + 'static;
+            NT: ReplyNode<D> + 'static;
 }
 
 pub struct FollowerReplier;
 
 impl ExecutorReplier for FollowerReplier {
-    fn execution_finished<D, OP, ST, LT, NT>(
+    fn execution_finished<D, NT>(
         node: Arc<NT>,
         seq: Option<SeqNo>,
         batch: BatchReplies<D::Reply>,
     ) where D: ApplicationData + 'static,
-            OP: OrderingProtocolMessage + 'static,
-            ST: StateTransferMessage + 'static,
-            LT: LogTransferMessage + 'static,
-            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LT>> + 'static {
+            NT: ReplyNode<D> + 'static {
         if let None = seq {
             //Followers only deliver replies to the unordered requests, since it's not part of the quorum
             // And the requests it executes are only forwarded to it
 
-            ReplicaReplier::execution_finished::<D, OP, ST, LT, NT>(node, seq, batch);
+            ReplicaReplier::execution_finished::<D, NT>(node, seq, batch);
         }
     }
 }
@@ -68,15 +63,12 @@ impl ExecutorReplier for FollowerReplier {
 pub struct ReplicaReplier;
 
 impl ExecutorReplier for ReplicaReplier {
-    fn execution_finished<D, OP, ST, LT, NT>(
+    fn execution_finished<D, NT>(
         mut send_node: Arc<NT>,
         _seq: Option<SeqNo>,
         batch: BatchReplies<D::Reply>,
     ) where D: ApplicationData + 'static,
-            OP: OrderingProtocolMessage + 'static,
-            ST: StateTransferMessage + 'static,
-            LT: LogTransferMessage + 'static,
-            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LT>> + 'static {
+            NT: ReplyNode<D> + 'static {
         if batch.len() == 0 {
             //Ignore empty batches.
             return;
@@ -102,21 +94,20 @@ impl ExecutorReplier for ReplicaReplier {
                 // but for now this will do
                 if let Some((message, last_peer_id)) = curr_send.take() {
                     let flush = peer_id != last_peer_id;
-                    send_node.send(message, last_peer_id, flush);
+                    send_node.send(ReplyType::Ordered, message, last_peer_id, flush);
                 }
 
                 // store previous reply message and peer id,
                 // for the next iteration
                 //TODO: Choose ordered or unordered reply
-                let message =
-                    SystemMessage::OrderedReply(ReplyMessage::new(session_id, operation_id, payload));
+                let message = ReplyMessage::new(session_id, operation_id, payload);
 
                 curr_send = Some((message, peer_id));
             }
 
             // deliver last reply
             if let Some((message, last_peer_id)) = curr_send {
-                send_node.send(message, last_peer_id, true);
+                send_node.send(ReplyType::Ordered, message, last_peer_id, true);
             } else {
                 // slightly optimize code path;
                 // the previous if branch will always execute

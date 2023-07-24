@@ -18,7 +18,7 @@ pub struct AppStateMessage<S> where S: MonolithicState {
 
 /// The type abstraction for a monolithic state (only needs to be serializable, in reality)
 #[cfg(feature = "serialize_serde")]
-pub trait MonolithicState: for<'a> Deserialize<'a> + Serialize + Send + Clone {
+pub trait MonolithicState: for<'a> Deserialize<'a> + Serialize + Send + Sync + Clone {
 
     ///Serialize a request from your service, given the writer to serialize into
     ///  (either for network sending or persistent storing)
@@ -31,7 +31,7 @@ pub trait MonolithicState: for<'a> Deserialize<'a> + Serialize + Send + Clone {
 }
 
 #[cfg(feature = "serialize_capnp")]
-pub trait MonolithicState: Send + Clone {}
+pub trait MonolithicState: Send + Sync + Clone {}
 
 
 impl<S> AppStateMessage<S> where S: MonolithicState {

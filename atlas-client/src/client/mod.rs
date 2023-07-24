@@ -291,7 +291,7 @@ impl<D, RF, NT> Client<RF, D, NT>
         // FIXME: can the client receive rogue reply messages?
         // perhaps when it reconnects to a replica after experiencing
         // network problems? for now ignore rogue messages...
-        let node = NT::bootstrap(network_info_provider.clone(), node_config).await?;
+        let node = Arc::new(NT::bootstrap(network_info_provider.clone(), node_config).await?);
 
         let default_timeout = Duration::from_secs(3);
 

@@ -13,3 +13,4 @@ pub mod metric;
 pub mod persistent_log;
 pub mod reconfiguration_protocol;
 pub mod log_transfer;
+pub mod smr;

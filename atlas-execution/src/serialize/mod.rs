@@ -14,8 +14,7 @@ use atlas_common::error::*;
 /// to communicate with each other.
 /// This data type must be Send since it will be sent across
 /// threads for processing and follow up reception
-pub trait ApplicationData: Send {
-
+pub trait ApplicationData: Send + Sync {
     /// Represents the requests forwarded to replicas by the
     /// clients of the BFT system.
     #[cfg(feature = "serialize_serde")]
@@ -31,7 +30,7 @@ pub trait ApplicationData: Send {
 
     #[cfg(feature = "serialize_capnp")]
     type Reply: Send + Clone;
-    
+
     ///Serialize a request from your service, given the writer to serialize into
     ///  (either for network sending or persistent storing)
     fn serialize_request<W>(w: W, request: &Self::Request) -> Result<()> where W: Write;

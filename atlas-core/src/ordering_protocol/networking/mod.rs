@@ -2,12 +2,15 @@ use std::collections::BTreeMap;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::error::*;
+use atlas_communication::FullNetworkNode;
 use atlas_communication::message::{SerializedMessage, StoredMessage, StoredSerializedProtocolMessage};
 use atlas_communication::protocol_node::ProtocolNetworkNode;
-use atlas_communication::serialize::Buf;
+use atlas_communication::reconfiguration_node::NetworkInformationProvider;
+use atlas_communication::serialize::{Buf, Serializable};
 use atlas_execution::serialize::ApplicationData;
 use crate::messages::SystemMessage;
-use crate::serialize::{LogTransferMessage, NodeWrap, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
+use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
+use crate::smr::networking::NodeWrap;
 
 pub trait OrderProtocolSendNode<OPM> where OPM: OrderingProtocolMessage {
     fn id(&self) -> NodeId;
@@ -49,12 +52,14 @@ pub trait OrderProtocolSendNode<OPM> where OPM: OrderingProtocolMessage {
     fn broadcast_serialized(&self, messages: BTreeMap<NodeId, StoredSerializedProtocolMessage<OPM::ProtocolMessage>>) -> std::result::Result<(), Vec<NodeId>>;
 }
 
-impl<NT, D, P, S, L> OrderProtocolSendNode<P> for NodeWrap<NT, D, P, S, L>
-    where NT: ProtocolNetworkNode<ServiceMsg<D, P, S, L>> + 'static,
-          D: ApplicationData + 'static,
+impl<NT, D, P, S, L, RM, NI> OrderProtocolSendNode<P> for NodeWrap<NT, D, P, S, L, NI, RM>
+    where D: ApplicationData + 'static,
           P: OrderingProtocolMessage + 'static,
           S: StateTransferMessage + 'static,
-          L: LogTransferMessage + 'static {
+          L: LogTransferMessage + 'static,
+          RM: Serializable + 'static,
+          NI: NetworkInformationProvider + 'static,
+          NT: FullNetworkNode<NI, RM, ServiceMsg<D, P, S, L>>, {
     #[inline(always)]
     fn id(&self) -> NodeId {
         self.0.id()

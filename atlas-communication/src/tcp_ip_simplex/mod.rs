@@ -424,7 +424,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TCPSimplexNode<NI, RM, PM>
           PM: Serializable + 'static {
     type Config = NodeConfig;
 
-    async fn bootstrap(network_info_provider: Arc<NI>, cfg: Self::Config) -> Result<Arc<Self>> {
+    async fn bootstrap(network_info_provider: Arc<NI>, cfg: Self::Config) -> Result<Self> {
         let id = cfg.id;
 
         debug!("Initializing sockets.");
@@ -470,7 +470,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TCPSimplexNode<NI, RM, PM>
 
         debug!("{:?} // Initializing node reference", id);
 
-        let node = Arc::new(TCPSimplexNode {
+        let node = TCPSimplexNode {
             id,
             first_cli: cfg.first_cli,
             rng,
@@ -478,7 +478,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for TCPSimplexNode<NI, RM, PM>
             client_pooling: peers,
             reconfig_handle: reconfig_message_handler,
             connections: peer_connections,
-        });
+        };
 
         // success
         Ok(node)

@@ -6,6 +6,7 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
+use atlas_core::smr::exec::ReplyNode;
 use atlas_execution::app::{Application, BatchReplies, Reply, Request};
 use atlas_execution::{ExecutionRequest, ExecutorHandle};
 use atlas_execution::state::divisible_state::{AppStateMessage, DivisibleState, DivisibleStateDescriptor, InstallStateMessage};
@@ -43,18 +44,15 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT>
         (ExecutorHandle::new(tx), rx)
     }
 
-    pub fn init<OP, ST, LT, T>(
+    pub fn init<T>(
         reply_worker: ReplyHandle<A::AppData>,
         handle: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
         initial_state: Option<(S, Vec<Request<A, S>>)>,
         mut service: A,
         send_node: Arc<NT>)
         -> Result<(ChannelSyncTx<InstallStateMessage<S>>, ChannelSyncRx<AppStateMessage<S>>)>
-        where OP: OrderingProtocolMessage + 'static,
-              ST: StateTransferMessage + 'static,
-              LT: LogTransferMessage + 'static,
-              T: ExecutorReplier + 'static,
-              NT: ProtocolNetworkNode<ServiceMsg<A::AppData, OP, ST, LT>> + 'static {
+        where T: ExecutorReplier + 'static,
+              NT: ReplyNode<A::AppData> + 'static {
         let (state, requests) = if let Some(state) = initial_state {
             state
         } else {
@@ -134,7 +132,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT>
                             executor.deliver_checkpoint_state(seq_no);
 
                             // deliver replies
-                            executor.execution_finished::<OP, ST, LT, T>(Some(seq_no), reply_batch);
+                            executor.execution_finished::<T>(Some(seq_no), reply_batch);
                         }
                         ExecutionRequest::Read(_peer_id) => {
                             todo!()
@@ -143,7 +141,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT>
                             let reply_batch =
                                 executor.application.unordered_batched_execution(&executor.state, batch);
 
-                            executor.execution_finished::<OP, ST, LT, T>(None, reply_batch);
+                            executor.execution_finished::<T>(None, reply_batch);
                         }
                     }
                 }
@@ -165,11 +163,8 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT>
         self.checkpoint_tx.send(AppStateMessage::new(seq, current_state.clone(), parts)).expect("Failed to send checkpoint");
     }
 
-    fn execution_finished<OP, ST, LT, T>(&self, seq: Option<SeqNo>, batch: BatchReplies<Reply<A, S>>)
-        where OP: OrderingProtocolMessage + 'static,
-              ST: StateTransferMessage + 'static,
-              LT: LogTransferMessage + 'static,
-              NT: ProtocolNetworkNode<ServiceMsg<A::AppData, OP, ST, LT>> + 'static,
+    fn execution_finished<T>(&self, seq: Option<SeqNo>, batch: BatchReplies<Reply<A, S>>)
+        where NT: ReplyNode<A::AppData> + 'static,
               T: ExecutorReplier + 'static {
         let send_node = self.send_node.clone();
 
@@ -186,6 +181,6 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT>
             }
         }*/
 
-        T::execution_finished::<A::AppData, OP, ST, LT, NT>(send_node, seq, batch);
+        T::execution_finished::<A::AppData, NT>(send_node, seq, batch);
     }
 }

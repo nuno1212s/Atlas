@@ -58,7 +58,7 @@ pub fn serialize_digest<W, RM, PM>(message: &NetworkMessageKind<RM, PM>, w: &mut
 
 
 /// The trait that should be implemented for all systems which wish to use this communication method
-pub trait Serializable {
+pub trait Serializable: Send + Sync {
     #[cfg(feature = "serialize_capnp")]
     type Message: Send + Clone;
 

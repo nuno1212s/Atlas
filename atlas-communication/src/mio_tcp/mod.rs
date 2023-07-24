@@ -411,7 +411,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
           PM: Serializable + 'static {
     type Config = MioConfig;
 
-    async fn bootstrap(network_info_provider: Arc<NI>, node_config: Self::Config) -> Result<Arc<Self>> where NI: NetworkInformationProvider {
+    async fn bootstrap(network_info_provider: Arc<NI>, node_config: Self::Config) -> Result<Self> where NI: NetworkInformationProvider {
         let MioConfig { node_config: cfg, worker_count } = node_config;
 
         let id = cfg.id;
@@ -461,7 +461,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
 
         replica_listener.map(|listener| connections.setup_tcp_server_worker(listener));
 
-        let network_node = Arc::new(Self {
+        let network_node = Self {
             id,
             first_cli: cfg.first_cli,
             rng,
@@ -469,7 +469,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
             reconfig_handling: reconfig_message_handler,
             client_pooling: peers,
             reconfiguration: network_info_provider.clone(),
-        });
+        };
 
         Ok(network_node)
     }

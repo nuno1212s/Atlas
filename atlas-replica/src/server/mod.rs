@@ -26,6 +26,7 @@ use atlas_core::reconfiguration_protocol::{QuorumAlterationResponse, QuorumJoinC
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ReconfigurationProtocolMessage, ServiceMsg, StateTransferMessage};
+use atlas_core::smr::networking::SMRNetworkNode;
 use atlas_core::state_transfer::{StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
 use atlas_execution::app::Application;
@@ -95,14 +96,15 @@ pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'sta
     st: PhantomData<(S, ST)>,
 }
 
+
 impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
     where
         RP: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
-        OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization, NT> + Send + 'static,
+        OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
         LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
         ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
-        NT: FullNetworkNode<RP::InformationProvider, RP::Serialization, ServiceMsg<D, OP::Serialization, ST::Serialization, LT::Serialization>> + 'static,
+        NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization> + 'static,
         PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static, {
     async fn bootstrap(cfg: ReplicaConfig<RP, S, D, OP, ST, LT, NT, PL>, executor: ExecutorHandle<D>) -> Result<Self> {
         let ReplicaConfig {
@@ -123,7 +125,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
         let network_info = RP::init_default_information(reconfig_node)?;
 
-        let node = NT::bootstrap(network_info.clone(), node_config).await?;
+        let node = Arc::new(NT::bootstrap(network_info.clone(), node_config).await?);
 
         let (reconf_tx, reconf_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
         let (reconf_response_tx, reply_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
@@ -178,10 +180,11 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
         let op_args = OrderingProtocolArgs(executor.clone(), timeouts.clone(),
                                            rq_pre_processor.clone(),
-                                           batch_input, node.clone(), persistent_log.clone(), quorum);
+                                           batch_input, node.clone(),
+                                           persistent_log.clone(), quorum);
 
         let ordering_protocol = if let Some((view, log)) = log {
-// Initialize the ordering protocol
+            // Initialize the ordering protocol
             OP::initialize_with_initial_state(op_config, op_args, log)?
         } else {
             OP::initialize(op_config, op_args)?
@@ -234,7 +237,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
             ReplicaPhase::OrderingProtocol => {
                 let poll_res = self.ordering_protocol.poll();
 
-                trace!("{:?} // Polling ordering protocol with result {:?}", self.node.id(), poll_res);
+                trace!("{:?} // Polling ordering protocol with result {:?}", ProtocolNetworkNode::id(&*self.node), poll_res);
 
                 match poll_res {
                     OrderProtocolPoll::RePoll => {
@@ -292,7 +295,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                     self.log_transfer_protocol.handle_off_ctx_message(&mut self.ordering_protocol, StoredMessage::new(header, log_transfer)).unwrap();
                                 }
                                 _ => {
-                                    error!("{:?} // Received unsupported message {:?}", self.node.id(), message);
+                                    error!("{:?} // Received unsupported message {:?}", ProtocolNetworkNode::id(&*self.node), message);
                                 }
                             }
                         } else {
@@ -350,7 +353,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                     self.executor_handle.poll_state_channel()?;
                                 }
                                 STResult::StateTransferFinished(seq_no) => {
-                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", self.node.id());
+                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", ProtocolNetworkNode::id(&*self.node));
 
                                     self.executor_handle.poll_state_channel()?;
 
@@ -382,7 +385,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                     self.log_transfer_protocol_done(state_transfer, log.first_seq().unwrap_or(SeqNo::ZERO), log.sequence_number(), Vec::new())?;
                                 }
                                 LTResult::LTPFinished(first_seq, last_seq, requests_to_execute) => {
-                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", self.node.id());
+                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", ProtocolNetworkNode::id(&*self.node));
                                     self.log_transfer_protocol_done(state_transfer, first_seq, last_seq, requests_to_execute)?;
                                 }
                             }
@@ -490,13 +493,13 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         }
 
         if !client_rq.is_empty() {
-            debug!("{:?} // Received client request timeouts: {}", self.node.id(), client_rq.len());
+            debug!("{:?} // Received client request timeouts: {}", ProtocolNetworkNode::id(&*self.node), client_rq.len());
 
             self.rq_pre_processor.process_timeouts(client_rq, self.processed_timeout.0.clone());
         }
 
         if !cst_rq.is_empty() {
-            debug!("{:?} // Received cst timeouts: {}", self.node.id(), cst_rq.len());
+            debug!("{:?} // Received cst timeouts: {}", ProtocolNetworkNode::id(&*self.node), cst_rq.len());
 
             match state_transfer.handle_timeout(self.ordering_protocol.view(), cst_rq)? {
                 STTimeoutResult::RunCst => {
@@ -507,7 +510,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         }
 
         if !log_transfer.is_empty() {
-            debug!("{:?} // Received log transfer timeouts: {}", self.node.id(), log_transfer.len());
+            debug!("{:?} // Received log transfer timeouts: {}", ProtocolNetworkNode::id(&*self.node), log_transfer.len());
 
             match self.log_transfer_protocol.handle_timeout(log_transfer)? {
                 LTTimeoutResult::RunLTP => {
@@ -518,7 +521,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         }
 
         if !reconfiguration.is_empty() {
-            debug!("{:?} // Received reconfiguration timeouts: {}", self.node.id(), reconfiguration.len());
+            debug!("{:?} // Received reconfiguration timeouts: {}", ProtocolNetworkNode::id(&*self.node), reconfiguration.len());
 
             self.reconfig_protocol.handle_timeout(reconfiguration)?;
         }
@@ -549,7 +552,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
     /// Run the ordering protocol on this replica
     fn run_ordering_protocol(&mut self) -> Result<()> {
-        info!("{:?} // Running ordering protocol.", self.node.id());
+        info!("{:?} // Running ordering protocol.", ProtocolNetworkNode::id(&*self.node));
 
         let phase = std::mem::replace(&mut self.replica_phase, ReplicaPhase::OrderingProtocol);
 
@@ -637,7 +640,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 // There is no state currently present.
                 if state_transfer.next() != *log_first && (state_transfer != SeqNo::ZERO && *log_first != SeqNo::ZERO) {
                     error!("{:?} // Log transfer protocol and state transfer protocol are not in sync. Received {:?} state and {:?} - {:?} log",
-self.node.id(), state_transfer, * log_first, * log_last);
+ProtocolNetworkNode::id(&*self.node), state_transfer, * log_first, * log_last);
 
 // Run both the protocols again
 // This might work better since we already have a more up-to-date state (in
@@ -645,7 +648,7 @@ self.node.id(), state_transfer, * log_first, * log_last);
                     self.run_all_state_transfer(state_transfer_protocol)?;
                 } else {
                     info!("{:?} // State transfer protocol and log transfer protocol are in sync. Received {:?} state and {:?} - {:?} log",
-self.node.id(), state_transfer, * log_first, * log_last);
+ProtocolNetworkNode::id(&*self.node), state_transfer, * log_first, * log_last);
 
                     /// If the protocols are lined up so we can start running the ordering protocol
                     self.run_ordering_protocol()?;
@@ -658,7 +661,7 @@ self.node.id(), state_transfer, * log_first, * log_last);
 
     /// Run the state transfer and log transfer protocols
     fn run_all_state_transfer(&mut self, state_transfer: &mut ST) -> Result<()> {
-        info!("{:?} // Running state and log transfer protocols.", self.node.id());
+        info!("{:?} // Running state and log transfer protocols.", ProtocolNetworkNode::id(&*self.node));
 
         match &mut self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
@@ -684,7 +687,7 @@ self.node.id(), state_transfer, * log_first, * log_last);
 
     /// Run the state transfer protocol on this replica
     fn run_state_transfer_protocol(&mut self, state_transfer_p: &mut ST) -> Result<()> {
-        info!("{:?} // Running log transfer protocol.", self.node.id());
+        info!("{:?} // Running log transfer protocol.", ProtocolNetworkNode::id(&*self.node));
 
         match &mut self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
@@ -702,7 +705,7 @@ self.node.id(), state_transfer, * log_first, * log_last);
 
     /// Runs the log transfer protocol on this replica
     fn run_log_transfer_protocol(&mut self, state_transfer: &mut ST) -> Result<()> {
-        info!("{:?} // Running log transfer protocol.", self.node.id());
+        info!("{:?} // Running log transfer protocol.", ProtocolNetworkNode::id(&*self.node));
 
         match &mut self.replica_phase {
             ReplicaPhase::OrderingProtocol => {

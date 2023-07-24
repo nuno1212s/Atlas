@@ -1,13 +1,19 @@
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::Deref;
+use std::sync::Arc;
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
+use atlas_common::crypto::hash::Digest;
 
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_communication::FullNetworkNode;
+use atlas_communication::message::{SerializedMessage, StoredSerializedProtocolMessage};
 use atlas_communication::protocol_node::ProtocolNetworkNode;
+use atlas_communication::reconfiguration_node::{NetworkInformationProvider, ReconfigurationNode};
 use atlas_communication::serialize::Serializable;
 use atlas_execution::serialize::ApplicationData;
 
@@ -15,7 +21,6 @@ use crate::messages::SystemMessage;
 
 #[cfg(feature = "serialize_capnp")]
 pub mod capnp;
-
 
 /// The basic methods needed for a view
 pub trait NetworkView: Orderable + Clone {
@@ -42,7 +47,7 @@ pub trait OrderProtocolProof: Orderable {
 
 /// We do not need a serde module since serde serialization is just done on the network level.
 /// The abstraction for ordering protocol messages.
-pub trait OrderingProtocolMessage: Send {
+pub trait OrderingProtocolMessage: Send + Sync {
     #[cfg(feature = "serialize_capnp")]
     type ViewInfo: NetworkView + Send + Clone;
 
@@ -103,7 +108,7 @@ pub trait OrderingProtocolMessage: Send {
 }
 
 
-pub trait LogTransferMessage: Send {
+pub trait LogTransferMessage: Send + Sync {
     #[cfg(feature = "serialize_capnp")]
     type LogTransferMessage: Send + Clone;
 
@@ -119,7 +124,7 @@ pub trait LogTransferMessage: Send {
 
 /// The abstraction for state transfer protocol messages.
 /// This allows us to have any state transfer protocol work with the same backbone
-pub trait StateTransferMessage: Send {
+pub trait StateTransferMessage: Send + Sync {
     #[cfg(feature = "serialize_capnp")]
     type StateTransferMessage: Send + Clone;
 
@@ -134,7 +139,7 @@ pub trait StateTransferMessage: Send {
 }
 
 /// The messages for the stateful ordering protocol
-pub trait StatefulOrderProtocolMessage: Send {
+pub trait StatefulOrderProtocolMessage: Send + Sync {
     /// A type that defines the log of decisions made since the last garbage collection
     /// (In the case of BFT SMR the log is GCed after a checkpoint of the application)
     #[cfg(feature = "serialize_capnp")]
@@ -151,7 +156,7 @@ pub trait StatefulOrderProtocolMessage: Send {
 }
 
 /// Reconfiguration protocol messages
-pub trait ReconfigurationProtocolMessage: Serializable + Send {
+pub trait ReconfigurationProtocolMessage: Serializable + Send + Sync {
     #[cfg(feature = "serialize_capnp")]
     type QuorumJoinCertificate: Send + Clone;
 
@@ -279,23 +284,3 @@ impl LogTransferMessage for NoProtocol {
 }
 
 impl OrderProtocolProof for () {}
-
-pub struct NodeWrap<NT, D, P, S, L>(pub NT, PhantomData<(D, P, S, L)>)
-    where NT: ProtocolNetworkNode<ServiceMsg<D, P, S, L>> + 'static,
-          D: ApplicationData + 'static,
-          P: OrderingProtocolMessage + 'static,
-          S: StateTransferMessage + 'static,
-          L: LogTransferMessage + 'static;
-
-impl<NT, D, P, S, L> Deref for NodeWrap<NT, D, P, S, L>
-    where NT: ProtocolNetworkNode<ServiceMsg<D, P, S, L>> + 'static,
-          D: ApplicationData + 'static,
-          P: OrderingProtocolMessage + 'static,
-          S: StateTransferMessage + 'static,
-          L: LogTransferMessage + 'static {
-    type Target = NT;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}

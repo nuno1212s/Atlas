@@ -286,7 +286,7 @@ mod communication_test {
             pk_crypto_config: gen_pk_config(node_id, node_count),
         };
 
-        rt::block_on(TcpNode::bootstrap(cfg))
+        rt::block_on(Arc::new(TcpNode::bootstrap(cfg)))
     }
 
 
@@ -304,7 +304,7 @@ mod communication_test {
             pk_crypto_config: gen_pk_config(node_id, node_count),
         };
 
-        rt::block_on(TCPSimplexNode::bootstrap(cfg))
+        rt::block_on(Arc::new(TCPSimplexNode::bootstrap(cfg)))
     }
 
     fn gen_mio_node<T: Serializable>(node_id: NodeId, addrs: IntMap<PeerAddr>, node_count: usize, name: &str, port: u16) -> Result<Arc<MIOTcpNode<T>>> {
@@ -327,7 +327,7 @@ mod communication_test {
             worker_count: 2,
         };
 
-        rt::block_on(MIOTcpNode::bootstrap(config))
+        rt::block_on(Arc::new(MIOTcpNode::bootstrap(config)))
     }
 
     #[test]
