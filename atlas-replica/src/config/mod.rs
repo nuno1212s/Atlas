@@ -1,24 +1,22 @@
 use std::marker::PhantomData;
+
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
-use atlas_communication::config::NodeConfig;
 use atlas_communication::FullNetworkNode;
-use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
-use atlas_execution::app::{Application};
+use atlas_core::log_transfer::LogTransferProtocol;
 use atlas_core::ordering_protocol::OrderingProtocol;
+use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{DivisibleStateLog, MonolithicStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_core::serialize::{ServiceMsg, StateTransferMessage};
-use atlas_core::state_transfer::{StateTransferProtocol};
 use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
-use atlas_core::state_transfer::log_transfer::{LogTransferProtocol};
 use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
+use atlas_core::state_transfer::StateTransferProtocol;
+use atlas_execution::app::Application;
 use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
-use atlas_persistent_log::PersistentLog;
-use atlas_reconfiguration::message::ReconfData;
-use atlas_reconfiguration::network_reconfig::NetworkInfo;
+
 use crate::persistent_log::SMRPersistentLog;
 
 pub struct MonolithicStateReplicaConfig<RF, S, A, OP, ST, LT, NT, PL>

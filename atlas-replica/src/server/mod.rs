@@ -13,6 +13,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::{FullNetworkNode, NodeConnections};
 use atlas_communication::message::StoredMessage;
 use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
+use atlas_core::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult};
 use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
 use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
@@ -26,7 +27,6 @@ use atlas_core::request_pre_processing::{initialize_request_pre_processor, PrePr
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ReconfigurationProtocolMessage, ServiceMsg, StateTransferMessage};
 use atlas_core::state_transfer::{StateTransferProtocol, STResult, STTimeoutResult};
-use atlas_core::state_transfer::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
 use atlas_execution::app::Application;
 use atlas_execution::ExecutorHandle;
@@ -296,7 +296,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                 }
                             }
                         } else {
-// Receive timeouts in the beginning of the next iteration
+                            // Receive timeouts in the beginning of the next iteration
                             return Ok(());
                         }
 
@@ -308,7 +308,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
                         match self.ordering_protocol.process_message(message)? {
                             OrderProtocolExecResult::Success => {
-// Continue execution
+                                // Continue execution
                             }
                             OrderProtocolExecResult::RunCst => {
                                 self.run_all_state_transfer(state_transfer)?;

@@ -1,21 +1,24 @@
-pub mod reconfigurable_order_protocol;
-pub mod stateful_order_protocol;
-
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+
 use atlas_common::crypto::hash::Digest;
-use atlas_communication::message::{Header, NetworkMessage, StoredMessage, System};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_execution::app::{Update, UpdateBatch};
+use atlas_communication::message::StoredMessage;
+use atlas_execution::app::UpdateBatch;
 use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::ApplicationData;
-use crate::messages::{ClientRqInfo, ForwardedRequestsMessage, Protocol, StoredRequestMessage, SystemMessage};
+
+use crate::messages::{ClientRqInfo, Protocol};
 use crate::persistent_log::OrderingProtocolLog;
 use crate::request_pre_processing::{BatchOutput, RequestPreProcessor};
-use crate::serialize::{OrderingProtocolMessage, StateTransferMessage, ServiceMsg, NetworkView};
-use crate::timeouts::{RqTimeout, Timeout, Timeouts};
+use crate::serialize::{NetworkView, OrderingProtocolMessage, StateTransferMessage};
+use crate::timeouts::{RqTimeout, Timeouts};
+
+pub mod reconfigurable_order_protocol;
+pub mod stateful_order_protocol;
+pub mod networking;
 
 pub type View<OP> = <OP as OrderingProtocolMessage>::ViewInfo;
 

@@ -31,18 +31,32 @@ enum ReplicaState {
     LeavingQuorum,
 }
 
+/// The current state of the ordering protocol
+/// Depending on the state, we will handle the messages we send to the ordering protocol
+/// If the order protocol is still waiting for enough members to join, then we will
+/// deliver a stable message to the ordering protocol once we have enough members.
+/// If the order protocol is already running, then we will deliver a stable message
+/// with the current members, followed by a quorum join message to authorize our entry
+enum OrderProtocolState {
+    Waiting,
+    Running,
+}
+
 pub(crate) struct ReplicaQuorumView {
     /// The current state of the replica
     current_state: ReplicaState,
+    /// The current state of the ordering protocol
+    order_protocol_state: OrderProtocolState,
     /// The current quorum view we know of
     current_view: Arc<RwLock<QuorumView>>,
-
     /// Predicates that must be satisfied for a node to be allowed to join the quorum
     predicates: Vec<QuorumPredicate>,
     /// Channel to communicate with the ordering protocol
     quorum_communication: ChannelSyncTx<QuorumReconfigurationMessage<QuorumJoinCertificate>>,
     /// Channel to receive responses from the quorum
     quorum_responses: ChannelSyncRx<QuorumReconfigurationResponse>,
+    /// The least amount of nodes that must be in the quorum for it to be considered stable and
+    /// Therefore able to initialize the ordering protocol
     min_stable_quorum: usize,
 }
 
@@ -55,6 +69,7 @@ impl ReplicaQuorumView {
         min_stable_quorum: usize) -> Self {
         Self {
             current_state: ReplicaState::Init,
+            order_protocol_state: OrderProtocolState::Waiting,
             current_view: quorum_view,
             predicates,
             quorum_communication: quorum_tx,

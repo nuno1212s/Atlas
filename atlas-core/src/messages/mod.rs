@@ -99,6 +99,15 @@ impl<D, P, ST, LT> SystemMessage<D, P, ST, LT> where D: ApplicationData {
             _ => { unreachable!() }
         }
     }
+    
+    pub fn into_log_transfer_message(self) -> LT {
+        match self {
+            SystemMessage::LogTransferMessage(l) => {
+                l.into_inner()
+            }
+            _ => { unreachable!() }
+        }
+    }
 }
 
 impl<D, P, ST, LT> Clone for SystemMessage<D, P, ST, LT> where D: ApplicationData, P: Clone, ST: Clone, LT: Clone {

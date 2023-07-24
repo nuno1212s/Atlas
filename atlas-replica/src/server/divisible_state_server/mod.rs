@@ -1,23 +1,22 @@
 use std::marker::PhantomData;
 use std::time::Instant;
-use atlas_common::error::*;
-use atlas_common::channel;
+
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::error::*;
 use atlas_common::ordering::Orderable;
 use atlas_communication::FullNetworkNode;
 use atlas_communication::protocol_node::ProtocolNetworkNode;
+use atlas_core::log_transfer::LogTransferProtocol;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{DivisibleStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_core::serialize::ServiceMsg;
 use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
-use atlas_core::state_transfer::log_transfer::{LogTransferProtocol};
 use atlas_execution::app::Application;
 use atlas_execution::state::divisible_state::{AppStateMessage, DivisibleState, InstallStateMessage};
 use atlas_metrics::metrics::metric_duration;
-use atlas_reconfiguration::message::ReconfData;
-use atlas_reconfiguration::network_reconfig::NetworkInfo;
+
 use crate::config::DivisibleStateReplicaConfig;
 use crate::executable::divisible_state_exec::DivisibleStateExecutor;
 use crate::executable::ReplicaReplier;
@@ -112,7 +111,7 @@ impl<RP, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, S, A, OP, ST, LT, NT, PL> wh
 
             let (descriptor, state_parts) = checkpoint.into_state();
 
-            self.state_transfer_protocol.handle_state_received_from_app(descriptor, state_parts)?;
+            self.state_transfer_protocol.handle_state_received_from_app(self.inner_replica.ordering_protocol.view(), descriptor, state_parts)?;
             self.inner_replica.ordering_protocol.checkpointed(seq_no)?;
         }
 

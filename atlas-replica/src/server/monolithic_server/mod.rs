@@ -1,27 +1,28 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
-use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
+
 use log::error;
-use atlas_common::error::*;
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
-use atlas_common::ordering::{Orderable, SeqNo};
+
 use atlas_common::{channel, threadpool};
+use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
-use atlas_communication::{FullNetworkNode};
+use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_communication::FullNetworkNode;
+use atlas_core::log_transfer::LogTransferProtocol;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
+use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{MonolithicStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_core::serialize::{ReconfigurationProtocolMessage, ServiceMsg};
-use atlas_core::state_transfer::log_transfer::{LogTransferProtocol};
+use atlas_core::serialize::ServiceMsg;
+use atlas_core::state_transfer::Checkpoint;
 use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
-use atlas_core::state_transfer::{Checkpoint};
 use atlas_execution::app::Application;
 use atlas_execution::state::monolithic_state::{AppStateMessage, digest_state, InstallStateMessage};
 use atlas_execution::state::monolithic_state::MonolithicState;
 use atlas_metrics::metrics::metric_duration;
-use atlas_reconfiguration::message::ReconfData;
-use atlas_reconfiguration::network_reconfig::NetworkInfo;
+
 use crate::config::MonolithicStateReplicaConfig;
 use crate::executable::monolithic_executor::MonolithicExecutor;
 use crate::executable::ReplicaReplier;

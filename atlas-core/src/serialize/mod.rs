@@ -1,14 +1,17 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use atlas_common::error::*;
-use atlas_communication::serialize::Serializable;
-use atlas_execution::serialize::ApplicationData;
-use crate::messages::SystemMessage;
+use std::ops::Deref;
+
 #[cfg(feature = "serialize_serde")]
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use crate::state_transfer::StateTransferProtocol;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
+use atlas_communication::serialize::Serializable;
+use atlas_execution::serialize::ApplicationData;
+
+use crate::messages::SystemMessage;
 
 #[cfg(feature = "serialize_capnp")]
 pub mod capnp;
@@ -276,3 +279,23 @@ impl LogTransferMessage for NoProtocol {
 }
 
 impl OrderProtocolProof for () {}
+
+pub struct NodeWrap<NT, D, P, S, L>(pub NT, PhantomData<(D, P, S, L)>)
+    where NT: ProtocolNetworkNode<ServiceMsg<D, P, S, L>> + 'static,
+          D: ApplicationData + 'static,
+          P: OrderingProtocolMessage + 'static,
+          S: StateTransferMessage + 'static,
+          L: LogTransferMessage + 'static;
+
+impl<NT, D, P, S, L> Deref for NodeWrap<NT, D, P, S, L>
+    where NT: ProtocolNetworkNode<ServiceMsg<D, P, S, L>> + 'static,
+          D: ApplicationData + 'static,
+          P: OrderingProtocolMessage + 'static,
+          S: StateTransferMessage + 'static,
+          L: LogTransferMessage + 'static {
+    type Target = NT;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}

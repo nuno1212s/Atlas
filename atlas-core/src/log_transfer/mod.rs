@@ -1,3 +1,5 @@
+pub mod networking;
+
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use atlas_common::error::*;
@@ -45,37 +47,29 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
         where Self: Sized;
 
     /// Request the latest state from the rest of replicas
-    fn request_latest_log<ST>(&mut self,
+    fn request_latest_log(&mut self,
                               order_protocol: &mut OP) -> Result<()>
-        where NT: ProtocolNetworkNode<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
-              ST: StateTransferMessage + 'static,
-              PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+        where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
     /// Handle a state transfer protocol message that was received while executing the ordering protocol
-    fn handle_off_ctx_message<ST>(&mut self,
+    fn handle_off_ctx_message(&mut self,
                                   order_protocol: &mut OP,
                                   message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
                                   -> Result<()>
-        where NT: ProtocolNetworkNode<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
-              ST: StateTransferMessage + 'static,
-              PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+        where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
     /// Process a state transfer protocol message, received from other replicas
     /// We also provide a mutable reference to the stateful ordering protocol, so the
     /// state can be installed (if that's the case)
-    fn process_message<ST>(&mut self,
+    fn process_message(&mut self,
                            order_protocol: &mut OP,
                            message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
                            -> Result<LTResult<D>>
-        where NT: ProtocolNetworkNode<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
-              ST: StateTransferMessage + 'static,
-              PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+        where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 
     /// Handle a timeout being received from the timeout layer
-    fn handle_timeout<ST>(&mut self, timeout: Vec<RqTimeout>) -> Result<LTTimeoutResult>
-        where ST: StateTransferMessage + 'static,
-              NT: ProtocolNetworkNode<ServiceMsg<D, OP::Serialization, ST, Self::Serialization>>,
-              PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+    fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<LTTimeoutResult>
+        where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
 }
 
 

@@ -12,3 +12,4 @@ pub mod request_pre_processing;
 pub mod metric;
 pub mod persistent_log;
 pub mod reconfiguration_protocol;
+pub mod log_transfer;
