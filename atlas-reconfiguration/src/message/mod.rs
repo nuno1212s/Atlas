@@ -4,7 +4,7 @@ use std::fmt::{Debug, Formatter};
 use serde::{Deserialize, Serialize};
 
 use atlas_common::crypto::signature::Signature;
-use atlas_common::node_id::NodeId;
+use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::message::StoredMessage;
@@ -88,6 +88,7 @@ pub struct KnownNodesMessage {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NodeTriple {
     node_id: NodeId,
+    node_type: NodeType,
     addr: PeerAddr,
     pub_key: Vec<u8>,
 }
@@ -185,12 +186,17 @@ impl ReconfigurationMessage {
 }
 
 impl NodeTriple {
-    pub fn new(node_id: NodeId, public_key: Vec<u8>, address: PeerAddr) -> Self {
+    pub fn new(node_id: NodeId, public_key: Vec<u8>, address: PeerAddr, node_type: NodeType) -> Self {
         Self {
             node_id,
+            node_type,
             addr: address,
             pub_key: public_key,
         }
+    }
+
+    pub fn node_type(&self) -> NodeType {
+        self.node_type
     }
 
     pub fn node_id(&self) -> NodeId {
@@ -208,15 +214,16 @@ impl NodeTriple {
 
 impl From<&KnownNodes> for KnownNodesMessage {
     fn from(value: &KnownNodes) -> Self {
-        let mut known_nodes = Vec::with_capacity(value.node_keys.len());
+        let mut known_nodes = Vec::with_capacity(value.node_info().len());
 
-        for (node_id, public_key) in value.node_keys() {
+        value.node_info().iter().for_each(|(node_id, node_info)| {
             known_nodes.push(NodeTriple {
                 node_id: *node_id,
-                pub_key: public_key.pk_bytes().to_vec(),
-                addr: value.node_addrs.get(node_id).unwrap().clone(),
-            });
-        }
+                node_type: NodeType::Replica,
+                addr: node_info.addr().clone(),
+                pub_key: node_info.pk().pk_bytes().to_vec(),
+            })
+        });
 
         KnownNodesMessage {
             nodes: known_nodes,

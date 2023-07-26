@@ -114,7 +114,7 @@ impl<S, A, NT> DivisibleStateExecutor<S, A, NT>
                             metric_duration(EXECUTION_TIME_TAKEN_ID, start.elapsed());
 
                             // deliver replies
-                            executor.execution_finished::<OP, ST, LT, T>(Some(seq_no), reply_batch);
+                            executor.execution_finished::<T>(Some(seq_no), reply_batch);
                         }
                         ExecutionRequest::UpdateAndGetAppstate((batch, instant)) => {
                             let seq_no = batch.sequence_number();

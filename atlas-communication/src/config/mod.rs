@@ -1,7 +1,7 @@
 use intmap::IntMap;
 use rustls::{ClientConfig, ServerConfig};
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
-use atlas_common::node_id::NodeId;
+use atlas_common::node_id::{NodeId, NodeType};
 
 /// Configuration needed for a mio server
 pub struct MioConfig {
@@ -14,10 +14,6 @@ pub struct MioConfig {
 pub struct NodeConfig {
     /// The id of this `Node`.
     pub id: NodeId,
-    /// The ID of the first client in the network
-    /// Every peer with id < first_cli is a replica and every peer with id > first_cli is
-    /// a client
-    pub first_cli: NodeId,
     /// TCP specific configuration
     pub tcp_config: TcpConfig,
     ///The configurations of the client pool config

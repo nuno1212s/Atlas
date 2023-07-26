@@ -14,7 +14,8 @@ use atlas_common::node_id::NodeId;
 use atlas_common::socket::{MioSocket};
 use crate::cpu_workers;
 use crate::message::{Header, WireMessage};
-use crate::mio_tcp::connections::{Connections, ConnHandle};
+use crate::mio_tcp::connections::{conn_util, Connections, ConnHandle};
+use crate::mio_tcp::connections::conn_util::{ConnectionReadWork, ConnectionWriteWork, ReadingBuffer, WritingBuffer};
 use crate::mio_tcp::connections::epoll_group::{EpollWorkerId, EpollWorkerMessage, NewConnection};
 use crate::reconfiguration_node::NetworkInformationProvider;
 use super::PeerConnection;
@@ -62,10 +63,10 @@ enum SocketConnection<RM, PM>
         // The mio socket that this connection refers to
         socket: MioSocket,
         // Information and buffers for the read end of this connection
-        read_info: ReadingInformation,
+        read_info: ReadingBuffer,
         // Information and buffers for the write end of this connection
         // Option since we may not be writing anything at the moment
-        writing_info: Option<WritingInformation>,
+        writing_info: Option<WritingBuffer>,
         // The connection to the peer this connection is a part of
         connection: Arc<PeerConnection<RM, PM>>,
     },
@@ -145,20 +146,22 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
             for event in event_queue.iter() {
                 if event.token() == waker_token {
                     // Indicates that we should try to write from the connections
-                    let connections_to_analyse: Vec<Token> = self.connections.iter()
-                        .filter_map(|(key, conn)|
-                            if let SocketConnection::PeerConn { .. } = conn {
-                                Some(Token(key))
-                            } else {
-                                None
-                            })
-                        .collect();
 
-                    for token in connections_to_analyse {
-                        if !self.connections.contains(token.into()) {
-                            continue;
+
+                    // This is a bit of a hack, but we need to do this in order to avoid issues with the borrow
+                    // Checker, since we would have to pass a mutable reference while holding immutable references.
+                    // It's stupid but it is what it is
+                    let mut to_verify = Vec::with_capacity(self.connections.len());
+
+                    self.connections.iter().for_each(|(slot, conn)| {
+                        let token = Token(slot);
+
+                        if let SocketConnection::PeerConn { .. } = conn {
+                            to_verify.push(token);
                         }
+                    });
 
+                    to_verify.into_iter().for_each(|token| {
                         match self.try_write_until_block(token) {
                             Ok(ConnectionWorkResult::ConnectionBroken) => {
                                 let peer_id = {
@@ -192,7 +195,7 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
                                 }
                             }
                         };
-                    }
+                    });
                 } else {
                     let token = event.token();
 
@@ -303,7 +306,7 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
                             wrote = true;
 
                             // We have something to write
-                            *writing_info = Some(WritingInformation::from_message(to_write)?);
+                            *writing_info = Some(WritingBuffer::init_from_message(to_write)?);
 
                             writing_info.as_mut().unwrap()
                         } else {
@@ -325,49 +328,13 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
                         }
                     };
 
-                    if let Some(header) = writing.currently_writing_header.as_ref() {
-                        match socket.write(&header[writing.written_bytes..]) {
-                            Ok(0) => return Ok(ConnectionWorkResult::ConnectionBroken),
-                            Ok(n) => {
-                                // We have successfully written n bytes
-                                if n + writing.written_bytes < header.len() {
-                                    writing.written_bytes += n;
-
-                                    continue;
-                                } else {
-                                    // It will always write atmost header.len() bytes, since
-                                    // That's the length of the buffer
-                                    writing.written_bytes = 0;
-                                    writing.currently_writing_header = None;
-                                }
-                            }
-                            Err(err) if would_block(&err) => {
-                                trace!("{:?} // Would block writing header", self.global_connections.id);
-                                break;
-                            }
-                            Err(err) if interrupted(&err) => continue,
-                            Err(err) => { return Err(Error::wrapped(ErrorKind::Communication, err)); }
+                    match conn_util::try_write_until_block(socket, writing)? {
+                        ConnectionWriteWork::ConnectionBroken => {
+                            return Ok(ConnectionWorkResult::ConnectionBroken);
                         }
-                    } else {
-                        match socket.write(&writing.currently_writing[writing.written_bytes..]) {
-                            Ok(0) => return Ok(ConnectionWorkResult::ConnectionBroken),
-                            Ok(n) => {
-                                // We have successfully written n bytes
-                                if n + writing.written_bytes < writing.currently_writing.len() {
-                                    writing.written_bytes += n;
-
-                                    continue;
-                                } else {
-                                    // We have written all that we have to write.
-                                    *writing_info = None;
-                                }
-                            }
-                            Err(err) if would_block(&err) => {
-                                trace!("{:?} // Would block writing body", self.global_connections.id);
-                                break;
-                            }
-                            Err(err) if interrupted(&err) => continue,
-                            Err(err) => { return Err(Error::wrapped(ErrorKind::Communication, err)); }
+                        ConnectionWriteWork::Working => { break; }
+                        ConnectionWriteWork::Done => {
+                            *writing_info = None;
                         }
                     }
                 }
@@ -411,110 +378,19 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
                 connection,
                 ..
             } => {
-                loop {
-                    if let Some(header) = &read_info.current_header {
-                        // We are currently reading a message
-                        let currently_read = read_info.read_bytes;
-                        let bytes_to_read = header.payload_length() - currently_read;
-
-                        let read = if bytes_to_read > 0 {
-                            match socket.read(&mut read_info.read_buffer[currently_read..]) {
-                                Ok(0) => {
-                                    // Connection closed
-                                    return Ok(ConnectionWorkResult::ConnectionBroken);
-                                }
-                                Ok(n) => {
-                                    // We still have more to read
-                                    n
-                                }
-                                Err(err) if would_block(&err) => { break; }
-                                Err(err) if interrupted(&err) => continue,
-                                Err(err) => { return Err(Error::wrapped(ErrorKind::Communication, err)); }
-                            }
-                        } else {
-                            // Only read if we need to read from the socket.
-                            // If not, keep parsing the messages that are in the read buffer
-                            0
-                        };
-
-                        if read >= bytes_to_read {
-                            let header = std::mem::replace(&mut read_info.current_header, None).unwrap();
-
-                            let message = read_info.read_buffer.split_to(header.payload_length());
-
-                            // We have read the message, send it to be verified and then put into the client pool
+                match conn_util::read_until_block(socket, read_info)? {
+                    ConnectionReadWork::ConnectionBroken => {
+                        return Ok(ConnectionWorkResult::ConnectionBroken);
+                    }
+                    ConnectionReadWork::Working => { return Ok(ConnectionWorkResult::Working); }
+                    ConnectionReadWork::WorkingAndReceived(received) | ConnectionReadWork::ReceivedAndDone(received) => {
+                        for (header, message) in received {
                             cpu_workers::deserialize_and_push_message::<RM, PM>(header, message,
-                                                                      connection.client.clone(),
-                                                                      connection.reconf_handling.clone());
-
-                            read_info.read_bytes = read_info.read_buffer.len();
-
-                            read_info.read_buffer.reserve(Header::LENGTH);
-                            read_info.read_buffer.resize(Header::LENGTH, 0);
-                        } else {
-                            read_info.read_bytes += read;
-                        }
-                    } else {
-                        // We are currently reading a header
-                        let currently_read_bytes = read_info.read_bytes;
-                        let bytes_to_read = Header::LENGTH - currently_read_bytes;
-
-                        let n = if bytes_to_read > 0 {
-                            trace!("{:?} // Reading message header with {} left to read", self.global_connections.id, bytes_to_read);
-
-                            match socket.read(&mut read_info.read_buffer[currently_read_bytes..]) {
-                                Ok(0) => {
-                                    // Connection closed
-                                    trace!("{:?} // Connection closed", self.global_connections.id);
-                                    return Ok(ConnectionWorkResult::ConnectionBroken);
-                                }
-                                Ok(n) => {
-                                    // We still have to more to read
-                                    n
-                                }
-                                Err(err) if would_block(&err) => {
-                                    break;
-                                }
-                                Err(err) if interrupted(&err) => {
-                                    continue;
-                                }
-                                Err(err) => { return Err(Error::wrapped(ErrorKind::Communication, err)); }
-                            }
-                        } else {
-                            // Only read if we need to read from the socket. (As we are missing bytes)
-                            // If not, keep parsing the messages that are in the read buffer
-                            0
-                        };
-
-                        if n >= bytes_to_read {
-                            let header = Header::deserialize_from(&read_info.read_buffer[..Header::LENGTH])?;
-
-                            *(&mut read_info.current_header) = Some(header);
-
-                            if n > bytes_to_read {
-                                //TODO: This will never happen since our buffer is HEADER::LENGTH sized
-
-                                // We have read more than we should for the current message,
-                                // so we can't clear the buffer
-                                read_info.read_buffer.advance(Header::LENGTH);
-
-                                read_info.read_bytes = read_info.read_buffer.len();
-
-                                read_info.read_buffer.reserve(header.payload_length());
-                                read_info.read_buffer.resize(header.payload_length(), 0);
-                            } else {
-                                // We have read the header
-                                read_info.read_buffer.clear();
-                                read_info.read_buffer.reserve(header.payload_length());
-                                read_info.read_buffer.resize(header.payload_length(), 0);
-                                read_info.read_bytes = 0;
-                            }
-                        } else {
-                            read_info.read_bytes += n;
+                                                                                connection.client.clone(),
+                                                                                connection.reconf_handling.clone());
                         }
                     }
                 }
-
                 // We don't have any more
             }
             _ => unreachable!()
@@ -577,7 +453,7 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
         let socket_conn = SocketConnection::PeerConn {
             handle: handle.clone(),
             socket,
-            read_info: ReadingInformation::new(),
+            read_info: ReadingBuffer::init(),
             writing_info: None,
             connection: peer_conn,
         };

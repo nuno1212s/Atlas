@@ -18,9 +18,6 @@ pub trait LogTransferSendNode<LPM> where LPM: LogTransferMessage {
     #[inline(always)]
     fn id(&self) -> NodeId;
 
-    #[inline(always)]
-    fn first_cli(&self) -> NodeId;
-
     /// Sends a message to a given target.
     /// Does not block on the message sent. Returns a result that is
     /// Ok if there is a current connection to the target or err if not. No other checks are made
@@ -74,11 +71,6 @@ impl<NT, D, P, S, L, NI, RM> LogTransferSendNode<L> for NodeWrap<NT, D, P, S, L,
     #[inline(always)]
     fn id(&self) -> NodeId {
         self.0.id()
-    }
-
-    #[inline(always)]
-    fn first_cli(&self) -> NodeId {
-        self.0.first_cli()
     }
 
     #[inline(always)]

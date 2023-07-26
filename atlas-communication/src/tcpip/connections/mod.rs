@@ -5,11 +5,11 @@ use std::time::Instant;
 
 use atlas_common::peer_addr::PeerAddr;
 use dashmap::DashMap;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 
 use atlas_common::channel::{ChannelMixedRx, ChannelMixedTx, new_bounded_mixed, new_oneshot_channel, OneShotRx};
 use atlas_common::error::*;
-use atlas_common::node_id::NodeId;
+use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::socket::SecureReadHalf;
 use atlas_common::socket::SecureWriteHalf;
 
@@ -33,31 +33,7 @@ pub type NetworkSerializedMessage = (WireMessage, Callback, Instant, bool, Insta
 /// How many slots the outgoing queue has for messages.
 const TX_CONNECTION_QUEUE: usize = 1024;
 
-/// The amount of parallel TCP connections we should try to maintain for
-/// each connection
-#[derive(Clone)]
-pub struct ConnCounts {
-    replica_connections: usize,
-    client_connections: usize,
-}
 
-impl ConnCounts {
-    pub(crate) fn from_tcp_config(tcp: &TcpConfig) -> Self {
-        Self {
-            replica_connections: tcp.replica_concurrent_connections,
-            client_connections: tcp.client_concurrent_connections,
-        }
-    }
-
-    /// How many connections should we maintain with a given node
-    pub(crate) fn get_connections_to_node(&self, my_id: NodeId, other_id: NodeId, first_cli: NodeId) -> usize {
-        if my_id < first_cli && other_id < first_cli {
-            self.replica_connections
-        } else {
-            self.client_connections
-        }
-    }
-}
 
 /// Represents a connection between two peers
 /// We can have multiple underlying tcp connections for a given connection between two peers

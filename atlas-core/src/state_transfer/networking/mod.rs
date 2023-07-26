@@ -17,8 +17,6 @@ use crate::smr::networking::NodeWrap;
 pub trait StateTransferSendNode<STM> where STM: StateTransferMessage {
     fn id(&self) -> NodeId;
 
-    fn first_cli(&self) -> NodeId;
-
     /// Sends a message to a given target.
     /// Does not block on the message sent. Returns a result that is
     /// Ok if there is a current connection to the target or err if not. No other checks are made
@@ -65,11 +63,6 @@ impl<NT, D, P, S, L, NI, RM> StateTransferSendNode<S> for NodeWrap<NT, D, P, S, 
     #[inline(always)]
     fn id(&self) -> NodeId {
         self.0.id()
-    }
-
-    #[inline(always)]
-    fn first_cli(&self) -> NodeId {
-        self.0.first_cli()
     }
 
     #[inline(always)]

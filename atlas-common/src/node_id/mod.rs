@@ -7,6 +7,13 @@ use serde::{Serialize, Deserialize};
 #[repr(transparent)]
 pub struct NodeId(pub u32);
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum NodeType {
+    Replica,
+    Client
+}
+
 impl NodeId {
     
     pub fn targets_u32<I>(into_iterator: I) -> impl Iterator<Item=Self>

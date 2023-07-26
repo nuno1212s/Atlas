@@ -1,20 +1,19 @@
-mod conn_establish;
+pub(crate) mod conn_establish;
 pub mod epoll_group;
+pub mod conn_util;
 
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::message::{StoredMessage, WireMessage};
-use crate::mio_tcp::connections::conn_establish::ConnectionHandler;
+use crate::mio_tcp::connections::conn_establish::{ConnectionHandler, PendingConnHandle, ServerRegisteredPendingConns};
 use crate::mio_tcp::connections::epoll_group::{
     EpollWorkerGroupHandle, EpollWorkerId, NewConnection,
 };
 use crate::reconfiguration_node::{NetworkInformationProvider, ReconfigurationMessageHandler};
 use crate::serialize::Serializable;
-use crate::tcpip::connections::{Callback, ConnCounts};
 use crate::NodeConnections;
-use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotRx, TryRecvError};
 use atlas_common::error::*;
-use atlas_common::node_id::NodeId;
+use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::peer_addr::PeerAddr;
 use atlas_common::socket::{MioSocket, SecureSocket, SecureSocketSync, SyncListener};
 use crossbeam_skiplist::SkipMap;
@@ -24,6 +23,7 @@ use mio::{Token, Waker};
 use std::net::Shutdown;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use crate::conn_utils::{Callback, ConnCounts};
 
 pub type NetworkSerializedMessage = (WireMessage);
 
@@ -34,11 +34,12 @@ pub struct Connections<NI, RM, PM>
           RM: Serializable + 'static,
           PM: Serializable + 'static {
     id: NodeId,
-    first_cli: NodeId,
+    // The current pending connections, awaiting information from the reconfiguration protocol
+    server_connections: Arc<ServerRegisteredPendingConns>,
     // The map of registered connections
     registered_connections: DashMap<NodeId, Arc<PeerConnection<RM, PM>>>,
     // A map of addresses to our known peers
-    address_lookup: Arc<NI>,
+    network_info: Arc<NI>,
     // A reference to the worker group that handles the epoll workers
     worker_group: EpollWorkerGroupHandle<RM, PM>,
     // A reference to the client pooling
@@ -55,6 +56,7 @@ pub struct Connections<NI, RM, PM>
 pub struct PeerConnection<RM, PM>
     where RM: Serializable + 'static,
           PM: Serializable + 'static {
+    node_type: NodeType,
     //A handle to the request buffer of the peer we are connected to in the client pooling module
     client: Arc<ConnectedPeer<StoredMessage<PM::Message>>>,
     //A handle to the reconfiguration message handler
@@ -107,8 +109,9 @@ impl<NI, RM, PM> NodeConnections for Connections<NI, RM, PM>
         node: NodeId,
     ) -> Vec<OneShotRx<Result<()>>> {
         let addr = self.get_addr_for_node(&node);
+        let node_type = self.network_info.get_node_type(&node);
 
-        if addr.is_none() {
+        if addr.is_none() || node_type.is_none() {
             error!("No address found for node {:?}", node);
 
             return vec![];
@@ -124,7 +127,7 @@ impl<NI, RM, PM> NodeConnections for Connections<NI, RM, PM>
 
         let connections = self
             .conn_counts
-            .get_connections_to_node(self.id, node, self.first_cli);
+            .get_connections_to_node(self.id, node, &*self.network_info);
 
         let connections = if current_connections > connections {
             0
@@ -137,7 +140,7 @@ impl<NI, RM, PM> NodeConnections for Connections<NI, RM, PM>
         for _ in 0..connections {
             result_vec.push(
                 self.conn_handler
-                    .connect_to_node(Arc::clone(self), node, addr.clone()),
+                    .connect_to_node(Arc::clone(self), node, node_type.unwrap(), addr.clone()),
             )
         }
 
@@ -170,7 +173,6 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
 {
     pub(super) fn initialize_connections(
         id: NodeId,
-        first_cli: NodeId,
         node_addr_lookup: Arc<NI>,
         group_handle: EpollWorkerGroupHandle<RM, PM>,
         conn_counts: ConnCounts,
@@ -179,15 +181,16 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
     ) -> Result<Self> {
         let conn_handler = Arc::new(ConnectionHandler::initialize(
             id.clone(),
-            first_cli.clone(),
             conn_counts.clone(),
         ));
 
+        let server_connections = Arc::new(ServerRegisteredPendingConns::new());
+
         Ok(Self {
             id,
-            first_cli,
+            server_connections: server_connections,
             registered_connections: Default::default(),
-            address_lookup: node_addr_lookup,
+            network_info: node_addr_lookup,
             worker_group: group_handle,
             client_pooling,
             reconfig_handling: reconfiguration_handling,
@@ -199,10 +202,12 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
     pub(super) fn setup_tcp_server_worker(self: &Arc<Self>, listener: SyncListener) {
         conn_establish::initialize_server(
             self.id.clone(),
-            self.first_cli.clone(),
             listener,
             self.conn_handler.clone(),
+            self.server_connections.clone(),
+            self.network_info.clone(),
             Arc::clone(self),
+            self.reconfig_handling.clone(),
         )
     }
 
@@ -212,12 +217,21 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
 
         option.map(|conn| conn.value().clone())
     }
-
-    fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr> {
-        self.address_lookup.get_addr_for_node(node)
+    
+    /// Get the pending connection for a given node, if applicable
+    pub fn get_pending_connection(&self, node: &NodeId) -> Option<PendingConnHandle> {
+        self.server_connections.get_pending_conn(node)
     }
 
-    fn handle_connection_established(self: &Arc<Self>, node: NodeId, socket: SecureSocket) {
+    /// Get the addr for the node given
+    fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr> {
+        self.network_info.get_addr_for_node(node)
+    }
+
+    fn handle_connection_established(self: &Arc<Self>, node: NodeId,
+                                     socket: SecureSocket,
+                                     node_type: NodeType,
+                                     channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>)) {
         let socket = match socket {
             SecureSocket::Sync(sync) => match sync {
                 SecureSocketSync::Plain(socket) => socket,
@@ -226,13 +240,15 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
             _ => unreachable!(),
         };
 
-        self.handle_connection_established_with_socket(node, socket.into());
+        self.handle_connection_established_with_socket(node, socket.into(), node_type, channel);
     }
 
     fn handle_connection_established_with_socket(
         self: &Arc<Self>,
         node: NodeId,
         socket: MioSocket,
+        node_type: NodeType,
+        channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>),
     ) {
         info!(
             "{:?} // Handling established connection to {:?}",
@@ -243,8 +259,10 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
 
         let peer_conn = option.or_insert_with(|| {
             let con = Arc::new(PeerConnection::new(
-                self.client_pooling.init_peer_conn(node),
-                self.reconfig_handling.clone()
+                node_type,
+                self.client_pooling.init_peer_conn(node, node_type),
+                self.reconfig_handling.clone(),
+                channel,
             ));
 
             debug!(
@@ -259,7 +277,7 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
 
         let concurrency_level =
             self.conn_counts
-                .get_connections_to_node(self.id, node, self.first_cli);
+                .get_connections_to_node(self.id, node, &*self.network_info);
 
         let conn_id = peer_conn.gen_conn_id();
 
@@ -329,18 +347,23 @@ impl<RM, PM> PeerConnection<RM, PM>
           PM: Serializable + 'static
 {
     fn new(
+        node_type: NodeType,
         client: Arc<ConnectedPeer<StoredMessage<PM::Message>>>,
-        reconf_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>
+        reconf_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
+        channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>),
     ) -> Self {
-        let to_send = channel::new_bounded_sync(SEND_QUEUE_SIZE);
-
         Self {
+            node_type,
             client,
             reconf_handling,
             conn_id_generator: AtomicU32::new(0),
             connections: Default::default(),
-            to_send,
+            to_send: channel,
         }
+    }
+
+    fn node_type(&self) -> NodeType {
+        self.node_type
     }
 
     /// Get a unique ID for a connection

@@ -1,4 +1,5 @@
 use atlas_common::{node_id::NodeId, crypto::signature::KeyPair, peer_addr::PeerAddr};
+use atlas_common::node_id::NodeType;
 
 use crate::message::NodeTriple;
 
@@ -7,6 +8,8 @@ use crate::message::NodeTriple;
 pub struct ReconfigurableNetworkConfig {
     // The node ID of this node
     pub node_id: NodeId,
+    // The type of this node.
+    pub node_type: NodeType,
     // The key pair of this node
     pub key_pair: KeyPair,
     // Our address

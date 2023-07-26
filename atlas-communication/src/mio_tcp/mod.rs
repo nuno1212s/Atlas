@@ -12,7 +12,7 @@ use atlas_common::{socket, threadpool};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::crypto::signature::KeyPair;
 use atlas_common::error::*;
-use atlas_common::node_id::NodeId;
+use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::peer_addr::PeerAddr;
 use atlas_common::prng::ThreadSafePrng;
 use atlas_common::socket::SyncListener;
@@ -21,14 +21,15 @@ use atlas_metrics::metrics::metric_duration;
 use crate::{FullNetworkNode};
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::config::MioConfig;
+use crate::conn_utils::ConnCounts;
 use crate::message::{NetworkMessageKind, SerializedMessage, StoredMessage, StoredSerializedNetworkMessage, StoredSerializedProtocolMessage, WireMessage};
 use crate::metric::THREADPOOL_PASS_TIME_ID;
 use crate::mio_tcp::connections::{Connections, PeerConnection};
+use crate::mio_tcp::connections::conn_establish::PendingConnHandle;
 use crate::mio_tcp::connections::epoll_group::{init_worker_group_handle, initialize_worker_group};
 use crate::protocol_node::ProtocolNetworkNode;
 use crate::reconfiguration_node::{NetworkInformationProvider, ReconfigurationMessageHandler, ReconfigurationNode};
 use crate::serialize::{Buf, Serializable};
-use crate::tcpip::connections::ConnCounts;
 
 mod connections;
 
@@ -42,7 +43,6 @@ pub struct MIOTcpNode<NI, RM, PM>
           RM: Serializable + 'static,
           PM: Serializable + 'static {
     id: NodeId,
-    first_cli: NodeId,
     // The thread safe random number generator
     rng: Arc<ThreadSafePrng>,
     /// General network information and reconfiguration logic
@@ -113,36 +113,57 @@ impl<NI, RM, PM> MIOTcpNode<NI, RM, PM>
             } else {
                 match self.connections.get_connection(&id) {
                     None => {
-                        failed.push(id)
+                        match self.connections.get_pending_connection(&id) {
+                            None => {
+                                failed.push(id)
+                            }
+                            Some(conn) => {
+                                let send_to = match &mut send_tos {
+                                    None => {
+                                        send_tos = Some(SmallVec::new());
+
+                                        send_tos.as_mut().unwrap()
+                                    }
+                                    Some(send_to) => {
+                                        send_to
+                                    }
+                                };
+
+                                send_to.push(SendTo {
+                                    my_id,
+                                    peer_id: id.clone(),
+                                    shared: shared.cloned(),
+                                    nonce,
+                                    reconfig_handling: self.reconfig_handling.clone(),
+                                    peer_cnn: SendToPeer::PendingPeer(conn),
+                                    flush,
+                                    rq_send_time: Instant::now(),
+                                });
+                            }
+                        }
                     }
                     Some(conn) => {
-                        if let Some(send_tos) = &mut send_tos {
-                            send_tos.push(SendTo {
-                                my_id,
-                                peer_id: id.clone(),
-                                shared: shared.cloned(),
-                                nonce,
-                                reconfig_handling: self.reconfig_handling.clone(),
-                                peer_cnn: SendToPeer::Peer(conn),
-                                flush,
-                                rq_send_time: Instant::now(),
-                            })
-                        } else {
-                            let mut send = SmallVec::new();
+                        let send_to = match &mut send_tos {
+                            None => {
+                                send_tos = Some(SmallVec::new());
 
-                            send.push(SendTo {
-                                my_id,
-                                peer_id: id.clone(),
-                                shared: shared.cloned(),
-                                nonce,
-                                reconfig_handling: self.reconfig_handling.clone(),
-                                peer_cnn: SendToPeer::Peer(conn),
-                                flush,
-                                rq_send_time: Instant::now(),
-                            });
+                                send_tos.as_mut().unwrap()
+                            }
+                            Some(send_to) => {
+                                send_to
+                            }
+                        };
 
-                            send_tos = Some(send)
-                        }
+                        send_to.push(SendTo {
+                            my_id,
+                            peer_id: id.clone(),
+                            shared: shared.cloned(),
+                            nonce,
+                            reconfig_handling: self.reconfig_handling.clone(),
+                            peer_cnn: SendToPeer::Peer(conn),
+                            flush,
+                            rq_send_time: Instant::now(),
+                        });
                     }
                 }
             }
@@ -210,10 +231,6 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for MIOTcpNode<NI, RM, PM>
 
     fn id(&self) -> NodeId {
         self.id
-    }
-
-    fn first_cli(&self) -> NodeId {
-        self.first_cli
     }
 
     fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
@@ -357,6 +374,7 @@ impl<NI, RM, PM> ReconfigurationNode<RM> for MIOTcpNode<NI, RM, PM>
     type ConnectionManager = Connections<NI, RM, PM>;
     type NetworkInfoProvider = NI;
     type IncomingReconfigRqHandler = ReconfigurationMessageHandler<StoredMessage<RM::Message>>;
+    type ReconfigurationNetworkUpdate = ReconfigurationMessageHandler<StoredMessage<RM::Message>>;
 
     fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
         &self.connections
@@ -364,6 +382,10 @@ impl<NI, RM, PM> ReconfigurationNode<RM> for MIOTcpNode<NI, RM, PM>
 
     fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider> {
         &self.reconfiguration
+    }
+
+    fn reconfiguration_network_update(&self) -> &Arc<Self::ReconfigurationNetworkUpdate> {
+        &self.reconfig_handling
     }
 
     fn reconfiguration_message_handler(&self) -> &Arc<Self::IncomingReconfigRqHandler> {
@@ -433,7 +455,7 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
         //Setup all the peer message reception handling.
         let peers = Arc::new(PeerIncomingRqHandling::new(
             cfg.id,
-            cfg.first_cli,
+            network_info_provider.get_own_node_type(),
             cfg.client_pool_config,
         ));
 
@@ -441,7 +463,6 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
 
         let connections = Arc::new(Connections::initialize_connections(
             cfg.id,
-            cfg.first_cli,
             network_info_provider.clone(),
             handle.clone(),
             conn_counts.clone(),
@@ -463,7 +484,6 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
 
         let network_node = Self {
             id,
-            first_cli: cfg.first_cli,
             rng,
             connections,
             reconfig_handling: reconfig_message_handler,
@@ -494,6 +514,7 @@ struct SendTo<RM, PM>
 enum SendToPeer<RM, PM> where RM: Serializable + 'static, PM: Serializable + 'static {
     Me(Arc<ConnectedPeer<StoredMessage<PM::Message>>>),
     Peer(Arc<PeerConnection<RM, PM>>),
+    PendingPeer(PendingConnHandle),
 }
 
 impl<RM, PM> SendTo<RM, PM>
@@ -534,6 +555,12 @@ impl<RM, PM> SendTo<RM, PM>
 
                 peer.peer_message(message, None).unwrap();
             }
+            (SendToPeer::PendingPeer(peer), Either::Right((buf, digest))) => {
+                let message = WireMessage::new(self.my_id, self.peer_id,
+                                               buf, self.nonce, Some(digest), key_pair);
+
+                peer.peer_message(message).unwrap();
+            }
             (_, _) => { unreachable!() }
         }
     }
@@ -565,6 +592,15 @@ impl<RM, PM> SendTo<RM, PM>
                 let wm = WireMessage::from_parts(header, buf).unwrap();
 
                 peer_cnn.peer_message(wm, None).unwrap();
+            }
+            SendToPeer::PendingPeer(pending_conn) => {
+                let (header, msg) = msg.into_inner();
+
+                let (_, buf) = msg.into_inner();
+
+                let wm = WireMessage::from_parts(header, buf).unwrap();
+
+                pending_conn.peer_message(wm).unwrap();
             }
         }
     }

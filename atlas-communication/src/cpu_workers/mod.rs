@@ -13,7 +13,6 @@ use crate::metric::{COMM_DESERIALIZE_VERIFY_TIME_ID, COMM_SERIALIZE_SIGN_TIME_ID
 use crate::reconfiguration_node::ReconfigurationMessageHandler;
 use crate::serialize;
 use crate::serialize::Serializable;
-use crate::tcp_ip_simplex::connections::PeerConnection;
 
 //TODO: Statistics
 
@@ -22,7 +21,7 @@ use crate::tcp_ip_simplex::connections::PeerConnection;
 /// in synchronous or asynchronous workloads.
 pub(crate) fn serialize_digest_message<RM, PM>(message: NetworkMessageKind<RM, PM>)
                                                -> OneShotRx<Result<(Bytes, Digest)>>
-    where RM: Serializable + 'static, PM: Serializable + 'static{
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     let (tx, rx) = new_oneshot_channel();
 
     let start = Instant::now();
@@ -122,6 +121,24 @@ pub(crate) fn deserialize_message<RM, PM>(header: Header, payload: BytesMut)
     });
 
     rx
+}
+
+pub(crate) fn deserialize_and_push_reconf_message<RM, PM>(header: Header, payload: BytesMut, reconf_handle: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>)
+    where RM: Serializable + 'static, PM: Serializable + 'static {
+    let start = Instant::now();
+
+    threadpool::execute(move || {
+        metric_duration(THREADPOOL_PASS_TIME_ID, start.elapsed());
+
+        let (message, _) = deserialize_message_no_threadpool::<RM, PM>(header.clone(), payload).unwrap();
+
+        match message {
+            NetworkMessageKind::ReconfigurationMessage(reconf) => {
+                reconf_handle.push_request(StoredMessage::new(header, reconf.into())).unwrap();
+            }
+            _ => unreachable!()
+        }
+    });
 }
 
 pub(crate) fn deserialize_and_push_message<RM, PM>(header: Header, payload: BytesMut,

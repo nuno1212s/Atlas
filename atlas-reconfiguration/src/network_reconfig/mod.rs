@@ -9,7 +9,7 @@ use atlas_common::async_runtime as rt;
 use atlas_common::channel::OneShotRx;
 use atlas_common::crypto::signature;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
-use atlas_common::node_id::NodeId;
+use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::SeqNo;
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::message::Header;
@@ -37,6 +37,7 @@ pub type NetworkPredicate = fn(Arc<NetworkInfo>, NodeTriple) -> OneShotRx<Option
 /// currently know about
 pub struct NetworkInfo {
     node_id: NodeId,
+    node_type: NodeType,
     key_pair: Arc<KeyPair>,
 
     address: PeerAddr,
@@ -57,6 +58,7 @@ impl NetworkInfo {
     pub fn init_from_config(config: ReconfigurableNetworkConfig) -> Self {
         let ReconfigurableNetworkConfig {
             node_id,
+            node_type,
             key_pair,
             our_address,
             known_nodes,
@@ -66,6 +68,7 @@ impl NetworkInfo {
 
         NetworkInfo {
             node_id,
+            node_type,
             key_pair: Arc::new(key_pair),
             address: our_address,
             bootstrap_nodes: boostrap_nodes,
@@ -76,11 +79,13 @@ impl NetworkInfo {
 
     pub fn empty_network_node(
         node_id: NodeId,
+        node_type: NodeType,
         key_pair: KeyPair,
         address: PeerAddr,
     ) -> Self {
         NetworkInfo {
             node_id,
+            node_type,
             key_pair: Arc::new(key_pair),
             known_nodes: RwLock::new(KnownNodes::empty()),
             predicates: vec![],
@@ -94,19 +99,25 @@ impl NetworkInfo {
     pub fn with_bootstrap_nodes(
         node_id: NodeId,
         key_pair: KeyPair,
+        node_type: NodeType,
         address: PeerAddr,
-        bootstrap_nodes: BTreeMap<NodeId, (PeerAddr, Vec<u8>)>,
+        bootstrap_nodes: BTreeMap<NodeId, (PeerAddr, NodeType, Vec<u8>)>,
     ) -> Self {
-        let node = NetworkInfo::empty_network_node(node_id, key_pair, address);
+        let node = NetworkInfo::empty_network_node(node_id, node_type, key_pair, address);
 
         {
             let mut write_guard = node.known_nodes.write().unwrap();
 
-            for (node_id, (addr, pk_bytes)) in bootstrap_nodes {
+            for (node_id, (addr, node_type, pk_bytes)) in bootstrap_nodes {
                 let public_key = PublicKey::from_bytes(&pk_bytes[..]).unwrap();
 
-                write_guard.node_keys.insert(node_id, public_key);
-                write_guard.node_addrs.insert(node_id, addr);
+                let info = NodeInfo {
+                    node_type,
+                    pk: public_key,
+                    addr,
+                };
+
+                write_guard.node_info.insert(node_id, info);
             }
         }
 
@@ -192,11 +203,16 @@ impl NetworkInfo {
     fn handle_single_node_introduced(write_guard: &mut KnownNodes, node: NodeTriple) -> bool {
         let node_id = node.node_id();
 
-        if !write_guard.node_keys.contains_key(&node_id) {
+        if !write_guard.node_info.contains_key(&node_id) {
             let public_key = PublicKey::from_bytes(&node.public_key()[..]).unwrap();
 
-            write_guard.node_keys.insert(node_id, public_key);
-            write_guard.node_addrs.insert(node_id, node.addr().clone());
+            let node_info = NodeInfo {
+                node_type: node.node_type(),
+                pk: public_key,
+                addr: node.addr().clone(),
+            };
+
+            write_guard.node_info.insert(node_id, node_info);
 
             true
         } else {
@@ -239,9 +255,9 @@ impl NetworkInfo {
     pub fn get_pk_for_node(&self, node: &NodeId) -> Option<PublicKey> {
         self.known_nodes
             .read()
-            .unwrap()
-            .node_keys
+            .unwrap().node_info()
             .get(node)
+            .map(|info| info.pk())
             .cloned()
     }
 
@@ -249,8 +265,9 @@ impl NetworkInfo {
         self.known_nodes
             .read()
             .unwrap()
-            .node_addrs
+            .node_info()
             .get(node)
+            .map(|info| info.addr())
             .cloned()
     }
 
@@ -266,7 +283,7 @@ impl NetworkInfo {
         self.known_nodes
             .read()
             .unwrap()
-            .node_addrs
+            .node_info()
             .keys()
             .cloned()
             .collect()
@@ -277,6 +294,7 @@ impl NetworkInfo {
             self.node_id,
             self.key_pair.public_key_bytes().to_vec(),
             self.address.clone(),
+            self.node_type,
         )
     }
 
@@ -294,12 +312,42 @@ impl NetworkInformationProvider for NetworkInfo {
         &self.key_pair
     }
 
+    fn get_own_node_type(&self) -> NodeType {
+        self.node_type
+    }
+
+    fn get_node_type(&self, node: &NodeId) -> Option<NodeType> {
+        self.known_nodes.read().unwrap().node_info.get(node).map(|info| info.node_type)
+    }
+
     fn get_public_key(&self, node: &NodeId) -> Option<PublicKey> {
-        self.known_nodes.read().unwrap().node_keys.get(node).cloned()
+        self.known_nodes.read().unwrap().node_info.get(node).map(|info| info.pk.clone())
     }
 
     fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr> {
-        self.known_nodes.read().unwrap().node_addrs.get(node).cloned()
+        self.known_nodes.read().unwrap().node_info.get(node).map(|info| info.addr.clone())
+    }
+}
+
+/// The node info for a given network node
+#[derive(Clone)]
+pub(crate) struct NodeInfo {
+    node_type: NodeType,
+    pk: PublicKey,
+    addr: PeerAddr,
+}
+
+impl NodeInfo {
+    pub(crate) fn node_type(&self) -> NodeType {
+        self.node_type
+    }
+
+    pub(crate) fn pk(&self) -> &PublicKey {
+        &self.pk
+    }
+
+    pub(crate) fn addr(&self) -> &PeerAddr {
+        &self.addr
     }
 }
 
@@ -307,16 +355,13 @@ impl NetworkInformationProvider for NetworkInfo {
 /// quorum or not
 #[derive(Clone)]
 pub struct KnownNodes {
-    pub(crate) node_keys: BTreeMap<NodeId, PublicKey>,
-    pub(crate) node_addrs: BTreeMap<NodeId, PeerAddr>,
+    pub(crate) node_info: BTreeMap<NodeId, NodeInfo>,
 }
-
 
 impl KnownNodes {
     fn empty() -> Self {
         Self {
-            node_keys: BTreeMap::new(),
-            node_addrs: BTreeMap::new(),
+            node_info: Default::default(),
         }
     }
 
@@ -330,12 +375,8 @@ impl KnownNodes {
         known_nodes
     }
 
-    pub fn node_keys(&self) -> &BTreeMap<NodeId, PublicKey> {
-        &self.node_keys
-    }
-
-    pub fn node_addrs(&self) -> &BTreeMap<NodeId, PeerAddr> {
-        &self.node_addrs
+    pub(crate) fn node_info(&self) -> &BTreeMap<NodeId, NodeInfo> {
+        &self.node_info
     }
 }
 

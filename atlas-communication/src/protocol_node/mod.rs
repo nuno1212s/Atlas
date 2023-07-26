@@ -42,9 +42,6 @@ pub trait ProtocolNetworkNode<M>: Send + Sync where M: Serializable + 'static {
     /// Reports the id of this `Node`.
     fn id(&self) -> NodeId;
 
-    /// Reports the first Id
-    fn first_cli(&self) -> NodeId;
-
     /// Get a handle to the connection manager of this node.
     fn node_connections(&self) -> &Arc<Self::ConnectionManager>;
 

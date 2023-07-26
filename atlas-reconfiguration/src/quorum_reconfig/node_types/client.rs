@@ -61,7 +61,7 @@ impl ClientQuorumView {
 
                 let message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(reconf_message));
 
-                network_node.broadcast_reconfig_message(message, known_nodes.into_iter()).unwrap();
+                let _ = network_node.broadcast_reconfig_message(message, known_nodes.into_iter());
 
                 timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted_nodes / 2 + 1) as u32, seq_no.curr_seq());
 

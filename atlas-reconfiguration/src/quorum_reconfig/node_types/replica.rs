@@ -92,7 +92,7 @@ impl ReplicaQuorumView {
 
                 let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), reconf_message);
 
-                network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter()).unwrap();
+                let _ = network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter());
 
                 timeouts.timeout_reconfig_request(TIMEOUT_DUR, ((contacted_nodes * 2 / 3) + 1) as u32, seq_no.curr_seq());
 
@@ -200,7 +200,7 @@ impl ReplicaQuorumView {
 
                 let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(reconf_message));
 
-                network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter()).unwrap();
+                let _ = network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter());
 
                 self.current_state = ReplicaState::Initializing(contacted_nodes, Default::default(), Default::default());
 
@@ -217,7 +217,7 @@ impl ReplicaQuorumView {
 
                 let contacted_nodes = quorum_members.len();
 
-                network_node.broadcast_reconfig_message(reconfig_message, quorum_members.into_iter()).unwrap();
+                let _ = network_node.broadcast_reconfig_message(reconfig_message, quorum_members.into_iter());
 
                 self.current_state = ReplicaState::JoiningQuorum(contacted_nodes, Default::default(), Default::default());
 
@@ -272,7 +272,7 @@ impl ReplicaQuorumView {
 
             timeouts.timeout_reconfig_request(TIMEOUT_DUR, ((current_quorum_members.len() * 2 / 3) + 1) as u32, seq_no.curr_seq());
 
-            network_node.broadcast_reconfig_message(reconfig_message, current_quorum_members.into_iter()).unwrap();
+            let _ = network_node.broadcast_reconfig_message(reconfig_message, current_quorum_members.into_iter());
 
             QuorumProtocolResponse::Running
         }
@@ -314,7 +314,7 @@ impl ReplicaQuorumView {
 
                                 let reconf_message = ReconfigurationMessage::new(seq, quorum_reconfig_msg);
 
-                                network_node.send_reconfig_message(reconf_message, header.from()).unwrap();
+                                let _ = network_node.send_reconfig_message(reconf_message, header.from());
 
                                 return;
                             }
@@ -436,7 +436,7 @@ impl ReplicaQuorumView {
 
         let novel_view = guard.next_with_added_node(node_added);
 
-        std::mem::replace(&mut *guard, novel_view);
+        let _ = std::mem::replace(&mut *guard, novel_view);
 
         let reconf_message = ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::QuorumUpdated((*guard).clone()));
 

@@ -44,8 +44,7 @@ impl<NT, D, P, S, L, NI, RM> NodeWrap<NT, D, P, S, L, NI, RM>
           L: LogTransferMessage + 'static,
           NI: NetworkInformationProvider + 'static,
           RM: Serializable + 'static,
-          NT: FullNetworkNode<NI, RM, ServiceMsg<D, P, S, L>> + 'static,
-{
+          NT: FullNetworkNode<NI, RM, ServiceMsg<D, P, S, L>> + 'static, {
     pub fn from_node(node: NT) -> Self {
         NodeWrap(node, Default::default())
     }
@@ -80,10 +79,6 @@ impl<NT, D, P, S, L, NI, RM> ProtocolNetworkNode<ServiceMsg<D, P, S, L>> for Nod
 
     fn id(&self) -> NodeId {
         ProtocolNetworkNode::id(&self.0)
-    }
-
-    fn first_cli(&self) -> NodeId {
-        ProtocolNetworkNode::first_cli(&self.0)
     }
 
     fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
@@ -135,6 +130,7 @@ impl<NT, D, P, S, L, NI, RM> ReconfigurationNode<RM> for NodeWrap<NT, D, P, S, L
     type ConnectionManager = <NT as ReconfigurationNode<RM>>::ConnectionManager;
     type NetworkInfoProvider = <NT as ReconfigurationNode<RM>>::NetworkInfoProvider;
     type IncomingReconfigRqHandler = NT::IncomingReconfigRqHandler;
+    type ReconfigurationNetworkUpdate = NT::ReconfigurationNetworkUpdate;
 
     fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
         ReconfigurationNode::node_connections(&self.0)
@@ -142,6 +138,10 @@ impl<NT, D, P, S, L, NI, RM> ReconfigurationNode<RM> for NodeWrap<NT, D, P, S, L
 
     fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider> {
         ReconfigurationNode::network_info_provider(&self.0)
+    }
+
+    fn reconfiguration_network_update(&self) -> &Arc<Self::ReconfigurationNetworkUpdate> {
+        self.0.reconfiguration_network_update()
     }
 
     fn reconfiguration_message_handler(&self) -> &Arc<Self::IncomingReconfigRqHandler> {
