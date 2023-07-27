@@ -81,7 +81,7 @@ pub trait ReconfigurationNode<M>: Send + Sync where M: Serializable + 'static {
     fn broadcast_reconfig_message(&self, message: M::Message, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>>;
 }
 
-
+#[derive(Clone)]
 pub enum NetworkUpdateMessage {
     NodeConnectionPermitted(NodeId, NodeType, PublicKey)
 }

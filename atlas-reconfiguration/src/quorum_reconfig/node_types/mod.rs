@@ -95,7 +95,8 @@ impl NodeType {
                                           timeouts: &Timeouts,
                                           header: Header, seq: SeqNo, quorum_reconfig: QuorumReconfigMessage) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        info!("Received a quorum reconfig message {:?} from {:?} with header {:?}", quorum_reconfig, header.from(), header, );
+
+        info!("Received a quorum reconfig message {:?} from {:?} with header {:?}",quorum_reconfig, header.from(), header, );
 
         match quorum_reconfig {
             QuorumReconfigMessage::NetworkViewStateRequest => {

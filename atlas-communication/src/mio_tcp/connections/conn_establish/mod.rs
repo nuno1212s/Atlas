@@ -5,14 +5,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
-use dashmap::DashMap;
 use log::{debug, error, info, trace, warn};
 use mio::{Events, Interest, Poll, Token, Waker};
 use mio::event::Event;
 use slab::Slab;
 
 use atlas_common::{channel, prng, socket};
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotRx, SendError};
+use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotRx};
 use atlas_common::error::*;
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::peer_addr::PeerAddr;
@@ -22,10 +21,13 @@ use crate::conn_utils::ConnCounts;
 use crate::cpu_workers;
 use crate::message::{Header, StoredMessage, WireMessage};
 use crate::mio_tcp::connections::{conn_util, Connections, NetworkSerializedMessage};
+use crate::mio_tcp::connections::conn_establish::pending_conn::{NetworkUpdate, PendingConnHandle, ServerRegisteredPendingConns};
 use crate::mio_tcp::connections::conn_util::{ConnectionReadWork, ConnectionWriteWork, ReadingBuffer, WritingBuffer};
 use crate::mio_tcp::connections::epoll_group::epoll_workers::{interrupted, would_block};
 use crate::reconfiguration_node::{NetworkInformationProvider, NetworkUpdateMessage, ReconfigurationMessageHandler};
 use crate::serialize::Serializable;
+
+pub mod pending_conn;
 
 const DEFAULT_ALLOWED_CONCURRENT_JOINS: usize = 128;
 // Since the tokens will always start at 0, we limit the amount of concurrent joins we can have
@@ -55,16 +57,6 @@ enum PendingConnection {
     ServerToken,
 }
 
-#[derive(Clone)]
-pub struct PendingConnHandle {
-    id: NodeId,
-    channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>),
-}
-
-pub struct ServerRegisteredPendingConns {
-    pending_conns: DashMap<NodeId, PendingConnHandle>,
-}
-
 pub struct ServerWorker<NI, RM, PM>
     where NI: NetworkInformationProvider + 'static,
           RM: Serializable + 'static,
@@ -77,6 +69,7 @@ pub struct ServerWorker<NI, RM, PM>
     network_info: Arc<NI>,
     peer_conns: Arc<Connections<NI, RM, PM>>,
     reconf_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
+    network_message_rx: ChannelSyncRx<NetworkUpdate>,
     waker: Arc<Waker>,
     poll: Poll,
 
@@ -101,7 +94,8 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
                registered_conns: Arc<ServerRegisteredPendingConns>,
                network_info: Arc<NI>,
                peer_conns: Arc<Connections<NI, RM, PM>>,
-               reconf_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>, ) -> Result<Self> {
+               reconf_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
+               network_message_rx: ChannelSyncRx<NetworkUpdate>) -> Result<Self> {
         let mut slab = Slab::with_capacity(DEFAULT_ALLOWED_CONCURRENT_JOINS);
 
         let mut poll = Poll::new()?;
@@ -139,6 +133,7 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
             network_info,
             peer_conns,
             reconf_handling,
+            network_message_rx,
             waker: Arc::new(waker),
             poll,
             waker_token,
@@ -227,41 +222,39 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
 
     /// Read network update messages from the reconfiguration module
     fn read_network_update_messages(&mut self) -> io::Result<()> {
-        match self.reconf_handling.try_receive_network_update(None) {
+        match self.network_message_rx.try_recv() {
             Ok(message) => {
-                if let Some(message) = message {
-                    match message {
-                        NetworkUpdateMessage::NodeConnectionPermitted(node_id, node_type, pk) => {
-                            let conn_handle = self.registered_conns.remove_pending_connection(node_id);
+                let (conn_handle, update_message) = message.into_inner();
 
-                            debug!("Received network update message for node {:?} with type {:?}", node_id, node_type);
+                match update_message {
+                    NetworkUpdateMessage::NodeConnectionPermitted(node_id, node_type, pk) => {
+                        debug!("Received network update message for node {:?} with type {:?}", node_id, node_type);
 
-                            while let Some(position) = self.currently_accepting.iter().position(|(token, pend)| {
-                                return match pend {
-                                    PendingConnection::PendingConn { peer_id, .. } => {
-                                        if let Some(node) = peer_id {
-                                            if *node == node_id {
-                                                true
-                                            } else {
-                                                false
-                                            }
+                        while let Some(position) = self.currently_accepting.iter().position(|(token, pend)| {
+                            return match pend {
+                                PendingConnection::PendingConn { peer_id, .. } => {
+                                    if let Some(node) = peer_id {
+                                        if *node == node_id {
+                                            true
                                         } else {
                                             false
                                         }
+                                    } else {
+                                        false
                                     }
-                                    _ => unreachable!()
-                                };
-                            }) {
-                                let connection_result = ConnectionResult::Connected(node_id, node_type, Vec::new());
+                                }
+                                _ => unreachable!()
+                            };
+                        }) {
+                            let connection_result = ConnectionResult::Connected(node_id, node_type, Vec::new());
 
-                                self.handle_connection_result(Token(position), connection_result)?;
-                            }
+                            self.handle_connection_result(Token(position), connection_result)?;
                         }
                     }
                 }
             }
-            Err(error) => {
-                error!("Failed to read reconfiguration module ")
+            Err(_) => {
+                // Nothing to read
             }
         }
 
@@ -302,7 +295,9 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
             ConnectionResult::Connected(node_id, node_type, pending_messages) => {
                 // We have identified the peer and should now handle the connection
                 for (header, message) in pending_messages {
-                    cpu_workers::deserialize_and_push_reconf_message::<RM, PM>(header, message, self.reconf_handling.clone());
+                    if header.payload_length() > 0 {
+                        cpu_workers::deserialize_and_push_reconf_message::<RM, PM>(header, message, self.reconf_handling.clone());
+                    }
                 }
 
                 if let Some(mut connection) = self.currently_accepting.try_remove(token.into()) {
@@ -470,24 +465,35 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
                                 if peer_id.is_none() {
                                     *peer_id = Some(header.from());
 
-                                    let conn = self.peer_conns.get_connection(&header.from());
+                                    // Check the general connections first as we add to this before removing from the pending connections
+                                    match self.peer_conns.get_connection(&header.from()) {
+                                        None => {
+                                            match self.registered_conns.get_pending_conn(&header.from()) {
+                                                None => {
+                                                    let node_type = self.peer_conns.network_info.get_node_type(&header.from());
 
-                                    if let Some(conn) = conn {
-                                        // This node is already known to us, we don't have to wait for reconfiguration messages
-                                        let channel = conn.to_send.clone();
+                                                    debug!("Received connection information for token {:?}, from {:?}, node type is: {:?}", token, header.from(), node_type);
 
-                                        connection.fill_channel(channel);
+                                                    if let Some(node_type) = node_type {
+                                                        return Ok(ConnectionResult::Connected(header.from(), node_type, received));
+                                                    } else {
+                                                        let to_send = conn_util::initialize_send_channel();
 
-                                        return Ok(ConnectionResult::Connected(header.from(), conn.node_type, received));
-                                    } else {
-                                        let option = self.registered_conns.get_pending_conn(&header.from());
+                                                        self.registered_conns.insert_pending_connection(PendingConnHandle::new(peer_id.unwrap(), to_send))
+                                                    }
+                                                }
+                                                Some(conn) => {
+                                                    connection.fill_channel(conn.channel().clone());
+                                                }
+                                            }
+                                        }
+                                        Some(conn) => {
+                                            // This node is already known to us, we don't have to wait for reconfiguration messages
+                                            let channel = conn.to_send.clone();
 
-                                        if let Some(conn) = option {
-                                            connection.fill_channel(conn.channel.clone());
-                                        } else {
-                                            let to_send = conn_util::initialize_send_channel();
+                                            connection.fill_channel(channel);
 
-                                            self.registered_conns.insert_pending_connection(PendingConnHandle::new(peer_id.unwrap(), to_send))
+                                            return Ok(ConnectionResult::Connected(header.from(), conn.node_type, received));
                                         }
                                     }
                                 }
@@ -515,23 +521,6 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
     }
 }
 
-impl ServerRegisteredPendingConns {
-    pub fn new() -> Self {
-        Self { pending_conns: DashMap::new() }
-    }
-
-    pub fn get_pending_conn(&self, node: &NodeId) -> Option<PendingConnHandle> {
-        self.pending_conns.get(node).map(|conn| conn.value().clone())
-    }
-
-    pub fn insert_pending_connection(&self, conn: PendingConnHandle) {
-        self.pending_conns.insert(conn.id, conn);
-    }
-
-    pub fn remove_pending_connection(&self, node_id: NodeId) -> PendingConnHandle {
-        self.pending_conns.remove(&node_id).unwrap().1
-    }
-}
 
 impl ConnectionHandler {
     pub(super) fn initialize(my_id: NodeId, conn_count: ConnCounts) -> Self {
@@ -722,7 +711,8 @@ pub fn initialize_server<NI, RM, PM>(my_id: NodeId, listener: SyncListener,
                                      registered_conns: Arc<ServerRegisteredPendingConns>,
                                      network_info: Arc<NI>,
                                      conns: Arc<Connections<NI, RM, PM>>,
-                                     reconfiguration_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>, )
+                                     reconfiguration_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
+                                     network_update_channel: ChannelSyncRx<NetworkUpdate>)
     where NI: NetworkInformationProvider + 'static,
           RM: Serializable + 'static,
           PM: Serializable + 'static {
@@ -731,7 +721,9 @@ pub fn initialize_server<NI, RM, PM>(my_id: NodeId, listener: SyncListener,
                                           connection_handler.clone(),
                                           registered_conns,
                                           network_info,
-                                          conns, reconfiguration_handling).unwrap();
+                                          conns,
+                                          reconfiguration_handling,
+                                          network_update_channel).unwrap();
 
     std::thread::Builder::new()
         .name(format!("Server Worker {:?}", my_id))
@@ -764,22 +756,5 @@ impl PendingConnection {
             }
             _ => unreachable!()
         }
-    }
-}
-
-impl PendingConnHandle {
-    pub(crate) fn new(id: NodeId, channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>)) -> Self {
-        Self { id, channel }
-    }
-
-    pub fn peer_message(&self, message: WireMessage) -> Result<()> {
-        return match self.channel.0.send(message) {
-            Ok(_) => {
-                Ok(())
-            }
-            Err(err) => {
-                Err(Error::simple_with_msg(ErrorKind::CommunicationChannel, format!("Failed to send message to channel. Error: {:?}", err).as_str()))
-            }
-        };
     }
 }

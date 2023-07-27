@@ -10,7 +10,8 @@ use crate::message::{NodeTriple, QuorumEnterRejectionReason, QuorumEnterResponse
 
 pub mod node_types;
 
-pub type QuorumPredicate = fn(QuorumView, NodeTriple) -> OneShotRx<Option<QuorumEnterRejectionReason>>;
+pub type QuorumPredicate =
+fn(QuorumView, NodeTriple) -> OneShotRx<Option<QuorumEnterRejectionReason>>;
 
 pub struct QuorumNode {
     node_id: NodeId,

@@ -4,7 +4,7 @@ pub mod conn_util;
 
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::message::{StoredMessage, WireMessage};
-use crate::mio_tcp::connections::conn_establish::{ConnectionHandler, PendingConnHandle, ServerRegisteredPendingConns};
+use crate::mio_tcp::connections::conn_establish::{ConnectionHandler};
 use crate::mio_tcp::connections::epoll_group::{
     EpollWorkerGroupHandle, EpollWorkerId, NewConnection,
 };
@@ -23,7 +23,9 @@ use mio::{Token, Waker};
 use std::net::Shutdown;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use atlas_common::channel;
 use crate::conn_utils::{Callback, ConnCounts};
+use crate::mio_tcp::connections::conn_establish::pending_conn::{NetworkUpdateHandler, PendingConnHandle, RegisteredServers, ServerRegisteredPendingConns};
 
 pub type NetworkSerializedMessage = (WireMessage);
 
@@ -36,6 +38,8 @@ pub struct Connections<NI, RM, PM>
     id: NodeId,
     // The current pending connections, awaiting information from the reconfiguration protocol
     server_connections: Arc<ServerRegisteredPendingConns>,
+    // The running servers, which are currently handling the reception of new connections from other nodes
+    registered_servers: RegisteredServers,
     // The map of registered connections
     registered_connections: DashMap<NodeId, Arc<PeerConnection<RM, PM>>>,
     // A map of addresses to our known peers
@@ -186,9 +190,12 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
 
         let server_connections = Arc::new(ServerRegisteredPendingConns::new());
 
+        let registered_servers = RegisteredServers::init();
+
         Ok(Self {
             id,
-            server_connections: server_connections,
+            server_connections,
+            registered_servers,
             registered_connections: Default::default(),
             network_info: node_addr_lookup,
             worker_group: group_handle,
@@ -199,7 +206,13 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
         })
     }
 
+
+
     pub(super) fn setup_tcp_server_worker(self: &Arc<Self>, listener: SyncListener) {
+        let (tx, rx) = channel::new_bounded_sync(SEND_QUEUE_SIZE);
+
+        self.registered_servers.register_server(tx);
+
         conn_establish::initialize_server(
             self.id.clone(),
             listener,
@@ -208,6 +221,7 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
             self.network_info.clone(),
             Arc::clone(self),
             self.reconfig_handling.clone(),
+            rx
         )
     }
 
@@ -217,7 +231,7 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
 
         option.map(|conn| conn.value().clone())
     }
-    
+
     /// Get the pending connection for a given node, if applicable
     pub fn get_pending_connection(&self, node: &NodeId) -> Option<PendingConnHandle> {
         self.server_connections.get_pending_conn(node)
@@ -228,6 +242,25 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
         self.network_info.get_addr_for_node(node)
     }
 
+    /// Register a connection without having to provide any sockets, as this is meant to be done
+    /// preemptively so there is no possibility for the connection details to be lost due to
+    /// multi threading non atomic shenanigans
+    fn preemptive_conn_register(self: &Arc<Self>, node: NodeId, node_type: NodeType, channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>))
+                                -> Result<Arc<PeerConnection<RM, PM>>> {
+        debug!("Preemptively registering connection to node {:?}", node);
+
+        let option = self.registered_connections.entry(node);
+
+        let conn = option.or_insert_with(|| {
+            Arc::new(PeerConnection::new(node_type,
+                                         self.client_pooling.init_peer_conn(node, node_type),
+                                         self.reconfig_handling.clone(), channel))
+        });
+
+        Ok(conn.value().clone())
+    }
+
+    /// Handle a given socket having established the necessary connection
     fn handle_connection_established(self: &Arc<Self>, node: NodeId,
                                      socket: SecureSocket,
                                      node_type: NodeType,
@@ -339,6 +372,14 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
 
             let _ = self.connect_to_node(node);
         }
+
+    }
+    pub fn pending_server_connections(&self) -> &Arc<ServerRegisteredPendingConns> {
+        &self.server_connections
+    }
+
+    pub fn registered_servers(&self) -> &RegisteredServers {
+        &self.registered_servers
     }
 }
 

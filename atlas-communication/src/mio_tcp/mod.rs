@@ -25,7 +25,7 @@ use crate::conn_utils::ConnCounts;
 use crate::message::{NetworkMessageKind, SerializedMessage, StoredMessage, StoredSerializedNetworkMessage, StoredSerializedProtocolMessage, WireMessage};
 use crate::metric::THREADPOOL_PASS_TIME_ID;
 use crate::mio_tcp::connections::{Connections, PeerConnection};
-use crate::mio_tcp::connections::conn_establish::PendingConnHandle;
+use crate::mio_tcp::connections::conn_establish::pending_conn::{NetworkUpdateHandler, PendingConnHandle};
 use crate::mio_tcp::connections::epoll_group::{init_worker_group_handle, initialize_worker_group};
 use crate::protocol_node::ProtocolNetworkNode;
 use crate::reconfiguration_node::{NetworkInformationProvider, ReconfigurationMessageHandler, ReconfigurationNode};
@@ -469,6 +469,13 @@ impl<NI, RM, PM> FullNetworkNode<NI, RM, PM> for MIOTcpNode<NI, RM, PM>
             reconfig_message_handler.clone(),
             peers.clone(),
         )?);
+
+        NetworkUpdateHandler::initialize_update_handler(
+            connections.registered_servers().clone(),
+            connections.pending_server_connections().clone(),
+            reconfig_message_handler.clone(),
+            connections.clone(),
+        );
 
         initialize_worker_group(connections.clone(), receivers)?;
 

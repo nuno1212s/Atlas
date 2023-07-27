@@ -14,7 +14,7 @@ use atlas_common::ordering::SeqNo;
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::message::Header;
 use atlas_communication::NodeConnections;
-use atlas_communication::reconfiguration_node::{NetworkInformationProvider, ReconfigurationNode};
+use atlas_communication::reconfiguration_node::{NetworkInformationProvider, NetworkUpdateMessage, ReconfigurationNetworkUpdate, ReconfigurationNode};
 use atlas_core::timeouts::Timeouts;
 
 use crate::config::ReconfigurableNetworkConfig;
@@ -224,9 +224,9 @@ impl NetworkInfo {
 
     /// Can we introduce this node to the network
     pub async fn can_introduce_node(
-        self: Arc<Self>,
+        self: &Arc<Self>,
         node_id: NodeTriple,
-    ) -> NetworkJoinResponseMessage {
+    ) -> (NetworkJoinResponseMessage, bool) {
         let mut results = Vec::with_capacity(self.predicates.len());
 
         for x in &self.predicates {
@@ -239,17 +239,17 @@ impl NetworkInfo {
 
         for join_result in results {
             if let Some(reason) = join_result.unwrap() {
-                return NetworkJoinResponseMessage::Rejected(reason);
+                return (NetworkJoinResponseMessage::Rejected(reason), false);
             }
         }
 
         let signature = signatures::create_node_triple_signature(&node_id, &*self.key_pair).expect("Failed to sign node triple");
 
-        self.handle_node_introduced(node_id);
+        let is_new = self.handle_node_introduced(node_id);
 
         let read_guard = self.known_nodes.read().unwrap();
 
-        return NetworkJoinResponseMessage::Successful(signature, KnownNodesMessage::from(&*read_guard));
+        return (NetworkJoinResponseMessage::Successful(signature, KnownNodesMessage::from(&*read_guard)), is_new);
     }
 
     pub fn get_pk_for_node(&self, node: &NodeId) -> Option<PublicKey> {
@@ -707,13 +707,25 @@ impl GeneralNodeInfo {
         let network_view = self.network_view.clone();
 
         rt::spawn(async move {
-            let result = network_view.can_introduce_node(node).await;
+            let triple = node.clone();
+
+            let (result, is_new) = network_view.can_introduce_node(node).await;
 
             let message = NetworkReconfigMessage::NetworkJoinResponse(result);
 
             let reconfig_message = ReconfigurationMessage::new(seq, ReconfigurationMessageType::NetworkReconfig(message));
 
             let _ = network.send_reconfig_message(reconfig_message, target);
+
+            if is_new {
+                info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", triple.node_id());
+
+                let public_key = network_view.get_pk_for_node(&triple.node_id()).unwrap();
+
+                let connection_permitted = NetworkUpdateMessage::NodeConnectionPermitted(triple.node_id(), triple.node_type(), public_key);
+
+                network.reconfiguration_network_update().send_reconfiguration_update(connection_permitted);
+            }
         });
 
         NetworkProtocolResponse::Nil
