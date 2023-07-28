@@ -1,7 +1,7 @@
 use std::io;
 use std::io::{Read, Write};
 use bytes::{Buf, Bytes, BytesMut};
-use log::trace;
+use log::{debug, trace};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::{Error, ErrorKind};
@@ -11,9 +11,9 @@ use crate::mio_tcp::connections::{NetworkSerializedMessage, SEND_QUEUE_SIZE};
 
 /// The reading buffer for a connection
 pub(super) struct ReadingBuffer {
-    read_bytes: usize,
-    current_header: Option<Header>,
-    read_buffer: BytesMut,
+    pub(super) read_bytes: usize,
+    pub(super)current_header: Option<Header>,
+    pub(super) read_buffer: BytesMut,
 }
 
 /// The writing buffer for a TCP connection
@@ -109,13 +109,14 @@ pub(super) fn read_until_block(socket: &mut MioSocket, read_info: &mut ReadingBu
                 match socket.read(&mut read_info.read_buffer[currently_read..]) {
                     Ok(0) => {
                         // Connection closed
+                        debug!("Connection closed while reading body bytes to read: {},  currently read: {}", bytes_to_read, currently_read);
                         return Ok(ConnectionReadWork::ConnectionBroken);
                     }
                     Ok(n) => {
                         // We still have more to read
                         n
                     }
-                    Err(err) if would_block(&err) => { break; }
+                    Err(err) if would_block(&err) => break,
                     Err(err) if interrupted(&err) => continue,
                     Err(err) => { return Err(Error::wrapped(ErrorKind::Communication, err)); }
                 }
@@ -150,19 +151,15 @@ pub(super) fn read_until_block(socket: &mut MioSocket, read_info: &mut ReadingBu
                 match socket.read(&mut read_info.read_buffer[currently_read_bytes..]) {
                     Ok(0) => {
                         // Connection closed
-                        trace!("Connection closed");
+                        debug!("Connection closed while reading header bytes to read {}, current read bytes {}", bytes_to_read, currently_read_bytes);
                         return Ok(ConnectionReadWork::ConnectionBroken);
                     }
                     Ok(n) => {
                         // We still have to more to read
                         n
                     }
-                    Err(err) if would_block(&err) => {
-                        break;
-                    }
-                    Err(err) if interrupted(&err) => {
-                        continue;
-                    }
+                    Err(err) if would_block(&err) => break,
+                    Err(err) if interrupted(&err) => continue,
                     Err(err) => { return Err(Error::wrapped(ErrorKind::Communication, err)); }
                 }
             } else {
@@ -221,7 +218,19 @@ impl ReadingBuffer {
         Self {
             read_bytes: 0,
             current_header: None,
-            read_buffer: BytesMut::new(),
+            read_buffer: BytesMut::with_capacity(Header::LENGTH),
+        }
+    }
+
+    pub fn init_with_size(size: usize) -> Self {
+        let mut read_buf = BytesMut::with_capacity(size);
+
+        read_buf.resize(size, 0);
+
+        Self {
+            read_bytes: 0,
+            current_header: None,
+            read_buffer: read_buf,
         }
     }
 }

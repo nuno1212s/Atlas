@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
-
+use log::info;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
@@ -88,6 +88,8 @@ impl<RM, PM, NI> NetworkUpdateHandler<NI, RM, PM>
                                 unreachable!("Received a connection permitted message for a node that is not pending connection. Node: {:?}", node_id)
                             }
                             Some(conn) => {
+                                info!("Received a connection permitted message for node {:?} of type {:?}", node_id, node_type);
+
                                 // Register the new connection
                                 self.peer_conns.preemptive_conn_register(node_id.clone(),
                                                                          node_type.clone(), 
@@ -140,7 +142,6 @@ impl PendingConnHandle {
         &self.channel
     }
 }
-
 
 impl ServerRegisteredPendingConns {
     pub fn new() -> Self {

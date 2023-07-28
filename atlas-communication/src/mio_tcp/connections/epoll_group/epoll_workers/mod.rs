@@ -73,20 +73,6 @@ enum SocketConnection<RM, PM>
     Waker,
 }
 
-struct ReadingInformation {
-    read_bytes: usize,
-    // The header of the message we are currently reading (if applicable)
-    current_header: Option<Header>,
-    // The buffer for reading data from the socket.
-    read_buffer: BytesMut,
-}
-
-struct WritingInformation {
-    written_bytes: usize,
-    currently_writing_header: Option<Bytes>,
-    currently_writing: Bytes,
-}
-
 impl<NI, RM, PM> EpollWorker<NI, RM, PM>
     where
         NI: NetworkInformationProvider + 'static,
@@ -453,7 +439,7 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
         let socket_conn = SocketConnection::PeerConn {
             handle: handle.clone(),
             socket,
-            read_info: ReadingBuffer::init(),
+            read_info: ReadingBuffer::init_with_size(Header::LENGTH),
             writing_info: None,
             connection: peer_conn,
         };
@@ -496,49 +482,6 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
 
     pub fn waker(&self) -> &Arc<Waker> {
         &self.waker
-    }
-}
-
-impl ReadingInformation {
-    fn new() -> Self {
-        let mut bytes_mut = BytesMut::with_capacity(Header::LENGTH);
-
-        bytes_mut.resize(Header::LENGTH, 0);
-
-        Self {
-            read_bytes: 0,
-            current_header: None,
-            read_buffer: bytes_mut,
-        }
-    }
-}
-
-impl WritingInformation {
-    fn new() -> Self {
-        Self {
-            written_bytes: 0,
-            currently_writing_header: None,
-            currently_writing: Bytes::new(),
-        }
-    }
-
-    // Initialize this struct from a wiremessage
-    fn from_message(message: WireMessage) -> atlas_common::error::Result<Self> {
-        let (header, payload) = message.into_inner();
-
-        let mut header_bytes = BytesMut::with_capacity(Header::LENGTH);
-
-        header_bytes.resize(Header::LENGTH, 0);
-
-        header.serialize_into(&mut header_bytes[..Header::LENGTH])?;
-
-        let header_bytes = header_bytes.freeze();
-
-        Ok(Self {
-            written_bytes: 0,
-            currently_writing_header: Some(header_bytes),
-            currently_writing: payload,
-        })
     }
 }
 

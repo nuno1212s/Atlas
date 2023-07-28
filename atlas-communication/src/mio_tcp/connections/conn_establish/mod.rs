@@ -202,7 +202,7 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
 
                     let result = self.handle_connection_readable(token)?;
 
-                    debug!("{:?} // Connection from {} is {:?}", self.my_id, addr, result);
+                    debug!("{:?} // Connection from {} is {:?} (Token {:?})", self.my_id, addr, result, token);
 
                     self.handle_connection_result(token, result)?;
                 }
@@ -293,6 +293,8 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
     fn handle_connection_result(&mut self, token: Token, result: ConnectionResult) -> io::Result<()> {
         match result {
             ConnectionResult::Connected(node_id, node_type, pending_messages) => {
+                debug!("{:?} // Incoming connection to {:?} is now established with type {:?}", self.my_id, node_id, node_type);
+
                 // We have identified the peer and should now handle the connection
                 for (header, message) in pending_messages {
                     if header.payload_length() > 0 {
@@ -310,13 +312,15 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
                             self.peer_conns.handle_connection_established_with_socket(node_id.clone(),
                                                                                       socket,
                                                                                       node_type,
-                                                                                      channel.unwrap());
+                                                                                      channel.unwrap_or_else(conn_util::initialize_send_channel));
                         }
                         _ => unreachable!()
                     }
                 }
             }
             ConnectionResult::ConnectionBroken => {
+                debug!("{:?} // Connection result as broken for token {:?}", self.my_id, token);
+
                 // Discard of the connection since it has been broken
                 if let Some(mut connection) = self.currently_accepting.try_remove(token.into()) {
                     match connection {
@@ -739,11 +743,13 @@ pub fn initialize_server<NI, RM, PM>(my_id: NodeId, listener: SyncListener,
 
 impl PendingConnection {
     pub fn from_socket(socket: MioSocket) -> Self {
+        let read_buf = ReadingBuffer::init_with_size(Header::LENGTH);
+
         Self::PendingConn {
             peer_id: None,
             node_type: None,
             socket,
-            read_buf: ReadingBuffer::init(),
+            read_buf,
             write_buf: None,
             channel: None,
         }

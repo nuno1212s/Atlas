@@ -284,8 +284,8 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
         channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>),
     ) {
         info!(
-            "{:?} // Handling established connection to {:?}",
-            self.id, node
+            "{:?} // Handling established connection to {:?} with node type: {:?}",
+            self.id, node, node_type
         );
 
         let option = self.registered_connections.entry(node);
