@@ -31,6 +31,15 @@ impl NodeType {
         }
     }
 
+    pub fn is_response_to_request(&self, _seq_gen: &SeqNoGen, _header: &Header, _seq: SeqNo, message: &QuorumReconfigMessage) -> bool {
+        match message {
+            QuorumReconfigMessage::NetworkViewState(_) => true,
+            QuorumReconfigMessage::QuorumEnterResponse(_) => true,
+            QuorumReconfigMessage::QuorumLeaveResponse(_) => true,
+            _ => false
+        }
+    }
+
     fn handle_view_state_message<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts, quorum_reconfig: QuorumViewCert) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match self {

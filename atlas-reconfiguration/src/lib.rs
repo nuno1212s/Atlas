@@ -164,8 +164,13 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
 
                 let (seq, message) = message.into_inner();
 
+
                 match message {
                     ReconfigurationMessageType::NetworkReconfig(network_reconfig) => {
+                        if self.node.is_response_to_request(&self.seq_gen, &header, seq, &network_reconfig) {
+                            self.timeouts.received_reconfig_request(header.from(), seq);
+                        }
+
                         match self.node.handle_network_reconfig_msg(&mut self.seq_gen, &self.network_node, &self.timeouts, header, seq, network_reconfig) {
                             NetworkProtocolResponse::Done => {
                                 self.switch_state(ReconfigurableNodeState::QuorumReconfigurationProtocol);
@@ -175,6 +180,10 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                         };
                     }
                     ReconfigurationMessageType::QuorumReconfig(quorum_reconfig) => {
+                        if self.node_type.is_response_to_request(&self.seq_gen, &header, seq, &quorum_reconfig) {
+                            self.timeouts.received_reconfig_request(header.from(), seq);
+                        }
+
                         match self.node_type.handle_reconfigure_message(&mut self.seq_gen, &self.node, &self.network_node, &self.timeouts, header, seq, quorum_reconfig) {
                             QuorumProtocolResponse::Done => {
                                 self.switch_state(ReconfigurableNodeState::Stable);
@@ -206,7 +215,9 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                                     ReconfigurableNodeState::NetworkReconfigurationProtocol => {
                                         self.node.handle_timeout(&mut self.seq_gen, &self.network_node, &self.timeouts);
                                     }
-                                    ReconfigurableNodeState::QuorumReconfigurationProtocol => {}
+                                    ReconfigurableNodeState::QuorumReconfigurationProtocol => {
+                                        self.node_type.handle_timeout(&mut self.seq_gen, &self.node, &self.network_node, &self.timeouts);
+                                    }
                                     ReconfigurableNodeState::Stable => {
                                         info!("Received a reconfiguration timeout while we are stable, this does not make sense");
                                     }

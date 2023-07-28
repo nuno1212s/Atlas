@@ -445,7 +445,7 @@ impl GeneralNodeInfo {
 
                 network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter()).unwrap();
 
-                timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted / 2 + 1) as u32, seq.curr_seq());
+                timeouts.timeout_reconfig_request(TIMEOUT_DUR, ((contacted * 2 / 3) + 1) as u32, seq.curr_seq());
 
                 self.current_state = NetworkNodeState::JoiningNetwork {
                     contacted,
@@ -528,16 +528,25 @@ impl GeneralNodeInfo {
         NetworkProtocolResponse::Nil
     }
 
+    pub(super) fn is_response_to_request(&self, seq_gen: &SeqNoGen, header: &Header, seq: SeqNo, message: &NetworkReconfigMessage) -> bool {
+        match message {
+            NetworkReconfigMessage::NetworkJoinResponse(_) => true,
+            NetworkReconfigMessage::NetworkHelloReply(_) => true,
+            _ => false
+        }
+    }
+
     pub(super) fn handle_network_reconfig_msg<NT>(&mut self, seq_gen: &mut SeqNoGen, network_node: &Arc<NT>, timeouts: &Timeouts, header: Header, seq: SeqNo, message: NetworkReconfigMessage) -> NetworkProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.current_state {
             NetworkNodeState::JoiningNetwork { contacted, responded, certificates } => {
                 // Avoid accepting double answers
 
-                match message {
+                return match message {
                     NetworkReconfigMessage::NetworkJoinRequest(join_request) => {
                         info!("Received a network join request from {:?} while joining the network", header.from());
-                        return self.handle_join_request(network_node, header, seq, join_request);
+
+                        self.handle_join_request(network_node, header, seq, join_request)
                     }
                     NetworkReconfigMessage::NetworkJoinResponse(join_response) => {
                         if responded.insert(header.from()) {
@@ -545,7 +554,7 @@ impl GeneralNodeInfo {
                                 NetworkJoinResponseMessage::Successful(signature, network_information) => {
                                     info!("We were accepted into the network by the node {:?}, current certificate count {:?}", header.from(), certificates.len());
 
-                                    timeouts.cancel_reconfig_timeout(Some(seq_gen.curr_seq()));
+                                    timeouts.cancel_reconfig_timeout(Some(seq));
 
                                     let unknown_nodes = self.network_view.handle_received_network_view(network_information);
 
@@ -576,26 +585,24 @@ impl GeneralNodeInfo {
                                 }
                                 NetworkJoinResponseMessage::Rejected(rejection_reason) => {
                                     error!("We were rejected from the network: {:?} by the node {:?}", rejection_reason, header.from());
-
-                                    timeouts.received_reconfig_request(header.from(), seq);
                                 }
                             }
                         } else {
                             warn!("Received a network join response from {:?} but we had already seen it", header.from());
                         }
 
-                        return NetworkProtocolResponse::Running;
+                        NetworkProtocolResponse::Running
                     }
                     NetworkReconfigMessage::NetworkHelloRequest(hello_request, confirmations) => {
                         self.handle_hello_request(network_node, header, seq, hello_request, confirmations);
 
-                        return NetworkProtocolResponse::Running;
+                        NetworkProtocolResponse::Running
                     }
                     NetworkReconfigMessage::NetworkHelloReply(known_nodes) => {
                         // Ignored as we are not yet in this phase
-                        return NetworkProtocolResponse::Running;
+                        NetworkProtocolResponse::Running
                     }
-                }
+                };
             }
             NetworkNodeState::IntroductionPhase {
                 contacted, responded

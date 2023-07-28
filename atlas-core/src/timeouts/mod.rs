@@ -100,7 +100,6 @@ pub struct Timeouts {
 }
 
 impl Timeouts {
-
     ///Initialize the timeouts thread and return a handle to it
     /// This handle can then be used everywhere timeouts are needed.
     pub fn new<D: ApplicationData + 'static>(node_id: NodeId, iteration_delay: Duration,
@@ -266,14 +265,10 @@ impl<WP, D> TimeoutOrchestrator<WP, D> {
                     self.handle_clear_client_timeouts(clear_timeouts);
                 }
                 TimeoutMessage::ClearCstTimeouts(seq) => {
-                    for worker in &self.worker_channel {
-                        worker.send(TimeoutWorkerMessage::ClearCstTimeouts(seq)).expect("Failed to contact worker");
-                    }
+                    self.worker_channel[0].send(TimeoutWorkerMessage::ClearCstTimeouts(seq)).expect("Failed to contact worker");
                 }
                 TimeoutMessage::ClearReconfigTimeouts(seq) => {
-                    for worker in &self.worker_channel {
-                        worker.send(TimeoutWorkerMessage::ClearReconfigTimeouts(seq)).expect("Failed to contact worker")
-                    }
+                    self.worker_channel[0].send(TimeoutWorkerMessage::ClearReconfigTimeouts(seq)).expect("Failed to contact worker")
                 }
             }
         }
@@ -328,22 +323,16 @@ impl<WP, D> TimeoutOrchestrator<WP, D> {
                 }
             }
             ReceivedRequest::Cst(sender, seq) => {
-                for work_channel in &self.worker_channel {
-                    work_channel.send(TimeoutWorkerMessage::MessagesReceived(ReceivedRequest::Cst(sender, seq)))
-                        .expect("Failed to send worker message");
-                }
+                self.worker_channel[0].send(TimeoutWorkerMessage::MessagesReceived(ReceivedRequest::Cst(sender, seq)))
+                    .expect("Failed to send worker message");
             }
             ReceivedRequest::LT(sender, seq) => {
-                for work_channel in &self.worker_channel {
-                    work_channel.send(TimeoutWorkerMessage::MessagesReceived(ReceivedRequest::LT(sender, seq)))
-                        .expect("Failed to send worker message");
-                }
+                self.worker_channel[0].send(TimeoutWorkerMessage::MessagesReceived(ReceivedRequest::LT(sender, seq)))
+                    .expect("Failed to send worker message");
             }
             ReceivedRequest::Reconfiguration(sender, seq) => {
-                for work_channel in &self.worker_channel {
-                    work_channel.send(TimeoutWorkerMessage::MessagesReceived(ReceivedRequest::Reconfiguration(sender.clone(), seq)))
-                        .expect("Failed to send worker message");
-                }
+                self.worker_channel[0].send(TimeoutWorkerMessage::MessagesReceived(ReceivedRequest::Reconfiguration(sender.clone(), seq)))
+                    .expect("Failed to send worker message");
             }
         }
     }

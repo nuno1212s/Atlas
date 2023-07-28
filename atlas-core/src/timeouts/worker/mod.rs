@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use intmap::{Entry, IntMap};
-use log::info;
+use log::{debug, info};
 
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, TryRecvError};
@@ -26,6 +26,7 @@ pub(super) type TimeoutWorkerMessage = TimeoutMessage;
 const ITERATION_DELAY: Duration = Duration::from_millis(1);
 
 /// A given timeout request
+#[derive(Debug)]
 struct TimeoutRequest {
     time_made: u64,
     timeout: Duration,
@@ -169,7 +170,6 @@ impl TimeoutWorker {
             }).collect();
 
             for (phase, mut timeout) in timeout_per_phase {
-
                 let timeout = timeout.into_iter().filter(|kind| {
                     //Only reset the client request timeouts
 
@@ -280,6 +280,8 @@ impl TimeoutWorker {
                 }
             }
             _ => {
+                debug!("Worker {} // Received {:?} timeout request", self.worker_id, timeout);
+
                 (true, None)
             }
         };
@@ -329,9 +331,15 @@ impl TimeoutWorker {
                 }
             }
             ReceivedRequest::Cst(sender, message) => {
-                for timeout_requests in self.pending_timeouts.values_mut() {
-                    timeout_requests.extract_if(|timeout_rq| {
+                debug!("Worker {} // Received CST message {:?}, from sender {:?}, pending timeouts: {:?}", self.worker_id, message, sender, self.pending_timeouts);
+
+                let _ = self.pending_timeouts.extract_if(|timeout, timeout_requests| {
+                    debug!("Worker {} // Comparing CST message {:?}, with timeout requests {:?}", self.worker_id, message, timeout_requests);
+
+                    let _ = timeout_requests.extract_if(|timeout_rq| {
                         if let TimeoutKind::Cst(cst_rq) = &timeout_rq.info {
+                            debug!("Worker {} // Comparing CST message {:?}, with timeout request {:?}", self.worker_id, message, cst_rq);
+
                             if *cst_rq == message {
                                 return timeout_rq.register_received_from(sender.clone());
                             }
@@ -339,12 +347,19 @@ impl TimeoutWorker {
 
                         false
                     });
-                }
+
+                    timeout_requests.is_empty()
+                });
             }
             ReceivedRequest::LT(sender, message) => {
-                for timeout_requests in self.pending_timeouts.values_mut() {
-                    timeout_requests.extract_if(|timeout_rq| {
+                debug!("Worker {} // Received log transfer message {:?}, from sender {:?}, pending timeouts: {:?}", self.worker_id, message, sender, self.pending_timeouts);
+
+                let _ = self.pending_timeouts.extract_if(|timeout, timeout_requests| {
+                    debug!("Worker {} // Comparing log transfer message {:?}, with timeout requests {:?}", self.worker_id, message, timeout_requests);
+
+                    let _ = timeout_requests.extract_if(|timeout_rq| {
                         if let TimeoutKind::LogTransfer(cst_rq) = &timeout_rq.info {
+                            debug!("Worker {} // Comparing log transfer message {:?}, with timeout request {:?}",self.worker_id, message, cst_rq);
                             if *cst_rq == message {
                                 return timeout_rq.register_received_from(sender.clone());
                             }
@@ -352,12 +367,20 @@ impl TimeoutWorker {
 
                         false
                     });
-                }
+
+                    timeout_requests.is_empty()
+                });
             }
             ReceivedRequest::Reconfiguration(sender, message) => {
-                for timeout_requests in self.pending_timeouts.values_mut() {
-                    timeout_requests.extract_if(|timeout_rq| {
+                debug!("Worker {} // Received reconfiguration message {:?}, from sender {:?}, pending timeouts: {:?}", self.worker_id, message, sender, self.pending_timeouts);
+
+                let _ = self.pending_timeouts.extract_if(|timeout, timeout_requests| {
+                    debug!("Worker {} // Comparing reconfiguration message {:?}, with timeout requests {:?}", self.worker_id, message, timeout_requests);
+
+                    let _ = timeout_requests.extract_if(|timeout_rq| {
                         if let TimeoutKind::Reconfiguration(cst_rq) = &timeout_rq.info {
+                            debug!("Worker {} // Comparing Reconfiguration message {:?}, with timeout request {:?}", self.worker_id, message, cst_rq);
+
                             if *cst_rq == message {
                                 return timeout_rq.register_received_from(sender.clone());
                             }
@@ -365,7 +388,9 @@ impl TimeoutWorker {
 
                         false
                     });
-                }
+
+                    timeout_requests.is_empty()
+                });
             }
         }
     }
@@ -393,7 +418,7 @@ impl TimeoutWorker {
     /// Remove all of the timeouts that are present in the given list (or all timeouts if there is no list)
     fn handle_clear_client_rqs(&mut self, requests: Option<Vec<ClientRqInfo>>) {
         for timeouts in self.pending_timeouts.values_mut() {
-            timeouts.extract_if(|rq| {
+            let _ = timeouts.extract_if(|rq| {
                 match &rq.info {
                     TimeoutKind::ClientRequestTimeout(rq_info) => {
                         return if let Some(requests) = &requests {
@@ -411,39 +436,55 @@ impl TimeoutWorker {
 
     /// Remove all CST timeout requests that match the given sequence number (or all timeouts if there is no sequence number)
     fn handle_clear_cst_rqs(&mut self, seq_no: Option<SeqNo>) {
-        for timeout_rqs in self.pending_timeouts.values_mut() {
-            timeout_rqs.extract_if(|rq| {
+        let mut total_removed = Vec::new();
+
+        let _ = self.pending_timeouts.extract_if(|timeout, timeout_rqs| {
+            let mut removed: Vec<_> = timeout_rqs.extract_if(|rq| {
                 match &rq.info {
                     TimeoutKind::Cst(rq_seq_no) => {
                         return if let Some(seq_no) = &seq_no {
-                            return *seq_no != *rq_seq_no;
+                            return *seq_no == *rq_seq_no;
                         } else {
                             // We want to delete all of the cst timeouts
                             true
                         };
                     }
-                    _ => { false }
+                    _ => false
                 }
-            });
-        }
+            }).collect();
+
+            total_removed.append(&mut removed);
+
+            timeout_rqs.is_empty()
+        });
+
+        debug!("Worker {} // Cleared {:?} cst messages", self.worker_id, total_removed);
     }
 
     fn handle_clear_reconfig_rqs(&mut self, seq_no: Option<SeqNo>) {
-        for timeout_rqs in self.pending_timeouts.values_mut() {
-            timeout_rqs.extract_if(|rq| {
+        let mut total_removed = Vec::new();
+
+        let _ = self.pending_timeouts.extract_if(|timeout, timeout_rqs| {
+            let mut removed: Vec<_> = timeout_rqs.extract_if(|rq| {
                 match &rq.info {
                     TimeoutKind::Reconfiguration(rq_seq_no) => {
                         return if let Some(seq_no) = &seq_no {
-                            return *seq_no != *rq_seq_no;
+                            return *seq_no == *rq_seq_no;
                         } else {
                             // We want to delete all of the cst timeouts
                             true
                         };
                     }
-                    _ => { false }
+                    _ => false
                 }
-            });
-        }
+            }).collect();
+
+            total_removed.append(&mut removed);
+
+            timeout_rqs.is_empty()
+        });
+
+        debug!("Worker {} // Cleared {:?} reconfiguration messages", self.worker_id, total_removed);
     }
 
     ///
@@ -502,6 +543,8 @@ impl TimeoutRequest {
 
     fn register_received_from(&mut self, from: NodeId) -> bool {
         self.notifications_received.insert(from);
+
+        debug!("{:?} received message from {:?}, currently with {} out of {} needed", self.info, from, self.notifications_received.len(), self.notifications_needed);
 
         return self.is_disabled();
     }

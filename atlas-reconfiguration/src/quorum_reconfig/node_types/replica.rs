@@ -365,8 +365,6 @@ impl ReplicaQuorumView {
                     }
                 }
 
-                timeouts.received_reconfig_request(header.from(), seq_gen.curr_seq());
-
                 let necessary_response = (*contacted * 2 / 3) + 1;
 
                 debug!("Received Quorum Enter Response. Joining Quorum State: {:?} responses out of {:?} needed", received.len(), necessary_response);
