@@ -39,7 +39,7 @@ pub(crate) struct ClientQuorumView {
     quorum_view_certificate: Vec<QuorumViewCert>,
 
     /// Channel to send update messages to the client
-    channel_message: ChannelSyncTx<QuorumUpdateMessage>
+    channel_message: ChannelSyncTx<QuorumUpdateMessage>,
 }
 
 impl ClientQuorumView {
@@ -255,12 +255,11 @@ impl ClientQuorumView {
             }
         }
 
-        return QuorumProtocolResponse::Nil
+        return QuorumProtocolResponse::Nil;
     }
 
     pub(crate) fn handle_view_state_request<NT>(&self, seq_gen: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, seq: SeqNo) -> QuorumProtocolResponse
         where NT: 'static + ReconfigurationNode<ReconfData> {
-
         let quorum_view = self.current_quorum_view.read().unwrap().clone();
 
         let resp = ReconfigurationMessage::new(seq, ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::NetworkViewState(quorum_view)));
@@ -271,7 +270,33 @@ impl ClientQuorumView {
     }
 
 
-    pub fn handle_timeout<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse {
-        QuorumProtocolResponse::Nil
+    /// Handle a timeout received from the timeout layer
+    pub fn handle_timeout<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse
+        where NT: 'static + ReconfigurationNode<ReconfData> {
+        match &mut self.current_state {
+            ClientState::Initializing(contacted, received, certs) => {
+                let reconf_message = QuorumReconfigMessage::NetworkViewStateRequest;
+
+                let known_nodes = node.network_view.known_nodes();
+
+                let contacted_nodes = known_nodes.len();
+
+                info!("{:?} // Broadcasting view state request to known nodes {:?}", node.network_view.node_id(), known_nodes);
+
+                let message = ReconfigurationMessage::new(seq_no.next_seq(), ReconfigurationMessageType::QuorumReconfig(reconf_message));
+
+                let _ = network_node.broadcast_reconfig_message(message, known_nodes.into_iter());
+
+                timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted_nodes / 2 + 1) as u32, seq_no.curr_seq());
+
+                self.current_state = ClientState::Initializing(contacted_nodes, Default::default(), Default::default());
+
+                QuorumProtocolResponse::Running
+            }
+            _ => {
+                /* Timeouts are not relevant when we are in these phases, as we are not actively waiting for the results of our operations*/
+                QuorumProtocolResponse::Nil
+            }
+        }
     }
 }

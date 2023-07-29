@@ -219,7 +219,7 @@ impl From<&KnownNodes> for KnownNodesMessage {
         value.node_info().iter().for_each(|(node_id, node_info)| {
             known_nodes.push(NodeTriple {
                 node_id: *node_id,
-                node_type: NodeType::Replica,
+                node_type: node_info.node_type(),
                 addr: node_info.addr().clone(),
                 pub_key: node_info.pk().pk_bytes().to_vec(),
             })
@@ -243,7 +243,7 @@ impl KnownNodesMessage {
 
 impl Debug for NodeTriple {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "NodeTriple {{ node_id: {:?}, addr: {:?}}}", self.node_id, self.addr)
+        write!(f, "NodeTriple {{ node_id: {:?}, addr: {:?}, type: {:?}}}", self.node_id, self.addr, self.node_type)
     }
 }
 

@@ -486,7 +486,12 @@ impl GeneralNodeInfo {
                 let mut node_results = Vec::new();
 
                 for node in &known_nodes {
+                    if network_node.node_connections().is_connected_to_node(node) {
+                        continue;
+                    }
+
                     info!("{:?} // Connecting to node {:?}", self.network_view.node_id(), node);
+
                     let mut node_connection_results = network_node.node_connections().connect_to_node(*node);
 
                     node_results.push((*node, node_connection_results));
@@ -507,7 +512,7 @@ impl GeneralNodeInfo {
 
                 info!("Received timeout, broadcasting reconfiguration network join message to known nodes {:?}", known_nodes);
 
-                network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter()).unwrap();
+                let _ = network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter());
 
                 timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted / 2 + 1) as u32, seq_gen.curr_seq());
 
@@ -575,7 +580,7 @@ impl GeneralNodeInfo {
                                             ReconfigurationMessageType::NetworkReconfig(NetworkReconfigMessage::NetworkHelloRequest(self.network_view.node_triple(), certificates.clone())),
                                         );
 
-                                        network_node.broadcast_reconfig_message(introduction_message, self.network_view.known_nodes().into_iter()).unwrap();
+                                        let _ = network_node.broadcast_reconfig_message(introduction_message, self.network_view.known_nodes().into_iter());
 
                                         self.current_state = NetworkNodeState::IntroductionPhase {
                                             contacted: 0,

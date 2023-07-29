@@ -88,7 +88,7 @@ impl ReplicaQuorumView {
 
                 let contacted_nodes = known_nodes.len();
 
-                info!("{:?} // Broadcasting network view state request to {:?} nodes", node.network_view.node_id(), known_nodes);
+                info!("{:?} // Broadcasting network view state request to {:?}", node.network_view.node_id(), known_nodes);
 
                 let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), reconf_message);
 
@@ -263,6 +263,29 @@ impl ReplicaQuorumView {
                 QuorumProtocolResponse::Running
             }
         } else {
+            match self.current_state {
+                ReplicaState::Initializing(_, _, _) => {
+                    self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members)).unwrap();
+
+                    loop {
+                        let join_response = self.quorum_responses.recv().unwrap();
+
+                        // Wait for the response from the ordering protocol
+                        match join_response {
+                            QuorumReconfigurationResponse::QuorumAlterationResponse(response) => {
+                                match response {
+                                    QuorumAlterationResponse::Successful => {}
+                                    QuorumAlterationResponse::Failed() => {
+                                        panic!("We have failed to deliver the quorum information to the ordering protocol, aborting");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {/* We only have to deliver the state if it is the first time we are receive the quorum information */}
+            }
+
             info!("Starting join quorum procedure, contacting {:?}", current_quorum_members);
 
             self.current_state = ReplicaState::JoiningQuorum(current_quorum_members.len(), Default::default(), Default::default());
