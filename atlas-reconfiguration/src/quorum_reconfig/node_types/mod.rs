@@ -56,7 +56,7 @@ impl NodeType {
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match self {
             NodeType::Client(client) => {
-                client.handle_view_state_request(seq_gen, node, network_node, header)
+                client.handle_view_state_request(seq_gen, node, network_node, header, seq_no)
             }
             NodeType::Replica(replica) => {
                 replica.handle_view_state_request(node, network_node, header, seq_no)

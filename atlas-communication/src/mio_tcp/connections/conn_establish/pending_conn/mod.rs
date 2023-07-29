@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
 use log::info;
+use mio::Waker;
+
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
@@ -16,6 +18,10 @@ use crate::serialize::Serializable;
 pub struct PendingConnHandle {
     id: NodeId,
     channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>),
+    /// A correct node is not going to connect to the 2 different servers at the same time,
+    /// even if he does, we can just use one server's connection to send the reconfiguration messages,
+    /// So this should be just fine
+    waker: Arc<Waker>,
 }
 
 /// The pending connections that we still have not received from the reconfiguration protocol
@@ -64,7 +70,7 @@ impl<RM, PM, NI> NetworkUpdateHandler<NI, RM, PM>
             reconfiguration_handler: reconf_handle,
             peer_conns: conns,
         };
-        
+
         std::thread::Builder::new()
             .name(format!("Network Update Handler Thread"))
             .spawn(move || {
@@ -92,7 +98,7 @@ impl<RM, PM, NI> NetworkUpdateHandler<NI, RM, PM>
 
                                 // Register the new connection
                                 self.peer_conns.preemptive_conn_register(node_id.clone(),
-                                                                         node_type.clone(), 
+                                                                         node_type.clone(),
                                                                          conn.channel.clone()).expect("Failed to preemptively register the connection?");
 
                                 // By only removing the pending connection after the preemptive registration,
@@ -115,27 +121,26 @@ impl<RM, PM, NI> NetworkUpdateHandler<NI, RM, PM>
 }
 
 impl NetworkUpdate {
-
     pub fn into_inner(self) -> (PendingConnHandle, NetworkUpdateMessage) {
         (self.conn_handle, self.network_update)
     }
-
 }
 
 impl PendingConnHandle {
-    pub(crate) fn new(id: NodeId, channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>)) -> Self {
-        Self { id, channel }
+    pub(crate) fn new(id: NodeId, channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>),
+                      waker: Arc<Waker>) -> Self {
+        Self { id, channel, waker }
     }
 
     pub fn peer_message(&self, message: WireMessage) -> Result<()> {
-        return match self.channel.0.send(message) {
-            Ok(_) => {
-                Ok(())
-            }
+        match self.channel.0.send(message) {
+            Ok(_) => {}
             Err(err) => {
-                Err(Error::simple_with_msg(ErrorKind::CommunicationChannel, format!("Failed to send message to channel. Error: {:?}", err).as_str()))
+                return Err(Error::simple_with_msg(ErrorKind::CommunicationChannel, format!("Failed to send message to channel. Error: {:?}", err).as_str()));
             }
-        };
+        }
+
+        self.waker.wake().wrapped_msg(ErrorKind::CommunicationServerNotWoken, "Failed to wake the server thread")
     }
 
     pub fn channel(&self) -> &(ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>) {

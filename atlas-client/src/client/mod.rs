@@ -14,7 +14,7 @@ use futures_timer::Delay;
 use intmap::IntMap;
 use log::{error, debug, info};
 use atlas_common::{async_runtime, channel};
-use atlas_common::channel::ChannelSyncRx;
+use atlas_common::channel::{ChannelSyncRx, RecvError};
 use atlas_common::crypto::hash::Digest;
 
 use atlas_common::error::*;
@@ -264,15 +264,15 @@ pub struct ReplicaVotes {
 
 pub type RequestCallback<D: ApplicationData> = Box<dyn FnOnce(Result<D::Reply>) + Send>;
 
-impl<D, RF, NT> Client<RF, D, NT>
+impl<D, RP, NT> Client<RP, D, NT>
     where
-        RF: ReconfigurationProtocol + 'static,
+        RP: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
         NT: 'static
 {
     /// Bootstrap a client in `febft`.
-    pub async fn bootstrap<ROP>(cfg: ClientConfig<RF, D, NT>) -> Result<Self>
-        where NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, ClientServiceMsg<D>>,
+    pub async fn bootstrap<ROP>(cfg: ClientConfig<RP, D, NT>) -> Result<Self>
+        where NT: FullNetworkNode<RP::InformationProvider, RP::Serialization, ClientServiceMsg<D>>,
               ROP: OrderProtocolTolerance + 'static, {
         let ClientConfig {
             n, f, node: node_config,
@@ -284,7 +284,7 @@ impl<D, RF, NT> Client<RF, D, NT>
 
         // Actually, we have to get the configuration from here
 
-        let network_info_provider = RF::init_default_information(reconfiguration)?;
+        let network_info_provider = RP::init_default_information(reconfiguration)?;
 
         // connect to peer nodes
         //
@@ -305,11 +305,26 @@ impl<D, RF, NT> Client<RF, D, NT>
         // TODO: Make timeouts actually work properly with the clients (including making the normal
         //timeouts utilize this same system)
 
-        let reconfig_protocol = RF::initialize_protocol(network_info_provider,
+        let reconfig_protocol = RP::initialize_protocol(network_info_provider,
                                                         node.clone(),
                                                         timeouts.clone(),
                                                         ReconfigurableNodeTypes::Client(reconf_tx),
                                                         ROP::get_n_for_f(1)).await?;
+
+        info!("{:?} // Waiting for reconfiguration to stabilize...", node.id());
+
+        match reconf_rx.recv() {
+            Ok(message) => {
+                match message {
+                    QuorumUpdateMessage::UpdatedQuorumView(quorum_view) => {
+                        info!("{:?} // Reconfiguration stabilized, quorum view: {:?}", node.id(), quorum_view);
+                    }
+                }
+            }
+            Err(err) => {
+                return Err(Error::simple_with_msg(ErrorKind::ReconfigurationNotStable, format!("Error receiving reconfiguration message: {:?}", err).as_str()));
+            }
+        }
 
         let stats = {
             None
@@ -343,18 +358,6 @@ impl<D, RF, NT> Client<RF, D, NT>
             .expect("Failed to launch message processing thread");
 
         let session_id = data.session_counter.fetch_add(1, Ordering::Relaxed).into();
-
-        let mut conn = Vec::new();
-
-        for node_id in NodeId::targets(0..n) {
-            let mut result = ProtocolNetworkNode::<ClientServiceMsg<D>>::node_connections(&*cli_node).connect_to_node(node_id);
-
-            conn.append(&mut result);
-        }
-
-        for result in conn {
-            result.await.unwrap()?;
-        }
 
         info!("{:?} // Client has connected to all nodes and is ready to start", cli_node.id());
 
@@ -396,7 +399,7 @@ impl<D, RF, NT> Client<RF, D, NT>
         self.session_id
     }
 
-    pub(super) fn client_data(&self) -> &Arc<ClientData<RF, D>> {
+    pub(super) fn client_data(&self) -> &Arc<ClientData<RP, D>> {
         &self.data
     }
 
@@ -406,9 +409,9 @@ impl<D, RF, NT> Client<RF, D, NT>
 
     pub(super) fn update_inner<T>(&mut self, operation: D::Request) -> Result<ClientRequestFut<D::Reply>>
         where
-            T: ClientType<RF, D, NT>,
+            T: ClientType<RP, D, NT>,
             NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
-            RF: ReconfigurationProtocol + 'static {
+            RP: ReconfigurationProtocol + 'static {
         let start = Instant::now();
 
         let session_id = self.session_id;
@@ -439,7 +442,7 @@ impl<D, RF, NT> Client<RF, D, NT>
         self.node.broadcast(message, targets);
 
         // await response
-        let ready = get_ready::<RF, D>(session_id, &*self.data);
+        let ready = get_ready::<RP, D>(session_id, &*self.data);
 
         {
             let mut ready_stored = ready.lock().unwrap();
@@ -464,17 +467,17 @@ impl<D, RF, NT> Client<RF, D, NT>
     /// on top of `atlas`.
     pub async fn update<T>(&mut self, operation: D::Request) -> Result<D::Reply>
         where
-            T: ClientType<RF, D, NT>,
+            T: ClientType<RP, D, NT>,
             NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
-            RF: ReconfigurationProtocol + 'static
+            RP: ReconfigurationProtocol + 'static
     {
         self.update_inner::<T>(operation)?.await
     }
 
     pub(super) fn update_callback_inner<T>(&mut self, operation: D::Request) -> u64 where
-        T: ClientType<RF, D, NT>,
+        T: ClientType<RP, D, NT>,
         NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
-        RF: ReconfigurationProtocol + 'static {
+        RP: ReconfigurationProtocol + 'static {
         let start = Instant::now();
 
         let session_id = self.session_id;
@@ -532,9 +535,9 @@ impl<D, RF, NT> Client<RF, D, NT>
         operation: D::Request,
         callback: RequestCallback<D>,
     ) where
-        T: ClientType<RF, D, NT>,
+        T: ClientType<RP, D, NT>,
         NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
-        RF: ReconfigurationProtocol + 'static
+        RP: ReconfigurationProtocol + 'static
     {
         let rq_key = self.update_callback_inner::<T>(operation);
 
@@ -555,7 +558,7 @@ impl<D, RF, NT> Client<RF, D, NT>
         node: Arc<NT>,
         session_id: SeqNo,
         rq_id: SeqNo,
-        client_data: Arc<ClientData<RF, D>>,
+        client_data: Arc<ClientData<RP, D>>,
     ) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         let node = node.clone();
 
@@ -566,7 +569,7 @@ impl<D, RF, NT> Client<RF, D, NT>
             let req_key = get_request_key(session_id, rq_id);
 
             {
-                let bucket = get_ready::<RF, D>(session_id, &*client_data);
+                let bucket = get_ready::<RP, D>(session_id, &*client_data);
 
                 let bucket_guard = bucket.lock().unwrap();
 
@@ -786,7 +789,7 @@ impl<D, RF, NT> Client<RF, D, NT>
     ///This task might become a large bottleneck with the scenario of few clients with high concurrent rqs,
     /// As the replicas will make very large batches and respond to all the sent requests in one go.
     /// This leaves this thread with a very large task to do in a very short time and it just can't keep up
-    fn message_recv_task(params: SystemParams, data: Arc<ClientData<RF, D>>,
+    fn message_recv_task(params: SystemParams, data: Arc<ClientData<RP, D>>,
                          node: Arc<NT>, timeouts: Timeouts, timeout_rx: ChannelSyncRx<Message>) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         // use session id as key
         let mut last_operation_ids: IntMap<SeqNo> = IntMap::new();
@@ -857,7 +860,7 @@ impl<D, RF, NT> Client<RF, D, NT>
 
                         //Get the wakers for this request and deliver the payload
 
-                        let ready = get_ready::<RF, D>(session_id, &*data);
+                        let ready = get_ready::<RP, D>(session_id, &*data);
 
                         Self::deliver_response(
                             node.id(),
@@ -886,7 +889,7 @@ impl<D, RF, NT> Client<RF, D, NT>
                             replica_votes.remove(request_key);
 
                             //Get the wakers for this request and deliver the payload
-                            let ready = get_ready::<RF, D>(session_id, &*data);
+                            let ready = get_ready::<RP, D>(session_id, &*data);
 
                             Self::deliver_error(
                                 node.id(),
@@ -908,7 +911,7 @@ impl<D, RF, NT> Client<RF, D, NT>
         }
     }
 
-    fn receive_from_timeouts(data: &Arc<ClientData<RF, D>>, exec_rx: &ChannelSyncRx<Message>) {
+    fn receive_from_timeouts(data: &Arc<ClientData<RP, D>>, exec_rx: &ChannelSyncRx<Message>) {
         while let Ok(timeout) = exec_rx.try_recv() {
             match timeout {
                 Message::Timeout(timeout) => {
@@ -921,12 +924,10 @@ impl<D, RF, NT> Client<RF, D, NT>
         }
     }
 
-    fn receive_reconf_updates(data: &Arc<ClientData<RF, D>>) {
+    fn receive_reconf_updates(data: &Arc<ClientData<RP, D>>) {
         while let Ok(update) = data.reconfig_protocol_rx.try_recv() {
             match update {
-                QuorumUpdateMessage::UpdatedQuorumView(update) => {
-
-                }
+                QuorumUpdateMessage::UpdatedQuorumView(update) => {}
                 _ => {
                     todo!()
                 }

@@ -146,9 +146,9 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
         let mut events = Events::with_capacity(DEFAULT_ALLOWED_CONCURRENT_JOINS);
 
         loop {
-            self.poll.poll(&mut events, None)?;
-
             self.read_network_update_messages()?;
+
+            self.poll.poll(&mut events, Some(Duration::from_millis(25)))?;
 
             for event in events.iter() {
                 match event.token() {
@@ -243,7 +243,7 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
                                         false
                                     }
                                 }
-                                _ => unreachable!()
+                                _ => false,
                             };
                         }) {
                             let connection_result = ConnectionResult::Connected(node_id, node_type, Vec::new());
@@ -476,14 +476,14 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
                                                 None => {
                                                     let node_type = self.peer_conns.network_info.get_node_type(&header.from());
 
-                                                    debug!("Received connection information for token {:?}, from {:?}, node type is: {:?}", token, header.from(), node_type);
+                                                    debug!("Received connection ID for token {:?}, from {:?}, node type is: {:?} (None means unknown)", token, header.from(), node_type);
 
                                                     if let Some(node_type) = node_type {
                                                         return Ok(ConnectionResult::Connected(header.from(), node_type, received));
                                                     } else {
                                                         let to_send = conn_util::initialize_send_channel();
 
-                                                        self.registered_conns.insert_pending_connection(PendingConnHandle::new(peer_id.unwrap(), to_send))
+                                                        self.registered_conns.insert_pending_connection(PendingConnHandle::new(peer_id.unwrap(), to_send, self.waker.clone()))
                                                     }
                                                 }
                                                 Some(conn) => {
@@ -716,7 +716,7 @@ pub fn initialize_server<NI, RM, PM>(my_id: NodeId, listener: SyncListener,
                                      network_info: Arc<NI>,
                                      conns: Arc<Connections<NI, RM, PM>>,
                                      reconfiguration_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
-                                     network_update_channel: ChannelSyncRx<NetworkUpdate>)
+                                     network_update_channel: ChannelSyncRx<NetworkUpdate>) -> Arc<Waker>
     where NI: NetworkInformationProvider + 'static,
           RM: Serializable + 'static,
           PM: Serializable + 'static {
@@ -729,6 +729,8 @@ pub fn initialize_server<NI, RM, PM>(my_id: NodeId, listener: SyncListener,
                                           reconfiguration_handling,
                                           network_update_channel).unwrap();
 
+    let waker = server_worker.waker.clone();
+
     std::thread::Builder::new()
         .name(format!("Server Worker {:?}", my_id))
         .spawn(move || {
@@ -739,6 +741,8 @@ pub fn initialize_server<NI, RM, PM>(my_id: NodeId, listener: SyncListener,
                 }
             }
         }).expect("Failed to allocate thread for server worker");
+
+    waker
 }
 
 impl PendingConnection {

@@ -77,5 +77,6 @@ pub enum ErrorKind {
     ThreadpoolCrossbeam,
     ThreadpoolRayon,
     ReconfigurationNotStable,
-    ReconfigurationAlreadyStable
+    ReconfigurationAlreadyStable,
+    CommunicationServerNotWoken,
 }

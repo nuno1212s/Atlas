@@ -213,7 +213,7 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
 
         self.registered_servers.register_server(tx);
 
-        conn_establish::initialize_server(
+        let waker = conn_establish::initialize_server(
             self.id.clone(),
             listener,
             self.conn_handler.clone(),
@@ -222,7 +222,7 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
             Arc::clone(self),
             self.reconfig_handling.clone(),
             rx
-        )
+        );
     }
 
     /// Get the connection to a given node

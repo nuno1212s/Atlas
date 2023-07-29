@@ -88,7 +88,7 @@ impl ReplicaQuorumView {
 
                 let contacted_nodes = known_nodes.len();
 
-                info!("Broadcasting network view state request to {:?} nodes", known_nodes);
+                info!("{:?} // Broadcasting network view state request to {:?} nodes", node.network_view.node_id(), known_nodes);
 
                 let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), reconf_message);
 
@@ -244,17 +244,18 @@ impl ReplicaQuorumView {
 
                 loop {
                     let join_response = self.quorum_responses.recv().unwrap();
+
                     // Wait for the response from the ordering protocol
-                    match join_response {
+                    return match join_response {
                         QuorumReconfigurationResponse::QuorumAlterationResponse(response) => {
-                            return match response {
+                            match response {
                                 QuorumAlterationResponse::Successful => {
                                     self.handle_quorum_entered()
                                 }
                                 QuorumAlterationResponse::Failed() => {
                                     self.start_join_quorum(seq_no, node, network_node, timeouts)
                                 }
-                            };
+                            }
                         }
                     }
                 }
