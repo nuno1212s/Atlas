@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::error::*;
@@ -8,12 +9,19 @@ use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_communication::reconfiguration_node::NetworkInformationProvider;
 use atlas_communication::serialize::{Buf, Serializable};
 use atlas_execution::serialize::ApplicationData;
-use crate::messages::SystemMessage;
+use crate::messages::{ForwardedRequestsMessage, SystemMessage};
 use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
 use crate::smr::networking::NodeWrap;
 
-pub trait OrderProtocolSendNode<OPM> where OPM: OrderingProtocolMessage {
+pub trait OrderProtocolSendNode<D, OPM>: Send + Sync where D: ApplicationData + 'static, OPM: OrderingProtocolMessage {
+    type NetworkInfoProvider: NetworkInformationProvider + 'static;
+
     fn id(&self) -> NodeId;
+
+    fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider>;
+
+    /// Forward requests to the given targets
+    fn forward_requests(&self, fwd_requests: ForwardedRequestsMessage<D::Request>, targets: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> where D: ApplicationData + 'static;
 
     /// Sends a message to a given target.
     /// Does not block on the message sent. Returns a result that is
@@ -50,7 +58,7 @@ pub trait OrderProtocolSendNode<OPM> where OPM: OrderingProtocolMessage {
     fn broadcast_serialized(&self, messages: BTreeMap<NodeId, StoredSerializedProtocolMessage<OPM::ProtocolMessage>>) -> std::result::Result<(), Vec<NodeId>>;
 }
 
-impl<NT, D, P, S, L, RM, NI> OrderProtocolSendNode<P> for NodeWrap<NT, D, P, S, L, NI, RM>
+impl<NT, D, P, S, L, RM, NI> OrderProtocolSendNode<D, P> for NodeWrap<NT, D, P, S, L, NI, RM>
     where D: ApplicationData + 'static,
           P: OrderingProtocolMessage + 'static,
           S: StateTransferMessage + 'static,
@@ -58,9 +66,20 @@ impl<NT, D, P, S, L, RM, NI> OrderProtocolSendNode<P> for NodeWrap<NT, D, P, S, 
           RM: Serializable + 'static,
           NI: NetworkInformationProvider + 'static,
           NT: FullNetworkNode<NI, RM, ServiceMsg<D, P, S, L>>, {
+
+    type NetworkInfoProvider = <NT as ProtocolNetworkNode<ServiceMsg<D, P, S, L>>>::NetworkInfoProvider;
+
     #[inline(always)]
     fn id(&self) -> NodeId {
         self.0.id()
+    }
+
+    fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider> {
+        ProtocolNetworkNode::network_info_provider(&self.0)
+    }
+
+    fn forward_requests(&self, fwd_requests: ForwardedRequestsMessage<D::Request>, targets: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> where D: ApplicationData + 'static {
+        self.0.broadcast_signed(SystemMessage::ForwardedRequestMessage(fwd_requests), targets)
     }
 
     #[inline(always)]

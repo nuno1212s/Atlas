@@ -19,7 +19,7 @@ use crate::state_transfer::networking::StateTransferSendNode;
 ///TODO: I wound up creating a whole new layer of abstractions, but I'm not sure they are necessary. I did it
 /// To allow for the protocols to all use NT, as if I didn't, a lot of things would have to change in how the generic NT was
 /// going to be passed around the protocols. I'm not sure if this is the best way to do it, but it works for now.
-pub trait SMRNetworkNode<NI, RM, D, P, S, L>: FullNetworkNode<NI, RM, ServiceMsg<D, P, S, L>> + ReplyNode<D> + StateTransferSendNode<S> + OrderProtocolSendNode<P> + LogTransferSendNode<L>
+pub trait SMRNetworkNode<NI, RM, D, P, S, L>: FullNetworkNode<NI, RM, ServiceMsg<D, P, S, L>> + ReplyNode<D> + StateTransferSendNode<S> + OrderProtocolSendNode<D, P> + LogTransferSendNode<L>
     where D: ApplicationData + 'static,
           P: OrderingProtocolMessage + 'static,
           S: StateTransferMessage + 'static,

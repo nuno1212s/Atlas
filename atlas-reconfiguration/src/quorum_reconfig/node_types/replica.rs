@@ -257,7 +257,7 @@ impl ReplicaQuorumView {
                                 }
                             }
                         }
-                    }
+                    };
                 }
             } else {
                 QuorumProtocolResponse::Running
@@ -265,7 +265,7 @@ impl ReplicaQuorumView {
         } else {
             match self.current_state {
                 ReplicaState::Initializing(_, _, _) => {
-                    self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members)).unwrap();
+                    self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members.clone())).unwrap();
 
                     loop {
                         let join_response = self.quorum_responses.recv().unwrap();
@@ -274,7 +274,7 @@ impl ReplicaQuorumView {
                         match join_response {
                             QuorumReconfigurationResponse::QuorumAlterationResponse(response) => {
                                 match response {
-                                    QuorumAlterationResponse::Successful => {}
+                                    QuorumAlterationResponse::Successful => { break; }
                                     QuorumAlterationResponse::Failed() => {
                                         panic!("We have failed to deliver the quorum information to the ordering protocol, aborting");
                                     }
@@ -283,7 +283,7 @@ impl ReplicaQuorumView {
                         }
                     }
                 }
-                _ => {/* We only have to deliver the state if it is the first time we are receive the quorum information */}
+                _ => { /* We only have to deliver the state if it is the first time we are receive the quorum information */ }
             }
 
             info!("Starting join quorum procedure, contacting {:?}", current_quorum_members);
