@@ -18,6 +18,7 @@ use crate::{GeneralNodeInfo, QuorumProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 use crate::message::{QuorumEnterRejectionReason, QuorumEnterRequest, QuorumEnterResponse, QuorumJoinCertificate, QuorumNodeJoinApproval, QuorumReconfigMessage, QuorumViewCert, ReconfData, ReconfigurationMessage, ReconfigurationMessageType};
 use crate::quorum_reconfig::{QuorumPredicate, QuorumView};
 
+/// The current state of this replica's quorum view.
 enum ReplicaState {
     Init,
     // We are currently initializing our state so we know who to contact in order to join the quorum

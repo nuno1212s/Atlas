@@ -677,7 +677,7 @@ impl ConnectionHandler {
                             return;
                         }
                         Err(err) => {
-                            error!("{:?} // Error on connecting to {:?} addr {:?}: {:?}", 
+                            warn!("{:?} // Error on connecting to {:?} addr {:?}: {:?}",
                                 conn_handler.my_id(), peer_id, addr, err);
                         }
                     }

@@ -1,5 +1,6 @@
 //! Contains the server side core protocol logic of `febft`.
 
+use std::fmt::{Debug, Formatter, write};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,6 +10,7 @@ use log::{debug, error, info, trace};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
+use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::{FullNetworkNode, NodeConnections};
 use atlas_communication::message::StoredMessage;
@@ -19,7 +21,7 @@ use atlas_core::messages::SystemMessage;
 use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
 use atlas_core::ordering_protocol::OrderProtocolExecResult;
 use atlas_core::ordering_protocol::OrderProtocolPoll;
-use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
+use atlas_core::ordering_protocol::reconfigurable_order_protocol::{ReconfigurableOrderProtocol, ReconfigurationAttemptResult};
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{OperationMode, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog};
 use atlas_core::reconfiguration_protocol::{QuorumAlterationResponse, QuorumJoinCert, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
@@ -71,6 +73,8 @@ pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'sta
                                                        PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static,
                                                        RP: ReconfigurationProtocol + 'static {
     replica_phase: ReplicaPhase<D>,
+
+    pending_quorum_alteration: Option<(NodeId, QuorumJoinCert<RP::Serialization>)>,
     // The ordering protocol, responsible for ordering requests
     ordering_protocol: OP,
     log_transfer_protocol: LT,
@@ -156,7 +160,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                     break quorum;
                 }
                 QuorumReconfigurationMessage::RequestQuorumJoin(_, _) => {
-                    error!("Received request for quorum view alteration, but we are even done with reconfiguration stabilization?");
+                    error!("Received request for quorum view alteration, but we are not even done with reconfiguration stabilization?");
 
                     return Err(Error::simple_with_msg(ErrorKind::ReconfigurationNotStable, "Received alteration request before stable quorum was reached"));
                 }
@@ -204,6 +208,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         let mut replica = Self {
 // We start with the state transfer protocol to make sure everything is up to date
             replica_phase: state_transfer,
+            pending_quorum_alteration: None,
             ordering_protocol,
             log_transfer_protocol,
             rq_pre_processor,
@@ -450,9 +455,16 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         while let Ok(received) = self.reconf_receive.try_recv() {
             match received {
                 QuorumReconfigurationMessage::RequestQuorumJoin(node, certificate) => {
-                    info!("Received request for quorum view alteration, but we are even done with reconfiguration stabilization?");
+                    info!("Received request for quorum view alteration for {:?}, current phase: {:?}", node, self.replica_phase);
 
-                    let result = self.ordering_protocol.attempt_network_view_change(certificate)?;
+                    match self.replica_phase {
+                        ReplicaPhase::OrderingProtocol => {
+                            let result = self.ordering_protocol.attempt_network_view_change(certificate)?;
+                        }
+                        ReplicaPhase::StateTransferProtocol { .. } => {
+                            self.pending_quorum_alteration = Some((node, certificate));
+                        }
+                    }
                 }
                 QuorumReconfigurationMessage::ReconfigurationProtocolStable(_) => {
                     info!("Received reconfiguration protocol stable, but we are even done with reconfiguration stabilization?");
@@ -569,6 +581,20 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         self.replica_phase = ReplicaPhase::OrderingProtocol;
 
         self.ordering_protocol.handle_execution_changed(true)?;
+
+        match std::mem::replace(&mut self.pending_quorum_alteration, None) {
+            Some((node_id, join_cert)) => {
+                info!("Attempting to change pending quorum alteration on the ordering protocol");
+
+                match self.ordering_protocol.attempt_network_view_change(join_cert)? {
+                    ReconfigurationAttemptResult::Failed => {
+                        error!("Failed to change the network view on the ordering protocol?");
+                    }
+                    _ => {}
+                };
+            }
+            _ => {}
+        }
 
         Ok(())
     }
@@ -735,6 +761,19 @@ impl<D> PartialEq for ReplicaPhase<D> where D: ApplicationData {
             (ReplicaPhase::OrderingProtocol, ReplicaPhase::OrderingProtocol) => true,
             (ReplicaPhase::StateTransferProtocol { .. }, ReplicaPhase::StateTransferProtocol { .. }) => true,
             (_, _) => false
+        }
+    }
+}
+
+impl<D> Debug for ReplicaPhase<D> where D: ApplicationData {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReplicaPhase::OrderingProtocol => {
+                write!(f, "OrderingProtocol")
+            }
+            ReplicaPhase::StateTransferProtocol { log_transfer, state_transfer } => {
+                write!(f, "StateTransferProtocol {:?}", state_transfer)
+            }
         }
     }
 }

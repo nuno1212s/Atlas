@@ -136,7 +136,7 @@ pub(crate) fn deserialize_and_push_reconf_message<RM, PM>(header: Header, payloa
             NetworkMessageKind::ReconfigurationMessage(reconf) => {
                 reconf_handle.push_request(StoredMessage::new(header, reconf.into())).unwrap();
             }
-            _ => unreachable!("Received a non-reconfiguration message while we still have no extra information about the node.")
+            _ => error!("Received a non-reconfiguration message while we still have no extra information about the node. {:?}, message {:?}", header.from(), message)
         }
     });
 }

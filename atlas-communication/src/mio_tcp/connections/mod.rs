@@ -112,6 +112,12 @@ impl<NI, RM, PM> NodeConnections for Connections<NI, RM, PM>
         self: &Arc<Self>,
         node: NodeId,
     ) -> Vec<OneShotRx<Result<()>>> {
+        if node == self.id {
+            warn!("Attempted to connect to myself");
+
+            return vec![];
+        }
+
         let addr = self.get_addr_for_node(&node);
         let node_type = self.network_info.get_node_type(&node);
 
