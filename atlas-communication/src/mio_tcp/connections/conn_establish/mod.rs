@@ -228,7 +228,7 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
 
                 match update_message {
                     NetworkUpdateMessage::NodeConnectionPermitted(node_id, node_type, pk) => {
-                        debug!("Received network update message for node {:?} with type {:?}", node_id, node_type);
+                        debug!("Received network update message for node {:?} with type {:?}. Moving connections to the final connection pool", node_id, node_type);
 
                         while let Some(position) = self.currently_accepting.iter().position(|(token, pend)| {
                             return match pend {

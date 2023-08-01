@@ -188,6 +188,11 @@ impl NetworkInfo {
 
         for node in known_nodes.into_nodes() {
             let node_id = node.node_id();
+
+            if node_id == self.node_id {
+                continue;
+            }
+
             if Self::handle_single_node_introduced(&mut *write_guard, node) {
                 new_nodes.push(node_id);
             }
@@ -573,14 +578,17 @@ impl GeneralNodeInfo {
                                     certificates.push((header.from(), signature));
 
                                     if certificates.len() >= (*contacted * 2 / 3) + 1 {
-                                        warn!("We have enough certificates to join the network {}, moving to introduction phase", certificates.len());
+                                        let known_nodes = self.network_view.known_nodes().into_iter()
+                                            .filter(|node| *node != self.network_view.node_id()).collect::<Vec<_>>();
+
+                                        warn!("We have enough certificates to join the network {}, moving to introduction phase. Broadcasting Hello Request to {:?}", certificates.len(), known_nodes);
 
                                         let introduction_message = ReconfigurationMessage::new(
                                             seq_gen.next_seq(),
                                             ReconfigurationMessageType::NetworkReconfig(NetworkReconfigMessage::NetworkHelloRequest(self.network_view.node_triple(), certificates.clone())),
                                         );
 
-                                        let _ = network_node.broadcast_reconfig_message(introduction_message, self.network_view.known_nodes().into_iter());
+                                        let _ = network_node.broadcast_reconfig_message(introduction_message, known_nodes.into_iter());
 
                                         self.current_state = NetworkNodeState::IntroductionPhase {
                                             contacted: 0,

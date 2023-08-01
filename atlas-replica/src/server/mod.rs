@@ -274,6 +274,13 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                         OrderProtocolExecResult::Decided(decisions) => {
                                             self.execute_decisions(state_transfer, decisions)?;
                                         }
+                                        OrderProtocolExecResult::QuorumJoinResult(success, decision) => {
+                                            if let Some(decision) = decision {
+                                                self.execute_decisions(state_transfer, decision)?;
+                                            }
+
+                                            self.reply_to_quorum_entrance_request(success)?;
+                                        }
                                     }
                                 }
                                 SystemMessage::StateTransferMessage(state_transfer_msg) => {
@@ -293,6 +300,13 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                         }
                                         OrderProtocolExecResult::Decided(decisions) => {
                                             self.execute_decisions(state_transfer, decisions)?;
+                                        }
+                                        OrderProtocolExecResult::QuorumJoinResult(success, decision) => {
+                                            if let Some(decision) = decision {
+                                                self.execute_decisions(state_transfer, decision)?;
+                                            }
+
+                                            self.reply_to_quorum_entrance_request(success)?;
                                         }
                                     }
                                 }
@@ -323,6 +337,13 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                             }
                             OrderProtocolExecResult::Decided(decided) => {
                                 self.execute_decisions(state_transfer, decided)?;
+                            }
+                            OrderProtocolExecResult::QuorumJoinResult(success, decision) => {
+                                if let Some(decision) = decision {
+                                    self.execute_decisions(state_transfer, decision)?;
+                                }
+
+                                self.reply_to_quorum_entrance_request(success)?;
                             }
                         }
 
@@ -406,6 +427,20 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         Ok(())
     }
 
+    /// Send the result of attempting to join the quorum to the reconfiguration protocol, so that
+    /// it can proceed with execution
+    fn reply_to_quorum_entrance_request(&mut self, successfull: bool) -> Result<()> {
+        info!("{:?} // Sending quorum entrance response to reconfiguration protocol with success: {}", ProtocolNetworkNode::id(&*self.node), successfull);
+
+        if successfull {
+            self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful)).unwrap();
+        } else {
+            self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed())).unwrap();
+        }
+
+        Ok(())
+    }
+
     fn execute_decisions(&mut self, state_transfer: &mut ST, decisions: Vec<ProtocolConsensusDecision<D::Request>>) -> Result<()> {
         for decision in decisions {
             if let Some(decided) = decision.batch_info() {
@@ -460,6 +495,16 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                     match self.replica_phase {
                         ReplicaPhase::OrderingProtocol => {
                             let result = self.ordering_protocol.attempt_network_view_change(certificate)?;
+
+                            match result {
+                                ReconfigurationAttemptResult::InProgress => {}
+                                ReconfigurationAttemptResult::Failed => {
+                                    self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed())).unwrap();
+                                }
+                                ReconfigurationAttemptResult::AlreadyPartOfQuorum | ReconfigurationAttemptResult::Successful => {
+                                    self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful)).unwrap();
+                                }
+                            }
                         }
                         ReplicaPhase::StateTransferProtocol { .. } => {
                             self.pending_quorum_alteration = Some((node, certificate));

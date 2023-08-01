@@ -244,6 +244,8 @@ impl ReplicaQuorumView {
                 self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members)).unwrap();
 
                 loop {
+                    warn!("Waiting for quorum message alteration response");
+
                     let join_response = self.quorum_responses.recv().unwrap();
 
                     // Wait for the response from the ordering protocol
@@ -269,6 +271,8 @@ impl ReplicaQuorumView {
                     self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members.clone())).unwrap();
 
                     loop {
+                        warn!("Waiting for quorum message alteration response");
+
                         let join_response = self.quorum_responses.recv().unwrap();
 
                         // Wait for the response from the ordering protocol
@@ -420,6 +424,8 @@ impl ReplicaQuorumView {
                     self.quorum_communication.send(QuorumReconfigurationMessage::RequestQuorumJoin(node.network_view.node_id(), certificate));
 
                     loop {
+                        warn!("Waiting for quorum alteration response");
+
                         let join_response = self.quorum_responses.recv().unwrap();
 
                         // Wait for the response from the ordering protocol

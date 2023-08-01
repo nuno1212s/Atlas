@@ -7,6 +7,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures::future::FusedFuture;
+use log::error;
 
 
 #[cfg(feature = "channel_futures_mpsc")]
@@ -184,6 +185,29 @@ impl<T> ChannelSyncTx<T> {
 
     #[inline]
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
+        let value = match self.inner.try_send(value) {
+            Ok(_) => {
+                return Ok(())
+            }
+            Err(err) => {
+                match err {
+                    TrySendError::Full(value) => {
+                        error!("Failed to insert into channel. Channel is full and could not directly insert, blocking");
+
+                        value
+                    }
+                    TrySendError::Disconnected(value) => {
+                        error!("Channel is disconnected");
+
+                        value
+                    }
+                    TrySendError::Timeout(value) => {
+                        value
+                    }
+                }
+            }
+        };
+
         self.inner.send(value)
     }
 

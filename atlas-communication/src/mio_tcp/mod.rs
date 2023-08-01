@@ -603,11 +603,19 @@ impl<RM, PM> SendTo<RM, PM>
             SendToPeer::PendingPeer(pending_conn) => {
                 let (header, msg) = msg.into_inner();
 
-                let (_, buf) = msg.into_inner();
+                let (msg, buf) = msg.into_inner();
 
-                let wm = WireMessage::from_parts(header, buf).unwrap();
+                match msg {
+                    NetworkMessageKind::ReconfigurationMessage(reconf) => {
+                        let wm = WireMessage::from_parts(header, buf).unwrap();
 
-                pending_conn.peer_message(wm).unwrap();
+                        pending_conn.peer_message(wm).unwrap();
+                    }
+                    NetworkMessageKind::Ping(_) => {}
+                    NetworkMessageKind::System(_) => {
+                        error!("Should not be sending system messages to pending connections");
+                    }
+                }
             }
         }
     }

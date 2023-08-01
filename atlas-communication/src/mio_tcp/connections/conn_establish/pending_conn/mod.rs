@@ -94,7 +94,7 @@ impl<RM, PM, NI> NetworkUpdateHandler<NI, RM, PM>
                                 unreachable!("Received a connection permitted message for a node that is not pending connection. Node: {:?}", node_id)
                             }
                             Some(conn) => {
-                                info!("Received a connection permitted message for node {:?} of type {:?}", node_id, node_type);
+                                info!("Received a connection permitted message for node {:?} of type {:?} from the reconfiguration protocol", node_id, node_type);
 
                                 // Register the new connection
                                 self.peer_conns.preemptive_conn_register(node_id.clone(),
