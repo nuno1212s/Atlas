@@ -1,10 +1,11 @@
 use std::sync::Arc;
-use log::info;
+use log::{info, warn};
+use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
 use atlas_core::timeouts::Timeouts;
-use crate::message::{QuorumEnterRequest, QuorumEnterResponse, QuorumReconfigMessage, QuorumViewCert, ReconfData};
+use crate::message::{QuorumEnterRequest, QuorumEnterResponse, QuorumJoinCertificate, QuorumReconfigMessage, QuorumViewCert, ReconfData};
 use crate::{GeneralNodeInfo, QuorumProtocolResponse, SeqNoGen};
 use crate::quorum_reconfig::node_types::client::ClientQuorumView;
 use crate::quorum_reconfig::node_types::replica::ReplicaQuorumView;
@@ -100,11 +101,24 @@ impl NodeType {
         }
     }
 
+    fn handle_request_quorum_join<NT>(&mut self, seq_gen: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, node_id: NodeId, jc: QuorumJoinCertificate) -> QuorumProtocolResponse
+        where NT: ReconfigurationNode<ReconfData> + 'static {
+        match self {
+            NodeType::Client(_) => {
+                warn!("Client received a request to join quorum from {:?} with header {:?}", node_id, header);
+
+                QuorumProtocolResponse::Nil
+            }
+            NodeType::Replica(replica) => {
+                replica.handle_request_quorum_join(seq_gen, node, header, node_id, jc)
+            }
+        }
+    }
+
     pub fn handle_reconfigure_message<NT>(&mut self, seq_gen: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>,
                                           timeouts: &Timeouts,
                                           header: Header, seq: SeqNo, quorum_reconfig: QuorumReconfigMessage) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
-
         info!("Received a quorum reconfig message {:?} from {:?} with header {:?}",quorum_reconfig, header.from(), header, );
 
         match quorum_reconfig {
@@ -122,6 +136,9 @@ impl NodeType {
             }
             QuorumReconfigMessage::QuorumUpdated(quorum_update) => {
                 return self.handle_quorum_updated(seq_gen, node, network_node, header, quorum_update);
+            }
+            QuorumReconfigMessage::QuorumJoin(node_id, join_cert) => {
+                return self.handle_request_quorum_join(seq_gen, node, network_node, header, node_id, join_cert);
             }
             QuorumReconfigMessage::QuorumLeaveRequest(_) => {}
             QuorumReconfigMessage::QuorumLeaveResponse(_) => {}

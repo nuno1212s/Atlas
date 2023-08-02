@@ -11,17 +11,22 @@ use crate::timeouts::{RqTimeout, Timeouts};
 /// Messages to be sent by the reconfiguration protocol
 /// to the ordering protocol relating changes that have undergone in the
 /// Quorum View.
-pub enum QuorumReconfigurationMessage<JC> {
+pub enum QuorumReconfigurationMessage {
     /// The reconfiguration protocol has reached stability and we can now start to execute the
     /// Quorum protocol, with the given base nodes
     ReconfigurationProtocolStable(Vec<NodeId>),
     // We have been granted permission into an existing quorum, and we must
     // now indicate to the ordering protocol that he can attempt to join the quorum
-    RequestQuorumJoin(NodeId, JC),
+    RequestQuorumJoin(NodeId),
+    // We are going to attempt to join the quorum
+    AttemptToJoinQuorum
 }
 
+/// Messages sent by the ordering protocol to notify the reconfiguration protocol of changes
+/// to the quorum
 pub enum QuorumReconfigurationResponse {
     QuorumAlterationResponse(QuorumAlterationResponse),
+    QuorumUpdate(QuorumUpdateMessage)
 }
 
 pub enum QuorumAlterationResponse {
@@ -36,9 +41,9 @@ pub enum QuorumUpdateMessage {
     UpdatedQuorumView(Vec<NodeId>),
 }
 
-pub enum ReconfigurableNodeTypes<JC> {
+pub enum ReconfigurableNodeTypes {
     Client(ChannelSyncTx<QuorumUpdateMessage>),
-    Replica(ChannelSyncTx<QuorumReconfigurationMessage<JC>>,
+    Replica(ChannelSyncTx<QuorumReconfigurationMessage>,
             ChannelSyncRx<QuorumReconfigurationResponse>),
 }
 
@@ -76,7 +81,7 @@ pub trait ReconfigurationProtocol: Send + Sync + 'static {
     /// updates
     async fn initialize_protocol<NT>(information: Arc<Self::InformationProvider>,
                                      node: Arc<NT>, timeouts: Timeouts,
-                                     node_type: ReconfigurableNodeTypes<QuorumJoinCert<Self::Serialization>>,
+                                     node_type: ReconfigurableNodeTypes,
                                      min_stable_node_count: usize) -> Result<Self>
         where NT: ReconfigurationNode<Self::Serialization> + 'static, Self: Sized;
 

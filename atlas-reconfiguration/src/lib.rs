@@ -245,7 +245,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocol {
 
     async fn initialize_protocol<NT>(information: Arc<Self::InformationProvider>,
                                      node: Arc<NT>, timeouts: Timeouts,
-                                     node_type: ReconfigurableNodeTypes<QuorumJoinCert<Self::Serialization>>,
+                                     node_type: ReconfigurableNodeTypes,
                                      min_stable_node_count: usize)
                                      -> Result<Self> where NT: ReconfigurationNode<Self::Serialization> + 'static, Self: Sized {
         let general_info = GeneralNodeInfo::new(information.clone(), NetworkNodeState::Init);

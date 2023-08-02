@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
@@ -74,7 +74,7 @@ pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'sta
                                                        RP: ReconfigurationProtocol + 'static {
     replica_phase: ReplicaPhase<D>,
 
-    pending_quorum_alteration: Option<(NodeId, QuorumJoinCert<RP::Serialization>)>,
+    pending_quorum_alteration: Option<NodeId>,
     // The ordering protocol, responsible for ordering requests
     ordering_protocol: OP,
     log_transfer_protocol: LT,
@@ -89,7 +89,7 @@ pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'sta
     processed_timeout: (ChannelSyncTx<(Vec<RqTimeout>, Vec<RqTimeout>)>, ChannelSyncRx<(Vec<RqTimeout>, Vec<RqTimeout>)>),
 
     // Receive reconfiguration messages from the reconfiguration protocol
-    reconf_receive: ChannelSyncRx<QuorumReconfigurationMessage<QuorumJoinCert<RP::Serialization>>>,
+    reconf_receive: ChannelSyncRx<QuorumReconfigurationMessage>,
     // reconfiguration protocol send
     reconf_tx: ChannelSyncTx<QuorumReconfigurationResponse>,
 
@@ -159,7 +159,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
                     break quorum;
                 }
-                QuorumReconfigurationMessage::RequestQuorumJoin(_, _) => {
+                _ => {
                     error!("Received request for quorum view alteration, but we are not even done with reconfiguration stabilization?");
 
                     return Err(Error::simple_with_msg(ErrorKind::ReconfigurationNotStable, "Received alteration request before stable quorum was reached"));
@@ -427,12 +427,27 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         Ok(())
     }
 
+    /// Attempt to enqueue the node that is trying to join the quorum if we are currently
+    /// not in the conditions necessary to begin processing his quorum entrance
+    fn append_pending_join_node(&mut self, node: NodeId) -> bool {
+        match &self.pending_quorum_alteration {
+            None => {
+                self.pending_quorum_alteration = Some(node);
+
+                true
+            }
+            Some(node) => {
+                false
+            }
+        }
+    }
+
     /// Send the result of attempting to join the quorum to the reconfiguration protocol, so that
     /// it can proceed with execution
-    fn reply_to_quorum_entrance_request(&mut self, successfull: bool) -> Result<()> {
-        info!("{:?} // Sending quorum entrance response to reconfiguration protocol with success: {}", ProtocolNetworkNode::id(&*self.node), successfull);
+    fn reply_to_quorum_entrance_request(&mut self, successful: bool) -> Result<()> {
+        info!("{:?} // Sending quorum entrance response to reconfiguration protocol with success: {}", ProtocolNetworkNode::id(&*self.node), successful);
 
-        if successfull {
+        if successful {
             self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful)).unwrap();
         } else {
             self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed())).unwrap();
@@ -489,25 +504,55 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
         while let Ok(received) = self.reconf_receive.try_recv() {
             match received {
-                QuorumReconfigurationMessage::RequestQuorumJoin(node, certificate) => {
+                QuorumReconfigurationMessage::RequestQuorumJoin(node) => {
                     info!("Received request for quorum view alteration for {:?}, current phase: {:?}", node, self.replica_phase);
 
                     match self.replica_phase {
                         ReplicaPhase::OrderingProtocol => {
-                            let result = self.ordering_protocol.attempt_network_view_change(certificate)?;
+                            let result = self.ordering_protocol.attempt_quorum_node_join(node)?;
 
                             match result {
                                 ReconfigurationAttemptResult::InProgress => {}
                                 ReconfigurationAttemptResult::Failed => {
-                                    self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed())).unwrap();
+                                    self.reply_to_quorum_entrance_request(false)?;
                                 }
                                 ReconfigurationAttemptResult::AlreadyPartOfQuorum | ReconfigurationAttemptResult::Successful => {
-                                    self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful)).unwrap();
+                                    self.reply_to_quorum_entrance_request(true)?;
                                 }
                             }
                         }
                         ReplicaPhase::StateTransferProtocol { .. } => {
-                            self.pending_quorum_alteration = Some((node, certificate));
+                            if !self.append_pending_join_node(node) {
+                                self.reply_to_quorum_entrance_request(false)?;
+                            }
+                        }
+                    }
+                }
+                QuorumReconfigurationMessage::AttemptToJoinQuorum => {
+                    info!("Received request to attempt to join quorum, current phase: {:?}", self.replica_phase);
+
+                    match self.replica_phase {
+                        ReplicaPhase::OrderingProtocol => {
+                            match self.ordering_protocol.joining_quorum()? {
+                                ReconfigurationAttemptResult::InProgress => {}
+                                ReconfigurationAttemptResult::Failed => {
+                                    self.reply_to_quorum_entrance_request(false)?;
+                                }
+                                ReconfigurationAttemptResult::AlreadyPartOfQuorum | ReconfigurationAttemptResult::Successful => {
+                                    self.reply_to_quorum_entrance_request(true)?;
+                                }
+                            }
+                        }
+                        ReplicaPhase::StateTransferProtocol { .. } => {
+
+                            debug!("Received request to attempt to join quorum, but we are already in state transfer protocol?");
+
+                            if !self.append_pending_join_node(ProtocolNetworkNode::id(&*self.node)) {
+
+                                warn!("We are already trying to join the quorum?");
+
+                                self.reply_to_quorum_entrance_request(false)?;
+                            }
                         }
                     }
                 }
@@ -628,15 +673,24 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         self.ordering_protocol.handle_execution_changed(true)?;
 
         match std::mem::replace(&mut self.pending_quorum_alteration, None) {
-            Some((node_id, join_cert)) => {
+            Some(node_id) => {
                 info!("Attempting to change pending quorum alteration on the ordering protocol");
 
-                match self.ordering_protocol.attempt_network_view_change(join_cert)? {
-                    ReconfigurationAttemptResult::Failed => {
-                        error!("Failed to change the network view on the ordering protocol?");
+                if node_id == ProtocolNetworkNode::id(&*self.node) {
+                    match self.ordering_protocol.joining_quorum()? {
+                        ReconfigurationAttemptResult::Failed => {
+                            error!("Failed to change the network view on the ordering protocol?");
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                };
+                } else {
+                    match self.ordering_protocol.attempt_quorum_node_join(node_id)? {
+                        ReconfigurationAttemptResult::Failed => {
+                            error!("Failed to change the network view on the ordering protocol?");
+                        }
+                        _ => {}
+                    };
+                }
             }
             _ => {}
         }
