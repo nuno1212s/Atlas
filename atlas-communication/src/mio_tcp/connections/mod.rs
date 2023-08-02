@@ -26,6 +26,7 @@ use std::sync::Arc;
 use atlas_common::channel;
 use crate::conn_utils::{Callback, ConnCounts};
 use crate::mio_tcp::connections::conn_establish::pending_conn::{NetworkUpdateHandler, PendingConnHandle, RegisteredServers, ServerRegisteredPendingConns};
+use crate::mio_tcp::connections::conn_util::{ReadingBuffer, WritingBuffer};
 
 pub type NetworkSerializedMessage = (WireMessage);
 
@@ -270,6 +271,8 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
     fn handle_connection_established(self: &Arc<Self>, node: NodeId,
                                      socket: SecureSocket,
                                      node_type: NodeType,
+                                     reading_info: ReadingBuffer,
+                                     writing_info: Option<WritingBuffer>,
                                      channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>)) {
         let socket = match socket {
             SecureSocket::Sync(sync) => match sync {
@@ -279,7 +282,7 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
             _ => unreachable!(),
         };
 
-        self.handle_connection_established_with_socket(node, socket.into(), node_type, channel);
+        self.handle_connection_established_with_socket(node, socket.into(), node_type, reading_info, writing_info, channel);
     }
 
     fn handle_connection_established_with_socket(
@@ -287,6 +290,8 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
         node: NodeId,
         socket: MioSocket,
         node_type: NodeType,
+        reading_info: ReadingBuffer,
+        writing_info: Option<WritingBuffer>,
         channel: (ChannelSyncTx<NetworkSerializedMessage>, ChannelSyncRx<NetworkSerializedMessage>),
     ) {
         info!(
@@ -348,7 +353,7 @@ impl<NI, RM, PM> Connections<NI, RM, PM>
         peer_conn.register_peer_conn_intent(conn_id);
 
         let conn_details =
-            NewConnection::new(conn_id, node, self.id, socket, peer_conn.value().clone());
+            NewConnection::new(conn_id, node, self.id, socket, reading_info, writing_info, peer_conn.value().clone());
 
         // We don't register the connection here as we still need some information that will only be provided
         // to us by the worker that will handle the connection.

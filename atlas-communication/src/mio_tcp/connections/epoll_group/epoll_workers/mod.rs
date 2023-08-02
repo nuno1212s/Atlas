@@ -418,7 +418,7 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
         let NewConnection {
             conn_id, peer_id,
             my_id, mut socket,
-            peer_conn
+            reading_info, writing_info, peer_conn
         } = conn;
 
         let entry = self.connections.vacant_entry();
@@ -439,8 +439,8 @@ impl<NI, RM, PM> EpollWorker<NI, RM, PM>
         let socket_conn = SocketConnection::PeerConn {
             handle: handle.clone(),
             socket,
-            read_info: ReadingBuffer::init_with_size(Header::LENGTH),
-            writing_info: None,
+            read_info: reading_info,
+            writing_info: writing_info,
             connection: peer_conn,
         };
 
@@ -496,8 +496,9 @@ pub fn interrupted(err: &io::Error) -> bool {
 impl<RM, PM> NewConnection<RM, PM>
     where RM: Serializable + 'static,
           PM: Serializable + 'static {
-    pub fn new(conn_id: u32, peer_id: NodeId, my_id: NodeId, socket: MioSocket, peer_conn: Arc<PeerConnection<RM, PM>>) -> Self {
-        Self { conn_id, peer_id, my_id, socket, peer_conn }
+    pub fn new(conn_id: u32, peer_id: NodeId, my_id: NodeId, socket: MioSocket, reading_info: ReadingBuffer,
+               writing_info: Option<WritingBuffer>, peer_conn: Arc<PeerConnection<RM, PM>>) -> Self {
+        Self { conn_id, peer_id, my_id, socket, reading_info, writing_info, peer_conn }
     }
 }
 

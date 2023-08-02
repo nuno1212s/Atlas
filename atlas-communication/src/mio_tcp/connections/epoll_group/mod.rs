@@ -8,6 +8,7 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::socket::MioSocket;
 use crate::mio_tcp::connections::{Connections, PeerConnection};
+use crate::mio_tcp::connections::conn_util::{ReadingBuffer, WritingBuffer};
 use crate::mio_tcp::connections::epoll_group::epoll_workers::EpollWorker;
 use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
@@ -19,7 +20,7 @@ pub type EpollWorkerId = u32;
 // This will just handle creating and deleting connections so it can be small
 pub const DEFAULT_WORKER_CHANNEL: usize = 128;
 
-pub fn init_worker_group_handle<NI, RM, PM>(worker_count: u32) -> (EpollWorkerGroupHandle<RM, PM>, Vec<ChannelSyncRx<EpollWorkerMessage<RM, PM>>>)
+pub(crate) fn init_worker_group_handle<NI, RM, PM>(worker_count: u32) -> (EpollWorkerGroupHandle<RM, PM>, Vec<ChannelSyncRx<EpollWorkerMessage<RM, PM>>>)
     where NI: NetworkInformationProvider + 'static,
           RM: Serializable + 'static,
           PM: Serializable + 'static {
@@ -40,7 +41,7 @@ pub fn init_worker_group_handle<NI, RM, PM>(worker_count: u32) -> (EpollWorkerGr
     }, receivers)
 }
 
-pub fn initialize_worker_group<NI, RM, PM>(connections: Arc<Connections<NI, RM, PM>>, receivers: Vec<ChannelSyncRx<EpollWorkerMessage<RM, PM>>>) -> Result<()>
+pub(crate) fn initialize_worker_group<NI, RM, PM>(connections: Arc<Connections<NI, RM, PM>>, receivers: Vec<ChannelSyncRx<EpollWorkerMessage<RM, PM>>>) -> Result<()>
     where NI: NetworkInformationProvider + 'static,
           RM: Serializable + 'static,
           PM: Serializable + 'static {
@@ -67,17 +68,19 @@ pub struct EpollWorkerGroupHandle<RM, PM>
     round_robin: AtomicUsize,
 }
 
-pub struct NewConnection<RM, PM>
+pub(crate) struct NewConnection<RM, PM>
     where RM: Serializable + 'static,
           PM: Serializable + 'static {
     conn_id: u32,
     peer_id: NodeId,
     my_id: NodeId,
     socket: MioSocket,
+    reading_info: ReadingBuffer,
+    writing_info: Option<WritingBuffer>,
     peer_conn: Arc<PeerConnection<RM, PM>>,
 }
 
-pub enum EpollWorkerMessage<RM, PM>
+pub(crate) enum EpollWorkerMessage<RM, PM>
     where RM: Serializable + 'static,
           PM: Serializable + 'static {
     NewConnection(NewConnection<RM, PM>),
@@ -88,7 +91,7 @@ impl<RM, PM> EpollWorkerGroupHandle<RM, PM>
     where RM: Serializable + 'static,
           PM: Serializable + 'static {
     /// Assigns a socket to any given worker
-    pub fn assign_socket_to_worker(&self, conn_details: NewConnection<RM, PM>) -> atlas_common::error::Result<()> {
+    pub(super) fn assign_socket_to_worker(&self, conn_details: NewConnection<RM, PM>) -> atlas_common::error::Result<()> {
         let round_robin = self.round_robin.fetch_add(1, Ordering::Relaxed);
 
         let worker = self.workers.get(round_robin % self.workers.len())

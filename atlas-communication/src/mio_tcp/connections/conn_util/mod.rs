@@ -10,14 +10,14 @@ use crate::message::{Header, WireMessage};
 use crate::mio_tcp::connections::{NetworkSerializedMessage, SEND_QUEUE_SIZE};
 
 /// The reading buffer for a connection
-pub(super) struct ReadingBuffer {
+pub(crate) struct ReadingBuffer {
     pub(super) read_bytes: usize,
     pub(super)current_header: Option<Header>,
     pub(super) read_buffer: BytesMut,
 }
 
 /// The writing buffer for a TCP connection
-pub(super) struct WritingBuffer {
+pub(crate) struct WritingBuffer {
     written_bytes: usize,
     current_header: Option<Bytes>,
     current_message: Bytes,

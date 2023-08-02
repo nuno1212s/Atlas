@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs::read;
 use std::io;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -304,7 +305,7 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
 
                 if let Some(mut connection) = self.currently_accepting.try_remove(token.into()) {
                     match connection {
-                        PendingConnection::PendingConn { mut socket, channel, .. } => {
+                        PendingConnection::PendingConn { mut socket, channel, write_buf, read_buf, .. } => {
                             // Deregister from this poller as we are no longer
                             // the ones that should handle this connection
                             self.poll.registry().deregister(&mut socket)?;
@@ -312,6 +313,8 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
                             self.peer_conns.handle_connection_established_with_socket(node_id.clone(),
                                                                                       socket,
                                                                                       node_type,
+                                                                                      read_buf,
+                                                                                      write_buf,
                                                                                       channel.unwrap_or_else(conn_util::initialize_send_channel));
                         }
                         _ => unreachable!()
@@ -668,7 +671,10 @@ impl ConnectionHandler {
                             info!("{:?} // Established connection to node {:?}", my_id, peer_id);
 
                             connections.handle_connection_established(peer_id, SecureSocket::Sync(sock),
-                                                                      peer_node_type, conn_util::initialize_send_channel());
+                                                                      peer_node_type,
+                                                                      ReadingBuffer::init_with_size(Header::LENGTH),
+                                                                      None,
+                                                                      conn_util::initialize_send_channel());
 
                             conn_handler.done_connecting_to_node(&peer_id);
 
