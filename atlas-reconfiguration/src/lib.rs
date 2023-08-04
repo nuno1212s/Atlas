@@ -154,7 +154,14 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                         QuorumProtocolResponse::Nil => {}
                     };
                 }
-                ReconfigurableNodeState::Stable => {}
+                ReconfigurableNodeState::Stable => {
+                    // We still want to iterate the quorum protocol in order to receive new updates from the ordering protocol
+                    match self.node_type.iterate(&mut self.seq_gen, &self.node, &self.network_node, &self.timeouts) {
+                        QuorumProtocolResponse::Done => {}
+                        QuorumProtocolResponse::Running => {}
+                        QuorumProtocolResponse::Nil => {}
+                    };
+                }
             }
 
             let optional_message = self.network_node.reconfiguration_message_handler().try_receive_reconfig_message(Some(Duration::from_millis(1000))).unwrap();

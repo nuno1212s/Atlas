@@ -27,7 +27,7 @@ pub struct QuorumEnterRequest {
 /// When a node makes request to join a given network view, the participating nodes
 /// must respond with a QuorumNodeJoinResponse.
 /// TODO: Decide how many responses we need in order to consider it a valid join request
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumNodeJoinApproval {
     quorum_seq: SeqNo,

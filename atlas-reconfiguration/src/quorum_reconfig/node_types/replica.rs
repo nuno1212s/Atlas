@@ -451,6 +451,8 @@ impl ReplicaQuorumView {
                     if collected_join_approvals.is_empty() {
                         todo!("Handle this case. Do we want to force a retry?");
                     }
+                    
+                    debug!("Collected join approvals: {:?}", collected_join_approvals);
 
                     let (seq, approvals) = collected_join_approvals.swap_remove(0);
 
