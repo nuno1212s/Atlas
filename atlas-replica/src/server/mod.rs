@@ -1,6 +1,6 @@
 //! Contains the server side core protocol logic of `febft`.
 
-use std::fmt::{Debug, Formatter, write};
+use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -12,26 +12,25 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::{FullNetworkNode, NodeConnections};
 use atlas_communication::message::StoredMessage;
 use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
 use atlas_core::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult};
 use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
-use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
+use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocolArgs, ProtocolConsensusDecision};
 use atlas_core::ordering_protocol::OrderProtocolExecResult;
 use atlas_core::ordering_protocol::OrderProtocolPoll;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::{ReconfigurableOrderProtocol, ReconfigurationAttemptResult};
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{OperationMode, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog};
-use atlas_core::reconfiguration_protocol::{QuorumAlterationResponse, QuorumJoinCert, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
+use atlas_core::reconfiguration_protocol::{QuorumAlterationResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse, QuorumUpdateMessage, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
-use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ReconfigurationProtocolMessage, ServiceMsg, StateTransferMessage};
+use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ReconfigurationProtocolMessage, StateTransferMessage};
+use atlas_core::serialize::NetworkView;
 use atlas_core::smr::networking::SMRNetworkNode;
 use atlas_core::state_transfer::{StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
-use atlas_execution::app::Application;
 use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::{metric_duration, metric_increment};
@@ -231,6 +230,10 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         Ok(replica)
     }
 
+    fn id(&self) -> NodeId {
+        ProtocolNetworkNode::id(&*self.node)
+    }
+
     pub fn run(&mut self, state_transfer: &mut ST) -> Result<()> {
         let now = Instant::now();
 
@@ -274,12 +277,16 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                         OrderProtocolExecResult::Decided(decisions) => {
                                             self.execute_decisions(state_transfer, decisions)?;
                                         }
-                                        OrderProtocolExecResult::QuorumJoinResult(success, decision) => {
+                                        OrderProtocolExecResult::QuorumJoined(decision, node_id) => {
                                             if let Some(decision) = decision {
                                                 self.execute_decisions(state_transfer, decision)?;
                                             }
 
-                                            self.reply_to_quorum_entrance_request(success)?;
+                                            if node_id == self.id() {
+                                                self.reply_to_quorum_entrance_request(true)?;
+                                            } else {
+                                                self.send_quorum_update(node_id)?;
+                                            }
                                         }
                                     }
                                 }
@@ -301,12 +308,16 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                         OrderProtocolExecResult::Decided(decisions) => {
                                             self.execute_decisions(state_transfer, decisions)?;
                                         }
-                                        OrderProtocolExecResult::QuorumJoinResult(success, decision) => {
+                                        OrderProtocolExecResult::QuorumJoined(decision, node_id) => {
                                             if let Some(decision) = decision {
                                                 self.execute_decisions(state_transfer, decision)?;
                                             }
 
-                                            self.reply_to_quorum_entrance_request(success)?;
+                                            if node_id == self.id() {
+                                                self.reply_to_quorum_entrance_request(true)?;
+                                            } else {
+                                                self.send_quorum_update(node_id)?;
+                                            }
                                         }
                                     }
                                 }
@@ -338,12 +349,16 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                             OrderProtocolExecResult::Decided(decided) => {
                                 self.execute_decisions(state_transfer, decided)?;
                             }
-                            OrderProtocolExecResult::QuorumJoinResult(success, decision) => {
+                            OrderProtocolExecResult::QuorumJoined(decision, node_id) => {
                                 if let Some(decision) = decision {
                                     self.execute_decisions(state_transfer, decision)?;
                                 }
 
-                                self.reply_to_quorum_entrance_request(success)?;
+                                if node_id == self.id() {
+                                    self.reply_to_quorum_entrance_request(true)?;
+                                } else {
+                                    self.send_quorum_update(node_id)?;
+                                }
                             }
                         }
 
@@ -442,15 +457,23 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         }
     }
 
+    fn send_quorum_update(&self, node_id: NodeId) -> Result<()> {
+        let members = self.ordering_protocol.view().quorum_members().clone();
+
+        info!("{:?} // Sending quorum update with member {:?}, new view {:?}", ProtocolNetworkNode::id(&*self.node), node_id, members);
+
+        self.reconf_tx.send(QuorumReconfigurationResponse::QuorumUpdate(QuorumUpdateMessage::UpdatedQuorumView(members))).wrapped_msg(ErrorKind::CommunicationChannel, "Error sending quorum update to reconfiguration protocol")
+    }
+
     /// Send the result of attempting to join the quorum to the reconfiguration protocol, so that
     /// it can proceed with execution
     fn reply_to_quorum_entrance_request(&mut self, successful: bool) -> Result<()> {
         info!("{:?} // Sending quorum entrance response to reconfiguration protocol with success: {}", ProtocolNetworkNode::id(&*self.node), successful);
 
         if successful {
-            self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful)).unwrap();
+            self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful)).wrapped_msg(ErrorKind::CommunicationChannel, "Error sending quorum entrance response to reconfiguration protocol")?;
         } else {
-            self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed())).unwrap();
+            self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed())).wrapped_msg(ErrorKind::CommunicationChannel, "Error sending quorum entrance response to reconfiguration protocol")?;
         }
 
         Ok(())

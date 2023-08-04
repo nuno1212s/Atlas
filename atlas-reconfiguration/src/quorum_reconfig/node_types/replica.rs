@@ -122,7 +122,7 @@ impl ReplicaQuorumView {
                                     return self.broadcast_join_message(seq_no, node, network_node, timeouts);
                                 }
                                 ReplicaState::StableWaitingResponse | ReplicaState::JoiningWaitingResponse => {
-                                    return self.handle_quorum_entered();
+                                    return self.handle_quorum_entered(node);
                                 }
                                 _ => {
                                     warn!("Received a successful quorum alteration response, but we are not waiting for one. Ignoring...")
@@ -199,7 +199,7 @@ impl ReplicaQuorumView {
 
                 let needed_messages = *sent_messages / 2 + 1;
 
-                debug!("Received {:?} messages out of {:?} needed", received.len(), needed_messages);
+                debug!("Received {:?} messages out of {:?} needed. Latest message digest {:?}", received.len(), needed_messages, digest);
 
                 if received.len() >= needed_messages {
                     // We have received all of the messages that we are going to receive, so we can now
@@ -214,6 +214,8 @@ impl ReplicaQuorumView {
                     received_messages.sort_by(|(_, a), (_, b)| {
                         a.len().cmp(&b.len()).reverse()
                     });
+
+                    debug!("Processed received messages: {:?}", received_messages);
 
                     if let Some((quorum_digest, quorum_certs)) = received_messages.first() {
                         if quorum_certs.len() >= needed_messages {
@@ -474,12 +476,22 @@ impl ReplicaQuorumView {
         }
     }
 
-    pub fn handle_quorum_entered(&mut self) -> QuorumProtocolResponse {
+    /// Handle us having correctly entered the quorum
+    pub fn handle_quorum_entered(&mut self, node: &GeneralNodeInfo) -> QuorumProtocolResponse {
         self.current_state = ReplicaState::Stable;
+
+        let mut view = self.current_view.write().unwrap();
+
+        if !view.quorum_members.contains(&node.network_view.node_id()) {
+            let  new_view = view.next_with_added_node(node.network_view.node_id());
+
+            *view = new_view;
+        }
 
         return QuorumProtocolResponse::Done;
     }
 
+    /// Handle the quorum view node
     pub fn handle_quorum_view_node_added<NT>(&mut self, seq_gen: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, node_added: NodeId)
         where NT: ReconfigurationNode<ReconfData> + 'static {
         let mut guard = self.current_view.write().unwrap();

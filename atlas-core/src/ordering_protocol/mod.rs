@@ -33,9 +33,7 @@ pub struct OrderingProtocolArgs<D, NT, PL>(pub ExecutorHandle<D>, pub Timeouts,
                                            pub PL, pub Vec<NodeId>) where D: ApplicationData;
 
 pub trait OrderProtocolTolerance {
-
     fn get_n_for_f(f: usize) -> usize;
-
 }
 
 /// The trait for an ordering protocol to be implemented in Atlas
@@ -87,7 +85,7 @@ pub trait OrderingProtocol<D, NT, PL>: OrderProtocolTolerance + Orderable where 
 
     /// Handle a timeout received from the timeouts layer
     fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<OrderProtocolExecResult<D::Request>>
-        where PL: OrderingProtocolLog<Self::Serialization> ;
+        where PL: OrderingProtocolLog<Self::Serialization>;
 }
 
 /// result from polling the ordering protocol
@@ -104,7 +102,7 @@ pub enum OrderProtocolExecResult<O> {
     Success,
     Decided(Vec<ProtocolConsensusDecision<O>>),
     RunCst,
-    QuorumJoinResult(bool, Option<Vec<ProtocolConsensusDecision<O>>>),
+    QuorumJoined(Option<Vec<ProtocolConsensusDecision<O>>>, NodeId),
 }
 
 /// Information reported after a logging operation.
