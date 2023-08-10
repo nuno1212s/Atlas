@@ -308,7 +308,7 @@ impl<D, RP, NT> Client<RP, D, NT>
         let reconfig_protocol = RP::initialize_protocol(network_info_provider,
                                                         node.clone(),
                                                         timeouts.clone(),
-                                                        ReconfigurableNodeTypes::Client(reconf_tx),
+                                                        ReconfigurableNodeTypes::ClientNode(reconf_tx),
                                                         ROP::get_n_for_f(1)).await?;
 
         info!("{:?} // Waiting for reconfiguration to stabilize...", node.id());

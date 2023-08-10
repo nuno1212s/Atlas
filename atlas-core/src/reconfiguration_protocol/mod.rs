@@ -13,8 +13,13 @@ use crate::timeouts::{RqTimeout, Timeouts};
 /// Quorum View.
 pub enum QuorumReconfigurationMessage {
     /// The reconfiguration protocol has reached stability and we can now start to execute the
+    /// And we know the current members of the quorum. This will be used to run state transfer protocols
     /// Quorum protocol, with the given base nodes
     ReconfigurationProtocolStable(Vec<NodeId>),
+
+    /// We have received a quorum update from other nodes and as such we must update our quorum view
+    /// This will only be received when we are not a part of the quorum
+    QuorumUpdated(Vec<NodeId>),
     // We have been granted permission into an existing quorum, and we must
     // now indicate to the ordering protocol that he can attempt to join the quorum
     RequestQuorumJoin(NodeId),
@@ -29,9 +34,22 @@ pub enum QuorumReconfigurationResponse {
     QuorumUpdate(QuorumUpdateMessage)
 }
 
+/// Response destined to the ordering protocol, indicating the result of the quorum alteration
+/// Requested by it
 pub enum QuorumAlterationResponse {
     Successful,
-    Failed(),
+    Failed(AlterationFailReason),
+}
+
+/// Reasons for a failed quorum alteration
+#[derive(Debug)]
+pub enum AlterationFailReason {
+    /// The node failed for some reason
+    Failed,
+    /// The node join request failed because there was already an ongoing reconfiguration request
+    OngoingReconfiguration,
+    /// We are already part of the quorum, so why are we trying to join it again?
+    AlreadyPartOfQuorum
 }
 
 /// Analogous to the `QuorumReconfigurationMessage`, this is the message that the ordering protocol
@@ -41,10 +59,14 @@ pub enum QuorumUpdateMessage {
     UpdatedQuorumView(Vec<NodeId>),
 }
 
+/// The type of reconfigurable nodes.
+/// Quorum nodes are nodes that partake in the quorum
+/// Client nodes are nodes that only listen to quorum updates so they know who
+/// to contact in order to perform operations
 pub enum ReconfigurableNodeTypes {
-    Client(ChannelSyncTx<QuorumUpdateMessage>),
-    Replica(ChannelSyncTx<QuorumReconfigurationMessage>,
-            ChannelSyncRx<QuorumReconfigurationResponse>),
+    ClientNode(ChannelSyncTx<QuorumUpdateMessage>),
+    QuorumNode(ChannelSyncTx<QuorumReconfigurationMessage>,
+               ChannelSyncRx<QuorumReconfigurationResponse>),
 }
 
 pub type QuorumJoinCert<RP: ReconfigurationProtocolMessage> = RP::QuorumJoinCertificate;
@@ -60,6 +82,14 @@ pub enum ReconfigResponse {
 /// Run this protocol independently from the rest of the system, only sending and receiving updates
 /// through message passing (unlike the state and log transfer, which run in the same thread since
 /// we cannot execute the ordering protocol while we are executing log and state transfers)
+///
+/// This is done since the messaging of the reconfiguration protocol is actually separate from the messaging of
+/// the other protocols, since we can only establish secure communication with the nodes.
+/// Therefore, for a given node to be able to deliver protocol messages, he must first successfully authenticate
+/// with the reconfiguration protocol and be allowed into the known network.
+///
+/// The reconfiguration protocol acts as the network information acquirer, acquiring new nodes,
+/// verifying their integrity and correctness
 pub trait ReconfigurationProtocol: Send + Sync + 'static {
     // The configuration type the protocol wants to receive
     type Config;

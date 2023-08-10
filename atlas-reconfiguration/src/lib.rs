@@ -262,10 +262,10 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocol {
         let predicates = vec![];
 
         let node_type = match node_type {
-            ReconfigurableNodeTypes::Client(quorum_message) => {
+            ReconfigurableNodeTypes::ClientNode(quorum_message) => {
                 NodeType::Client(ClientQuorumView::new(quorum_view.clone(), quorum_message, min_stable_node_count))
             }
-            ReconfigurableNodeTypes::Replica(channel_tx, channel_rx) => {
+            ReconfigurableNodeTypes::QuorumNode(channel_tx, channel_rx) => {
                 NodeType::Replica(ReplicaQuorumView::new(quorum_view.clone(), channel_tx, channel_rx, predicates, min_stable_node_count))
             }
         };

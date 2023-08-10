@@ -102,7 +102,7 @@ pub enum OrderProtocolExecResult<O> {
     Success,
     Decided(Vec<ProtocolConsensusDecision<O>>),
     RunCst,
-    QuorumJoined(Option<Vec<ProtocolConsensusDecision<O>>>, NodeId),
+    QuorumJoined(Option<Vec<ProtocolConsensusDecision<O>>>, NodeId, Vec<NodeId>),
 }
 
 /// Information reported after a logging operation.

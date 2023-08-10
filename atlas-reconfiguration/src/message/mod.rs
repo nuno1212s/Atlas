@@ -41,7 +41,7 @@ pub struct QuorumNodeJoinApproval {
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumJoinCertificate {
-    network_view_seq: SeqNo,
+    quorum_view_seq: SeqNo,
     approvals: Vec<StoredMessage<QuorumNodeJoinApproval>>,
 }
 
@@ -53,6 +53,7 @@ pub enum QuorumEnterRejectionReason {
     MissingValues,
     IncorrectNetworkViewSeq,
     NodeIsNotQuorumParticipant,
+    CurrentlyReconfiguring
 }
 
 /// A response to a network join request
@@ -145,6 +146,15 @@ pub type QuorumViewCert = StoredMessage<QuorumView>;
 
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum ReconfigQuorumMessage {
+    /// The first message step in the quorum reconfiguration protocol
+    JoinMessage(NodeId),
+
+    ConfirmJoin(NodeId)
+}
+
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumReconfigMessage {
     /// A state request for the current network view
     NetworkViewStateRequest,
@@ -152,15 +162,13 @@ pub enum QuorumReconfigMessage {
     NetworkViewState(QuorumView),
     /// A request to join the current quorum
     QuorumEnterRequest(QuorumEnterRequest),
-    /// The response to the request to join the quorum, 2f+1 responses
-    /// are required to consider the request successful and allow for this
-    /// to be passed to the ordering protocol as a QuorumJoinCertificate
+    /// The quorum reconfiguration message type, exchanged between quorum members
+    /// to reconfigure the quorum
+    QuorumReconfig(ReconfigQuorumMessage),
+    /// Responses to the requesting node.
+    /// These can be delivered either right upon reception (in case the node doesn't qualify
+    /// or we are currently reconfiguring)
     QuorumEnterResponse(QuorumEnterResponse),
-    /// The "command" to instruct the reconfiguration protocol to instruct the ordering protocol
-    /// to add a new node to the quorum.
-    QuorumJoin(NodeId, QuorumJoinCertificate),
-    /// A message to indicate that a node has entered the quorum
-    QuorumUpdated(QuorumView),
     /// A request to leave the current quorum
     QuorumLeaveRequest(QuorumLeaveRequest),
     /// The response to the request to leave the quorum
@@ -173,8 +181,8 @@ pub enum ReconfigMessage {
 }
 
 impl QuorumNodeJoinApproval {
-    pub fn new(network_view_seq: SeqNo, requesting_node: NodeId, origin_node: NodeId) -> Self {
-        Self { quorum_seq: network_view_seq, requesting_node, origin_node }
+    pub fn new(quorum_view_seq: SeqNo, requesting_node: NodeId, origin_node: NodeId) -> Self {
+        Self { quorum_seq: quorum_view_seq, requesting_node, origin_node }
     }
 }
 
@@ -258,6 +266,22 @@ impl Serializable for ReconfData {
     //TODO: Implement capnproto messages
 }
 
+impl Orderable for ReconfigurationMessage {
+    fn sequence_number(&self) -> SeqNo {
+        self.seq
+    }
+}
+
+impl ReconfigurationMessage {
+    pub fn seq(&self) -> SeqNo {
+        self.seq
+    }
+    pub fn message_type(&self) -> &ReconfigurationMessageType {
+        &self.message_type
+    }
+    
+}
+
 impl ReconfigurationProtocolMessage for ReconfData {
     type QuorumJoinCertificate = QuorumJoinCertificate;
 }
@@ -273,8 +297,16 @@ impl QuorumEnterRequest {
 }
 
 impl QuorumJoinCertificate {
-    pub fn new(network_view_seq: SeqNo, approvals: Vec<StoredMessage<QuorumNodeJoinApproval>>) -> Self {
-        Self { network_view_seq, approvals }
+    pub fn new(quorum_view_seq: SeqNo, approvals: Vec<StoredMessage<QuorumNodeJoinApproval>>) -> Self {
+        Self { quorum_view_seq, approvals }
+    }
+
+    pub fn quorum_view_seq(&self) -> SeqNo {
+        self.quorum_view_seq
+    }
+
+    pub fn approvals(&self) -> &Vec<StoredMessage<QuorumNodeJoinApproval>> {
+        &self.approvals
     }
 }
 

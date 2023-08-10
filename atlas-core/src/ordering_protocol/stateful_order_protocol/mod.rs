@@ -13,8 +13,8 @@ pub trait StatefulOrderProtocol<D: ApplicationData + 'static, NT, PL>: OrderingP
     type StateSerialization: StatefulOrderProtocolMessage + 'static;
 
     fn initialize_with_initial_state(config: Self::Config, args: OrderingProtocolArgs<D, NT, PL>,
-                                     dec_log: DecLog<Self::StateSerialization>) -> Result<Self> where
-        Self: Sized;
+                                     dec_log: DecLog<Self::StateSerialization>) -> Result<Self>
+        where Self: Sized;
 
     /// Install a state received from other replicas in the system
     /// Should only alter the necessary things within its own state and
