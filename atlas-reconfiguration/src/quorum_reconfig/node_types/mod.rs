@@ -5,7 +5,7 @@ use atlas_common::ordering::SeqNo;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
 use atlas_core::timeouts::Timeouts;
-use crate::message::{QuorumEnterRequest, QuorumEnterResponse, QuorumJoinCertificate, QuorumReconfigMessage, QuorumViewCert, ReconfData};
+use crate::message::{QuorumEnterRequest, QuorumEnterResponse, QuorumReconfigMessage, QuorumViewCert, ReconfData, ReconfigMessage, ReconfigQuorumMessage, ReconfigurationMessage, ReconfigurationMessageType};
 use crate::{GeneralNodeInfo, QuorumProtocolResponse, SeqNoGen};
 use crate::quorum_reconfig::node_types::client::ClientQuorumView;
 use crate::quorum_reconfig::node_types::replica::ReplicaQuorumView;
@@ -84,7 +84,7 @@ impl NodeType {
                 QuorumProtocolResponse::Nil
             }
             NodeType::Replica(replica) => {
-                replica.handle_quorum_enter_response(seq_gen, node, network_node, timeouts, header, message)
+                replica.handle_quorum_join_response(seq_gen, node, network_node, timeouts, header, message)
             }
         }
     }
@@ -101,16 +101,18 @@ impl NodeType {
         }
     }
 
-    fn handle_request_quorum_join<NT>(&mut self, seq_gen: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, node_id: NodeId, jc: QuorumJoinCertificate) -> QuorumProtocolResponse
+    fn handle_quorum_reconfig_message<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, seq: SeqNo, message: ReconfigQuorumMessage) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match self {
             NodeType::Client(_) => {
-                warn!("Client received a request to join quorum from {:?} with header {:?}", node_id, header);
+                warn!("Client received a quorum reconfig message from {:?} with header {:?}", header.from(), header);
 
                 QuorumProtocolResponse::Nil
             }
             NodeType::Replica(replica) => {
-                replica.handle_request_quorum_join(seq_gen, node, header, node_id, jc)
+                let message = ReconfigurationMessage::new(seq, ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::QuorumReconfig(message)));
+
+                replica.handle_quorum_reconfig_message(node, network_node, header, message)
             }
         }
     }
@@ -134,12 +136,10 @@ impl NodeType {
             QuorumReconfigMessage::QuorumEnterResponse(enter_response) => {
                 return self.handle_enter_response(seq_gen, node, network_node, timeouts, header, enter_response);
             }
-            QuorumReconfigMessage::QuorumUpdated(quorum_update) => {
-                return self.handle_quorum_updated(seq_gen, node, network_node, header, quorum_update);
+            QuorumReconfigMessage::QuorumReconfig(reconfig_messages) => {
+                return self.handle_quorum_reconfig_message(node, network_node, header, seq, reconfig_messages);
             }
-            QuorumReconfigMessage::QuorumJoin(node_id, join_cert) => {
-                return self.handle_request_quorum_join(seq_gen, node, network_node, header, node_id, join_cert);
-            }
+            QuorumReconfigMessage::QuorumUpdate(_) => {}
             QuorumReconfigMessage::QuorumLeaveRequest(_) => {}
             QuorumReconfigMessage::QuorumLeaveResponse(_) => {}
         }

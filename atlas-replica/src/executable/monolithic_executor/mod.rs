@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Instant;
+use log::info;
 use atlas_common::error::*;
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
@@ -87,6 +88,8 @@ impl<S, A, NT> MonolithicExecutor<S, A, NT>
                             }
                         }
                         ExecutionRequest::CatchUp(requests) => {
+                            info!("Catching up with {} requests", requests.len());
+
                             for req in requests {
                                 executor.application.update(&mut executor.state, req);
                             }

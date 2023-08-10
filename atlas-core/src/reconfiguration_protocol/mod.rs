@@ -20,25 +20,33 @@ pub enum QuorumReconfigurationMessage {
     /// We have received a quorum update from other nodes and as such we must update our quorum view
     /// This will only be received when we are not a part of the quorum
     QuorumUpdated(Vec<NodeId>),
+
     // We have been granted permission into an existing quorum, and we must
     // now indicate to the ordering protocol that he can attempt to join the quorum
     RequestQuorumJoin(NodeId),
+
     // We are going to attempt to join the quorum
-    AttemptToJoinQuorum
+    AttemptToJoinQuorum,
 }
 
 /// Messages sent by the ordering protocol to notify the reconfiguration protocol of changes
 /// to the quorum
 pub enum QuorumReconfigurationResponse {
+    QuorumStableResponse(bool),
     QuorumAlterationResponse(QuorumAlterationResponse),
-    QuorumUpdate(QuorumUpdateMessage)
+    QuorumAttemptJoinResponse(QuorumAttemptJoinResponse),
+}
+
+pub enum QuorumAttemptJoinResponse {
+    Success,
+    Failed,
 }
 
 /// Response destined to the ordering protocol, indicating the result of the quorum alteration
 /// Requested by it
 pub enum QuorumAlterationResponse {
-    Successful,
-    Failed(AlterationFailReason),
+    Successful(NodeId),
+    Failed(NodeId, AlterationFailReason),
 }
 
 /// Reasons for a failed quorum alteration
@@ -49,7 +57,7 @@ pub enum AlterationFailReason {
     /// The node join request failed because there was already an ongoing reconfiguration request
     OngoingReconfiguration,
     /// We are already part of the quorum, so why are we trying to join it again?
-    AlreadyPartOfQuorum
+    AlreadyPartOfQuorum,
 }
 
 /// Analogous to the `QuorumReconfigurationMessage`, this is the message that the ordering protocol

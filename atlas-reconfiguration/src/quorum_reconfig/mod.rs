@@ -6,7 +6,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::message::{NodeTriple, QuorumEnterRejectionReason, QuorumEnterResponse, QuorumNodeJoinApproval};
+use crate::message::{NodeTriple, QuorumEnterRejectionReason, QuorumEnterResponse};
 
 pub mod node_types;
 
@@ -22,7 +22,7 @@ pub struct QuorumNode {
 
 /// The current view of nodes in the network, as in which of them
 /// are currently partaking in the consensus
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumView {
     sequence_number: SeqNo,
@@ -85,11 +85,7 @@ impl QuorumNode {
             }
         }
 
-        return QuorumEnterResponse::Successful(QuorumNodeJoinApproval::new(
-            self.current_network_view.sequence_number(),
-            node_id.node_id(),
-            self.node_id,
-        ));
+        return QuorumEnterResponse::Successful(self.current_network_view.clone());
     }
 }
 
