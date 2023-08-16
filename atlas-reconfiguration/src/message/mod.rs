@@ -125,7 +125,7 @@ pub enum NetworkReconfigMessage {
 /// A certificate that a given node sent a quorum view
 pub type QuorumViewCert = StoredMessage<QuorumView>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum ReconfigQuorumMessage {
     /// The first message step in the quorum reconfiguration protocol
@@ -284,11 +284,11 @@ impl Debug for QuorumReconfigMessage {
             QuorumReconfigMessage::QuorumEnterResponse(quorum_enter_response) => write!(f, "QuorumEnterResponse()"),
             QuorumReconfigMessage::QuorumLeaveRequest(quorum_leave_request) => write!(f, "QuorumLeaveRequest()"),
             QuorumReconfigMessage::QuorumLeaveResponse(quorum_leave_response) => write!(f, "QuorumLeaveResponse()"),
-            QuorumReconfigMessage::QuorumReconfig(_) => {
-                write!(f, "QuorumReconfig()")
+            QuorumReconfigMessage::QuorumReconfig(reconf) => {
+                write!(f, "QuorumReconfig({:?})", reconf)
             }
-            QuorumReconfigMessage::QuorumUpdate(_) => {
-                write!(f, "QuorumUpdate()")
+            QuorumReconfigMessage::QuorumUpdate(view) => {
+                write!(f, "QuorumUpdate({:?})", view)
             }
         }
     }

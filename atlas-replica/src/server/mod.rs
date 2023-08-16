@@ -1,12 +1,11 @@
 //! Contains the server side core protocol logic of `febft`.
 
-use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, trace};
 
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
@@ -23,12 +22,13 @@ use atlas_core::ordering_protocol::OrderProtocolExecResult;
 use atlas_core::ordering_protocol::OrderProtocolPoll;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::{ReconfigurableOrderProtocol, ReconfigurationAttemptResult};
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
-use atlas_core::persistent_log::{OperationMode, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog};
-use atlas_core::reconfiguration_protocol::{AlterationFailReason, QuorumAlterationResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse, QuorumUpdateMessage, ReconfigurableNodeTypes, ReconfigurationProtocol};
+use atlas_core::persistent_log::OperationMode;
+use atlas_core::persistent_log::PersistableOrderProtocol;
+use atlas_core::persistent_log::PersistableStateTransferProtocol;
+use atlas_core::reconfiguration_protocol::{AlterationFailReason, QuorumAlterationResponse, QuorumAttemptJoinResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ReconfigurationProtocolMessage, StateTransferMessage};
-use atlas_core::serialize::NetworkView;
 use atlas_core::smr::networking::SMRNetworkNode;
 use atlas_core::state_transfer::{StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
@@ -41,7 +41,6 @@ use crate::config::ReplicaConfig;
 use crate::metric::{LOG_TRANSFER_PROCESS_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_TAKE_FROM_NETWORK_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
 use crate::persistent_log::SMRPersistentLog;
 
-//pub mod observer;
 
 pub mod client_replier;
 pub mod follower_handling;
@@ -161,7 +160,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
             match message {
                 QuorumReconfigurationMessage::ReconfigurationProtocolStable(quorum) => {
-                    reconf_response_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful)).unwrap();
+                    reconf_response_tx.send(QuorumReconfigurationResponse::QuorumStableResponse(true)).unwrap();
 
                     break quorum;
                 }
@@ -492,7 +491,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                 QuorumReconfigurationMessage::AttemptToJoinQuorum => {
                     info!("Received request to attempt to join quorum, current phase: {:?}", self.replica_phase);
 
-                    self.attempt_quorum_join(self.id())?;
+                    self.attempt_to_join_quorum()?;
                 }
                 QuorumReconfigurationMessage::QuorumUpdated(new_quorum) => {
                     info!("Received quorum updated message, dealing with it");
@@ -505,6 +504,8 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                     } else {
                         // We are not a part of the quorum, so we need to start the state transfer protocol
                         // In order to receive any new information about the ordering protocol status (Like new views)
+
+                        error!("TODO: Handle quorum updated")
                     }
                 }
                 QuorumReconfigurationMessage::ReconfigurationProtocolStable(_) => {
@@ -778,43 +779,43 @@ self.id(), state_transfer, * log_first, * log_last);
         Ok(())
     }
 
+    fn attempt_to_join_quorum(&mut self) -> Result<()> {
+        match self.ordering_protocol.joining_quorum()? {
+            ReconfigurationAttemptResult::Failed => {
+                self.reply_to_attempt_quorum_join(true)?;
+            }
+            ReconfigurationAttemptResult::AlreadyPartOfQuorum => {}
+            ReconfigurationAttemptResult::CurrentlyReconfiguring(_) => {
+                self.reply_to_attempt_quorum_join(true)?;
+            }
+            ReconfigurationAttemptResult::InProgress => {}
+            ReconfigurationAttemptResult::Successful => {
+                self.reply_to_attempt_quorum_join(false)?;
+            }
+        };
+
+        Ok(())
+    }
+
     /// Attempt to join the quorum
     fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
         match self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
-                if node == self.id() {
-                    match self.ordering_protocol.joining_quorum()? {
-                        ReconfigurationAttemptResult::Failed => {
-                            self.reply_to_quorum_entrance_request(Some(AlterationFailReason::Failed))?;
-                        }
-                        ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
-                            self.reply_to_quorum_entrance_request(Some(AlterationFailReason::AlreadyPartOfQuorum))?;
-                        }
-                        ReconfigurationAttemptResult::CurrentlyReconfiguring(_) => {
-                            self.reply_to_quorum_entrance_request(Some(AlterationFailReason::OngoingReconfiguration))?;
-                        }
-                        ReconfigurationAttemptResult::InProgress => {}
-                        ReconfigurationAttemptResult::Successful => {
-                            self.reply_to_quorum_entrance_request(None)?;
-                        }
-                    };
-                } else {
-                    match self.ordering_protocol.attempt_quorum_node_join(node)? {
-                        ReconfigurationAttemptResult::Failed => {
-                            self.reply_to_quorum_entrance_request(Some(AlterationFailReason::Failed))?;
-                        }
-                        ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
-                            self.reply_to_quorum_entrance_request(Some(AlterationFailReason::AlreadyPartOfQuorum))?;
-                        }
-                        ReconfigurationAttemptResult::CurrentlyReconfiguring(_) => {
-                            self.reply_to_quorum_entrance_request(Some(AlterationFailReason::OngoingReconfiguration))?;
-                        }
-                        ReconfigurationAttemptResult::InProgress => {}
-                        ReconfigurationAttemptResult::Successful => {
-                            self.reply_to_quorum_entrance_request(None)?;
-                        }
-                    };
-                }
+                match self.ordering_protocol.attempt_quorum_node_join(node)? {
+                    ReconfigurationAttemptResult::Failed => {
+                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::Failed))?;
+                    }
+                    ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
+                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::AlreadyPartOfQuorum))?;
+                    }
+                    ReconfigurationAttemptResult::CurrentlyReconfiguring(_) => {
+                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::OngoingReconfiguration))?;
+                    }
+                    ReconfigurationAttemptResult::InProgress => {}
+                    ReconfigurationAttemptResult::Successful => {
+                        self.reply_to_quorum_entrance_request(node, None)?;
+                    }
+                };
             }
             ReplicaPhase::StateTransferProtocol { .. } => {
                 self.append_pending_join_node(node);
@@ -830,31 +831,46 @@ self.id(), state_transfer, * log_first, * log_last);
     }
 
     fn handle_quorum_joined(&mut self, node: NodeId, members: Vec<NodeId>) -> Result<()> {
-        self.reply_to_quorum_entrance_request(None)?;
 
-        self.send_quorum_update(node, members)?;
+        if node == self.id() {
+            error!("Received quorum joined message for ourselves?");
+
+            self.reply_to_attempt_quorum_join(false)?;
+
+            return Ok(());
+        }
+
+        self.reply_to_quorum_entrance_request(node, None)?;
 
         Ok(())
     }
 
-    fn send_quorum_update(&self, node_id: NodeId, members: Vec<NodeId>) -> Result<()> {
-        info!("{:?} // Sending quorum update with member {:?}, new view {:?}", self.id(), node_id, members);
+    fn reply_to_attempt_quorum_join(&mut self, failed: bool) -> Result<()> {
+        info!("{:?} // Sending attempt quorum join response to reconfiguration protocol with success: {:?}", self.id(), failed);
 
-        self.reconf_tx.send(QuorumReconfigurationResponse::QuorumUpdate(QuorumUpdateMessage::UpdatedQuorumView(members))).wrapped_msg(ErrorKind::CommunicationChannel, "Error sending quorum update to reconfiguration protocol")
+        if failed {
+            self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(QuorumAttemptJoinResponse::Failed))
+                .wrapped_msg(ErrorKind::CommunicationChannel, "Error sending quorum entrance response to reconfiguration protocol")?;
+        } else {
+            self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(QuorumAttemptJoinResponse::Success))
+                .wrapped_msg(ErrorKind::CommunicationChannel, "Error sending quorum entrance response to reconfiguration protocol")?;
+        }
+
+        Ok(())
     }
 
     /// Send the result of attempting to join the quorum to the reconfiguration protocol, so that
     /// it can proceed with execution
-    fn reply_to_quorum_entrance_request(&mut self, failed_reason: Option<AlterationFailReason>) -> Result<()> {
+    fn reply_to_quorum_entrance_request(&mut self, node_id: NodeId, failed_reason: Option<AlterationFailReason>) -> Result<()> {
         info!("{:?} // Sending quorum entrance response to reconfiguration protocol with success: {:?}", self.id(), failed_reason);
 
         match failed_reason {
             None => {
-                self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful))
+                self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful(node_id)))
                     .wrapped_msg(ErrorKind::CommunicationChannel, "Error sending quorum entrance response to reconfiguration protocol")?;
             }
             Some(fail_reason) => {
-                self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed(fail_reason)))
+                self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed(node_id, fail_reason)))
                     .wrapped_msg(ErrorKind::CommunicationChannel, "Error sending quorum entrance response to reconfiguration protocol")?;
             }
         }

@@ -1,5 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, RwLock};
+use either::Either;
 use futures::future::join_all;
 
 use log::{debug, error, info, warn};
@@ -8,15 +10,16 @@ use atlas_common::async_runtime as rt;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
-use atlas_common::ordering::{Orderable, SeqNo, tbo_pop_message, tbo_queue_message};
+use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo, tbo_advance_message_queue, tbo_pop_message, tbo_queue_message};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
 use atlas_core::reconfiguration_protocol::{AlterationFailReason, QuorumAlterationResponse, QuorumAttemptJoinResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse};
 use atlas_core::timeouts::Timeouts;
 
-use crate::{GeneralNodeInfo, QuorumProtocolResponse, SeqNoGen, TIMEOUT_DUR};
+use crate::{GeneralNodeInfo, SeqNoGen, TIMEOUT_DUR};
 use crate::message::{NodeTriple, QuorumEnterRejectionReason, QuorumEnterRequest, QuorumEnterResponse, QuorumReconfigMessage, QuorumViewCert, ReconfData, ReconfigQuorumMessage, ReconfigurationMessage, ReconfigurationMessageType};
 use crate::quorum_reconfig::{QuorumPredicate, QuorumView};
+use crate::quorum_reconfig::node_types::{necessary_votes, QuorumNodeResponse, QuorumViewer};
 
 struct TboQueue {
     signal: bool,
@@ -59,20 +62,17 @@ enum QuorumNodeState {
     WaitingQuorum(NodeId),
 }
 
-#[derive(Debug)]
-struct QuorumViewUpdateInfo {
-    votes: BTreeMap<QuorumView, usize>,
-}
 
 /// The replica's quorum view and all of the necessary states
 pub(crate) struct ReplicaQuorumView {
     /// The current state of the replica
     current_state: JoiningReplicaState,
+    /// Queue for ordering reconfiguration messages (to handle asynchronous networks)
     tbo_queue: TboQueue,
     /// The current state of nodes joining
     join_node_state: QuorumNodeState,
     /// The current quorum view we know of
-    current_view: Arc<RwLock<QuorumView>>,
+    current_view: QuorumViewer,
     /// Predicates that must be satisfied for a node to be allowed to join the quorum
     predicates: Vec<QuorumPredicate>,
     /// Channel to communicate with the ordering protocol
@@ -86,7 +86,7 @@ pub(crate) struct ReplicaQuorumView {
 
 impl ReplicaQuorumView {
     pub fn new(
-        quorum_view: Arc<RwLock<QuorumView>>,
+        quorum_view: QuorumViewer,
         quorum_tx: ChannelSyncTx<QuorumReconfigurationMessage>,
         quorum_response_rx: ChannelSyncRx<QuorumReconfigurationResponse>,
         predicates: Vec<QuorumPredicate>,
@@ -103,7 +103,7 @@ impl ReplicaQuorumView {
         }
     }
 
-    pub fn iterate<NT>(&mut self, seq_no: &mut SeqNoGen, node_inf: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse
+    pub fn iterate<NT>(&mut self, seq_no: &mut SeqNoGen, node_inf: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumNodeResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match self.current_state {
             JoiningReplicaState::Init => {
@@ -119,9 +119,25 @@ impl ReplicaQuorumView {
                 QuorumReconfigurationResponse::QuorumStableResponse(success) => {
                     match self.current_state {
                         JoiningReplicaState::InitializedWaitingForOrderProtocol => {
-                            // The ordering protocol has assimilated the quorum view, we can now
-                            // Start to attempt to join it
-                            return self.begin_quorum_join_procedure(node_inf, network_node, timeouts);
+                            if success {
+                                // The ordering protocol has assimilated the quorum view, we can now
+                                // Start to attempt to join it
+                                debug!("Received stable quorum response from ordering protocol, starting to join quorum");
+
+                                return self.begin_quorum_join_procedure(node_inf, network_node, timeouts);
+                            } else {
+                                warn!("Received stable quorum response from ordering protocol, but it failed to assimilate the quorum view. Retrying...");
+
+                                return self.broadcast_view_state_request(seq_no, node_inf, network_node, timeouts);
+                            }
+                        }
+                        JoiningReplicaState::JoinedQuorumWaitingForOrderProtocol => {
+                            info!("Received stable quorum response from ordering protocol, we are now stable");
+
+                            // This happens when we are already a part of the quorum and we immediately start execution (boostrap node cases)
+                            self.current_state = JoiningReplicaState::Stable;
+
+                            return QuorumNodeResponse::Done;
                         }
                         _ => {
                             warn!("Received a stable quorum response, but we are not waiting for one {:?}. Ignoring...", self.current_state)
@@ -131,9 +147,13 @@ impl ReplicaQuorumView {
                 QuorumReconfigurationResponse::QuorumAlterationResponse(response) => {
                     match &self.join_node_state {
                         QuorumNodeState::WaitingQuorum(waiting_for) => {
+                            debug!("Received a quorum alteration response from node {:?} while waiting for node {:?}.", response, waiting_for);
+
                             match response {
                                 QuorumAlterationResponse::Successful(node) if *waiting_for == node => {
-                                    self.handle_finished_quorum_entrance(node_inf, network_node, node);
+                                    if let Some(view) = self.handle_finished_quorum_entrance(node_inf, network_node, node) {
+                                        return QuorumNodeResponse::NewView(view);
+                                    }
                                 }
                                 QuorumAlterationResponse::Successful(node) => {
                                     unreachable!("Received a successful quorum alteration response for node {:?}, but we are waiting for one from node {:?}.", node, *waiting_for)
@@ -153,7 +173,7 @@ impl ReplicaQuorumView {
                         JoiningReplicaState::JoinedQuorumWaitingForOrderProtocol => {
                             match attempt_join {
                                 QuorumAttemptJoinResponse::Success => {
-                                    self.handle_quorum_entered(node_inf)
+                                    return self.handle_quorum_entered(node_inf);
                                 }
                                 QuorumAttemptJoinResponse::Failed => {}
                             }
@@ -166,12 +186,14 @@ impl ReplicaQuorumView {
             }
         }
 
-        QuorumProtocolResponse::Nil
+
+
+        QuorumNodeResponse::Nil
     }
 
     pub fn handle_view_state_message<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo,
                                          network_node: &Arc<NT>, timeouts: &Timeouts, quorum_view_state: QuorumViewCert)
-                                         -> QuorumProtocolResponse
+                                         -> QuorumNodeResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.current_state {
             JoiningReplicaState::Init => {
@@ -192,7 +214,7 @@ impl ReplicaQuorumView {
                     error!("Received duplicate message from node {:?} with digest {:?}",
                            sender, digest);
 
-                    return QuorumProtocolResponse::Running;
+                    return QuorumNodeResponse::Nil;
                 }
 
                 let needed_messages = *sent_messages / 2 + 1;
@@ -217,13 +239,24 @@ impl ReplicaQuorumView {
 
                     if let Some((quorum_digest, quorum_certs)) = received_messages.first() {
                         if quorum_certs.len() >= needed_messages {
-                            {
-                                let mut write_guard = self.current_view.write().unwrap();
+                            let view = quorum_certs.first().unwrap().message().clone();
 
-                                *write_guard = quorum_certs.first().unwrap().message().clone();
+                            let current_view = self.current_view.view();
+
+                            self.current_view.install_view(view.clone());
+
+                            match view.sequence_number().index(current_view.sequence_number()) {
+                                Either::Right(adv) => {
+                                    for _ in 0..adv {
+                                        self.tbo_queue.advance();
+                                    }
+                                }
+                                _ =>{}
                             }
 
-                            return self.start_join_quorum(seq_no, node, network_node, timeouts);
+                            self.start_join_quorum(seq_no, node, network_node, timeouts);
+
+                            return QuorumNodeResponse::NewView(view)
                         } else {
                             error!("Received {:?} messages for quorum view {:?}, but needed {:?} messages",
                                    quorum_certs.len(), quorum_digest, needed_messages);
@@ -238,12 +271,12 @@ impl ReplicaQuorumView {
             }
         }
 
-        QuorumProtocolResponse::Running
+        QuorumNodeResponse::Nil
     }
 
-    pub fn handle_view_state_request<NT>(&self, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, seq: SeqNo) -> QuorumProtocolResponse
+    pub fn handle_view_state_request<NT>(&self, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, seq: SeqNo) -> QuorumNodeResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        let quorum_view = self.current_view.read().unwrap().clone();
+        let quorum_view = self.current_view.view();
 
         debug!("Received view state request from node {:?} with seq {:?}, replying with {:?}", header.from(), seq, quorum_view);
 
@@ -251,10 +284,10 @@ impl ReplicaQuorumView {
 
         network_node.send_reconfig_message(ReconfigurationMessage::new(seq, quorum_reconfig_msg), header.from());
 
-        QuorumProtocolResponse::Nil
+        QuorumNodeResponse::Nil
     }
 
-    pub fn handle_timeout<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse
+    pub fn handle_timeout<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumNodeResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.current_state {
             JoiningReplicaState::Initializing(_, _, _) => {
@@ -265,13 +298,13 @@ impl ReplicaQuorumView {
             }
             _ => {
                 //Nothing to do here
-                QuorumProtocolResponse::Nil
+                QuorumNodeResponse::Nil
             }
         }
     }
 
     /// Broadcast the view state request to all known nodes so we can obtain the current quorum view
-    fn broadcast_view_state_request<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse
+    fn broadcast_view_state_request<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumNodeResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         let reconf_message = ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::NetworkViewStateRequest);
 
@@ -289,25 +322,21 @@ impl ReplicaQuorumView {
 
         self.current_state = JoiningReplicaState::Initializing(contacted_nodes, Default::default(), Default::default());
 
-        QuorumProtocolResponse::Running
+        QuorumNodeResponse::Nil
     }
 
     /// Start to join the quorum
-    pub fn start_join_quorum<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse
+    pub fn start_join_quorum<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts)
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        let current_quorum_members = self.current_view.read().unwrap().quorum_members().clone();
+        let current_quorum_members = self.current_view.quorum_members();
 
         if current_quorum_members.is_empty() || current_quorum_members.contains(&node.network_view.node_id()) {
-            warn!("We are already a part of the quorum, moving to stable");
+            warn!("We are already a part of the quorum, waiting for min stable quorum {:?} vs current {:?}", self.min_stable_quorum, current_quorum_members.len());
 
             self.current_state = JoiningReplicaState::JoinedQuorumWaitingForOrderProtocol;
 
             if current_quorum_members.len() >= self.min_stable_quorum {
                 self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members)).unwrap();
-
-                QuorumProtocolResponse::Running
-            } else {
-                QuorumProtocolResponse::Running
             }
         } else {
             match self.current_state {
@@ -316,21 +345,19 @@ impl ReplicaQuorumView {
 
                     self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members.clone())).unwrap();
 
-                    return QuorumProtocolResponse::Running;
+                    return;
                 }
                 _ => { /* We only have to deliver the state if it is the first time we are receive the quorum information */ }
             }
 
-            self.begin_quorum_join_procedure(node, network_node, timeouts)
+            self.begin_quorum_join_procedure(node, network_node, timeouts);
         }
     }
 
-    fn begin_quorum_join_procedure<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumProtocolResponse
+    fn begin_quorum_join_procedure<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>, timeouts: &Timeouts) -> QuorumNodeResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
         let (seq, current_quorum_members) = {
-            let read_guard = self.current_view.read().unwrap();
-
-            (read_guard.sequence_number, read_guard.quorum_members.clone())
+            (self.current_view.sequence_number(), self.current_view.quorum_members())
         };
 
         info!("Starting join quorum procedure, contacting {:?}", current_quorum_members);
@@ -345,22 +372,21 @@ impl ReplicaQuorumView {
 
         let _ = network_node.broadcast_reconfig_message(reconfig_message, current_quorum_members.into_iter());
 
-        return QuorumProtocolResponse::Running;
+        return QuorumNodeResponse::Nil;
     }
 
     pub fn handle_quorum_join_response<NT>(&mut self, seq_no: &mut SeqNoGen, node: &GeneralNodeInfo,
                                            network_node: &Arc<NT>, timeouts: &Timeouts,
-                                           header: Header, message: QuorumEnterResponse) -> QuorumProtocolResponse
-
+                                           header: Header, message: QuorumEnterResponse) -> QuorumNodeResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        let current_quorum = self.current_view.read().unwrap().quorum_members().clone();
+        let current_quorum = self.current_view.quorum_members();
 
         return match &mut self.current_state {
             JoiningReplicaState::JoiningQuorum(accepted, view, rejected, responded) => {
                 if !responded.insert(header.from()) {
                     debug!("Received duplicate response from {:?}", header.from());
 
-                    return QuorumProtocolResponse::Running;
+                    return QuorumNodeResponse::Nil;
                 }
 
                 match message {
@@ -396,52 +422,48 @@ impl ReplicaQuorumView {
                     self.begin_quorum_join_procedure(node, network_node, timeouts);
                 }
 
-                QuorumProtocolResponse::Running
+                QuorumNodeResponse::Nil
             }
             _ => {
                 debug!("Received Quorum Enter Response while not in joining quorum state, ignoring");
-                QuorumProtocolResponse::Nil
+                QuorumNodeResponse::Nil
             }
         };
     }
 
-    pub fn handle_quorum_update(&mut self, node: &GeneralNodeInfo, header: Header, quorum_view: QuorumView) -> QuorumProtocolResponse {
-        match self.current_state {
-            JoiningReplicaState::Init => {}
-            JoiningReplicaState::Initializing(_, _, _) => {}
-            JoiningReplicaState::InitializedWaitingForOrderProtocol => {}
-            JoiningReplicaState::JoiningQuorum(_, _, _, _) => {}
-            JoiningReplicaState::JoinedQuorumWaitingForOrderProtocol => {}
-            JoiningReplicaState::Stable => {
-                // If we are stable, then we should already know about this update
-            }
-        }
-
-        QuorumProtocolResponse::Nil
-    }
-
     /// Handle us having been accepted into the quorum
-    fn handle_accepted_into_quorum(&mut self, node: &GeneralNodeInfo, view: QuorumView) -> QuorumProtocolResponse {
+    fn handle_accepted_into_quorum(&mut self, node: &GeneralNodeInfo, view: QuorumView) -> QuorumNodeResponse {
         self.current_state = JoiningReplicaState::JoinedQuorumWaitingForOrderProtocol;
 
-        *self.current_view.write().unwrap() = view;
+        let prev_seq = self.current_view.sequence_number();
+
+        self.current_view.install_view(view.clone());
+
+        match view.sequence_number().index(prev_seq) {
+            Either::Right(adv) => {
+                for _ in 0..adv {
+                    self.tbo_queue.advance();
+                }
+            }
+            _ => {}
+        }
 
         self.quorum_communication.send(QuorumReconfigurationMessage::AttemptToJoinQuorum).unwrap();
 
-        return QuorumProtocolResponse::Running;
+        return QuorumNodeResponse::NewView(view);
     }
 
     /// Handle a given node having entered
-    pub fn handle_quorum_entered(&mut self, node: &GeneralNodeInfo) -> QuorumProtocolResponse {
+    pub fn handle_quorum_entered(&mut self, node: &GeneralNodeInfo) -> QuorumNodeResponse {
         self.current_state = JoiningReplicaState::Stable;
 
-        return QuorumProtocolResponse::Done;
+        return QuorumNodeResponse::Done;
     }
 
-    pub fn handle_quorum_reconfig_message<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, message: ReconfigurationMessage) -> QuorumProtocolResponse
+    pub fn handle_quorum_reconfig_message<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, message: ReconfigurationMessage) -> QuorumNodeResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        let current_seq = self.current_view.read().unwrap().sequence_number;
-        let current_quorum = self.current_view.read().unwrap().quorum_members().clone();
+        let current_seq = self.current_view.sequence_number();
+        let current_quorum = self.current_view.quorum_members();
 
         match &mut self.join_node_state {
             QuorumNodeState::Init => {
@@ -456,14 +478,14 @@ impl ReplicaQuorumView {
 
                         self.tbo_queue.queue(current_seq, header, message);
 
-                        return QuorumProtocolResponse::Nil;
+                        return QuorumNodeResponse::Nil;
                     }
                     ReconfigQuorumMessage::ConfirmJoin(_) => {
                         debug!("Received a quorum confirm join message while in the joining state. Queuing it it. Seq {:?} vs Our {:?}", message.sequence_number(), current_seq);
 
                         self.tbo_queue.queue(current_seq, header, message);
 
-                        return QuorumProtocolResponse::Nil;
+                        return QuorumNodeResponse::Nil;
                     }
                     ReconfigQuorumMessage::JoinMessage(node) => {
                         *node
@@ -473,14 +495,14 @@ impl ReplicaQuorumView {
                 if !voted.insert(header.from()) {
                     debug!("Received a quorum join message from node {:?}, but he has already voted for this round? Ignoring it", header.from());
 
-                    return QuorumProtocolResponse::Nil;
+                    return QuorumNodeResponse::Nil;
                 }
 
                 let votes_for_received = votes.entry(received).or_insert(0);
 
                 *votes_for_received += 1;
 
-                let needed_votes = necessary_votes(self.current_view.read().unwrap().quorum_members());
+                let needed_votes = necessary_votes(&current_quorum);
 
                 if *votes_for_received >= needed_votes {
                     debug!("Received enough votes to join the quorum. Sending a confirm join message");
@@ -491,9 +513,7 @@ impl ReplicaQuorumView {
 
                     let message = ReconfigurationMessage::new(current_seq, reconfig_message);
 
-                    let quorum_members = self.current_view.read().unwrap().quorum_members().clone();
-
-                    network_node.broadcast_reconfig_message(message, quorum_members.into_iter());
+                    network_node.broadcast_reconfig_message(message, current_quorum.into_iter());
 
                     self.join_node_state = QuorumNodeState::ConfirmingJoin(received, Default::default());
                 } else if *votes_for_received >= current_quorum.len() {
@@ -505,23 +525,23 @@ impl ReplicaQuorumView {
             QuorumNodeState::ConfirmingJoin(received, voted) => {
                 match reconfig_quorum_message_type(&message) {
                     ReconfigQuorumMessage::JoinMessage(_) => {
-                        debug!("Received a quorum join message while in the confirming join state. Queuing it it. Seq {:?} vs Our {:?}", message.sequence_number(), current_seq);
+                        debug!("Received a quorum join message while in the confirming join state. Queuing it. Seq {:?} vs Our {:?}", message.sequence_number(), current_seq);
 
                         self.tbo_queue.queue(current_seq, header, message);
 
-                        return QuorumProtocolResponse::Nil;
+                        return QuorumNodeResponse::Nil;
                     }
                     ReconfigQuorumMessage::ConfirmJoin(node) if message.sequence_number() != current_seq => {
-                        debug!("Received a quorum confirm join message while in the confirming join state, but with wrong sequence number. Queuing it it. Seq {:?} vs Our {:?}", message.sequence_number(), current_seq);
+                        debug!("Received a quorum confirm join message while in the confirming join state, but with wrong sequence number. Queuing it. Seq {:?} vs Our {:?}", message.sequence_number(), current_seq);
 
                         self.tbo_queue.queue(current_seq, header, message);
 
-                        return QuorumProtocolResponse::Nil;
+                        return QuorumNodeResponse::Nil;
                     }
                     ReconfigQuorumMessage::ConfirmJoin(node) if node != received => {
                         debug!("Received a quorum confirm join message from node {:?}, but we are waiting for {:?}. Ignoring it", node, received);
 
-                        return QuorumProtocolResponse::Nil;
+                        return QuorumNodeResponse::Nil;
                     }
                     ReconfigQuorumMessage::ConfirmJoin(_) => {}
                 };
@@ -529,7 +549,7 @@ impl ReplicaQuorumView {
                 if !voted.insert(header.from()) {
                     debug!("Received a quorum confirm join message from node {:?}, but he has already voted for this round? Ignoring it", header.from());
 
-                    return QuorumProtocolResponse::Nil;
+                    return QuorumNodeResponse::Nil;
                 }
 
                 debug!("Received a quorum confirm join message from node {:?} for node {:?}.", header.from(), received);
@@ -547,29 +567,29 @@ impl ReplicaQuorumView {
             QuorumNodeState::WaitingQuorum(_) => {
                 return match reconfig_quorum_message_type(&message) {
                     ReconfigQuorumMessage::JoinMessage(_) => {
-                        debug!("Received a quorum join message while in the waiting quorum state. Queuing it it. Seq {:?} vs Our {:?}", message.sequence_number(), current_seq);
+                        debug!("Received a quorum join message while in the waiting quorum state. Queuing it. Seq {:?} vs Our {:?}", message.sequence_number(), current_seq);
 
                         self.tbo_queue.queue(current_seq, header, message);
 
-                        QuorumProtocolResponse::Nil
+                        QuorumNodeResponse::Nil
                     }
                     ReconfigQuorumMessage::ConfirmJoin(_) => {
-                        debug!("Received a quorum confirm join message while in the waiting quorum state. Queuing it it. Seq {:?} vs Our {:?}", message.sequence_number(), current_seq);
+                        debug!("Received a quorum confirm join message while in the waiting quorum state. Queuing it. Seq {:?} vs Our {:?}", message.sequence_number(), current_seq);
 
                         self.tbo_queue.queue(current_seq, header, message);
 
-                        QuorumProtocolResponse::Nil
+                        QuorumNodeResponse::Nil
                     }
                 };
             }
         }
 
-        QuorumProtocolResponse::Nil
+        QuorumNodeResponse::Nil
     }
 
     fn broadcast_quorum_updated<NT>(&self, node: &GeneralNodeInfo, network_node: &Arc<NT>)
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        let current_view = self.current_view.read().unwrap().clone();
+        let current_view = self.current_view.view();
 
         let seq = current_view.sequence_number();
 
@@ -582,33 +602,27 @@ impl ReplicaQuorumView {
         network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter());
     }
 
-    fn handle_quorum_updated_message<NT>(&mut self, node: &GeneralNodeInfo, header: Header, quorum_update: QuorumView) {
-        todo!()
-    }
-
-    fn handle_finished_quorum_entrance<NT>(&mut self, node_inf: &GeneralNodeInfo, network_node: &Arc<NT>, node: NodeId)
+    fn handle_finished_quorum_entrance<NT>(&mut self, node_inf: &GeneralNodeInfo, network_node: &Arc<NT>, node: NodeId) -> Option<QuorumView>
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match self.join_node_state {
             QuorumNodeState::WaitingQuorum(waiting_node) => {
                 if waiting_node != node {
                     error!("Received a finished quorum entrance message for node {:?}, but we are waiting for node {:?}. Ignoring it", node, waiting_node);
-
-                    return;
                 }
 
                 let (prev, curr) = {
-                    let mut write_guard = self.current_view.write().unwrap();
+                    let current_view = self.current_view.view();
 
-                    let current_view = write_guard.clone();
+                    let new_view = current_view.next_with_added_node(node);
 
-                    *write_guard = current_view.next_with_added_node(node);
+                    self.current_view.install_view(new_view.clone());
 
-                    (current_view, write_guard.clone())
+                    (current_view, new_view)
                 };
 
                 self.join_node_state = QuorumNodeState::Init;
 
-                let response = QuorumEnterResponse::Successful(curr);
+                let response = QuorumEnterResponse::Successful(curr.clone());
 
                 let message = QuorumReconfigMessage::QuorumEnterResponse(response);
 
@@ -617,20 +631,24 @@ impl ReplicaQuorumView {
                 network_node.send_reconfig_message(reconf_message, node);
 
                 self.broadcast_quorum_updated(node_inf, network_node);
+
+                self.tbo_queue.advance();
+
+                return Some(curr);
             }
             _ => {
                 error!("Attempt to finish quorum entrance, but we are not waiting for one. Ignoring it");
-
-                return;
             }
         }
+
+        None
     }
 
     fn handle_failed_quorum_entrance<NT>(&mut self, network_node: &Arc<NT>, node: NodeId, reason: AlterationFailReason)
         where NT: ReconfigurationNode<ReconfData> + 'static {
         self.join_node_state = QuorumNodeState::Init;
 
-        let current_quorum_seq = self.current_view.read().unwrap().sequence_number();
+        let current_quorum_seq = self.current_view.sequence_number();
 
         let response = match reason {
             AlterationFailReason::Failed => {
@@ -655,13 +673,10 @@ impl ReplicaQuorumView {
         self.quorum_communication.send(QuorumReconfigurationMessage::RequestQuorumJoin(node)).unwrap();
     }
 
-    pub fn handle_quorum_enter_request<NT>(&mut self, seq: SeqNo, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, message: QuorumEnterRequest) -> QuorumProtocolResponse
+    pub fn handle_quorum_enter_request<NT>(&mut self, seq: SeqNo, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, message: QuorumEnterRequest) -> QuorumNodeResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        let (quorum_seq, quorum_members) = {
-            let read_guard = self.current_view.read().unwrap();
-
-            (read_guard.sequence_number(), read_guard.quorum_members().clone())
-        };
+        
+        let current_view = self.current_view.view();
 
         let node_triple = message.into_inner();
 
@@ -670,8 +685,6 @@ impl ReplicaQuorumView {
         return match self.current_state {
             JoiningReplicaState::Stable => {
                 let network_node = network_node.clone();
-
-                let quorum_view = self.current_view.read().unwrap().clone();
 
                 let predicates = self.predicates.clone();
 
@@ -686,11 +699,11 @@ impl ReplicaQuorumView {
 
                         let _ = network_node.send_reconfig_message(reconf_message, header.from());
 
-                        return QuorumProtocolResponse::Nil;
+                        return QuorumNodeResponse::Nil;
                     }
                 }
 
-                if quorum_seq != seq {
+                if current_view.sequence_number() != seq {
                     // We have received a request for the wrong quorum view sequence number
 
                     let result = QuorumEnterResponse::Rejected(QuorumEnterRejectionReason::IncorrectNetworkViewSeq);
@@ -701,13 +714,13 @@ impl ReplicaQuorumView {
 
                     let _ = network_node.send_reconfig_message(reconf_message, header.from());
 
-                    return QuorumProtocolResponse::Nil;
+                    return QuorumNodeResponse::Nil;
                 }
 
                 let mut responses = Vec::new();
 
                 for predicate in predicates {
-                    responses.push(predicate(quorum_view.clone(), node_triple.clone()));
+                    responses.push(predicate(current_view.clone(), node_triple.clone()));
                 }
 
                 let responses = rt::block_on(join_all(responses));
@@ -722,7 +735,7 @@ impl ReplicaQuorumView {
 
                         let _ = network_node.send_reconfig_message(reconf_message, header.from());
 
-                        return QuorumProtocolResponse::Nil;
+                        return QuorumNodeResponse::Nil;
                     }
                 }
 
@@ -730,12 +743,12 @@ impl ReplicaQuorumView {
 
                 self.begin_quorum_node_accept_procedure(node, &network_node, node_triple);
 
-                QuorumProtocolResponse::Nil
+                QuorumNodeResponse::Nil
             }
             _ => {
-                warn!("Received a quorum enter request while not in stable state, ignoring");
+                warn!("Received a quorum enter request while not in stable state, ignoring. Current state: {:?}", self.current_state);
 
-                QuorumProtocolResponse::Nil
+                QuorumNodeResponse::Nil
             }
         };
     }
@@ -743,7 +756,7 @@ impl ReplicaQuorumView {
     /// Initiate the procedure to accept a node into the quorum.
     fn begin_quorum_node_accept_procedure<NT>(&mut self, node: &GeneralNodeInfo, network_node: &Arc<NT>, joining_node: NodeTriple)
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        let quorum_view = self.current_view.read().unwrap().clone();
+        let quorum_view = self.current_view.view();
 
         let mem = std::mem::replace(&mut self.join_node_state, QuorumNodeState::Init);
 
@@ -784,12 +797,22 @@ impl TboQueue {
                 tbo_queue_message(seq, &mut self.confirm_join_message, StoredMessage::new(header, message))
             }
         }
-
-        self.signal = true;
     }
 
-    fn has_pending_messages(&self) -> bool {
-        self.signal
+    fn has_pending_join_message(&self) -> bool {
+        if let Some(first) = self.joining_message.front() {
+            return !first.is_empty();
+        }
+
+        false
+    }
+
+    fn has_pending_confirm_messages(&self) -> bool {
+        if let Some(first) = self.confirm_join_message.front() {
+            return !first.is_empty();
+        }
+
+        false
     }
 
     fn pop_join_message(&mut self) -> Option<StoredMessage<ReconfigurationMessage>> {
@@ -799,7 +822,13 @@ impl TboQueue {
     fn pop_confirm_message(&mut self) -> Option<StoredMessage<ReconfigurationMessage>> {
         tbo_pop_message(&mut self.confirm_join_message)
     }
+
+    fn advance(&mut self) {
+        tbo_advance_message_queue(&mut self.joining_message);
+        tbo_advance_message_queue(&mut self.confirm_join_message);
+    }
 }
+
 
 fn reconfig_quorum_message_type(message: &ReconfigurationMessage) -> &ReconfigQuorumMessage {
     match message.message_type() {
@@ -815,11 +844,3 @@ fn reconfig_quorum_message_type(message: &ReconfigurationMessage) -> &ReconfigQu
     }
 }
 
-fn necessary_votes(vec: &Vec<NodeId>) -> usize {
-    // We need at least 2/3 of the quorum to allow a node join
-    let quorum_size = vec.len();
-
-    let necessary_votes = (quorum_size as f64 / 3.0 * 2.0).ceil() as usize;
-
-    necessary_votes
-}

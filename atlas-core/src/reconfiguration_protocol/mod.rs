@@ -11,6 +11,7 @@ use crate::timeouts::{RqTimeout, Timeouts};
 /// Messages to be sent by the reconfiguration protocol
 /// to the ordering protocol relating changes that have undergone in the
 /// Quorum View.
+#[derive(Debug)]
 pub enum QuorumReconfigurationMessage {
     /// The reconfiguration protocol has reached stability and we can now start to execute the
     /// And we know the current members of the quorum. This will be used to run state transfer protocols
@@ -31,12 +32,14 @@ pub enum QuorumReconfigurationMessage {
 
 /// Messages sent by the ordering protocol to notify the reconfiguration protocol of changes
 /// to the quorum
+#[derive(Debug)]
 pub enum QuorumReconfigurationResponse {
     QuorumStableResponse(bool),
     QuorumAlterationResponse(QuorumAlterationResponse),
     QuorumAttemptJoinResponse(QuorumAttemptJoinResponse),
 }
 
+#[derive(Debug)]
 pub enum QuorumAttemptJoinResponse {
     Success,
     Failed,
@@ -44,6 +47,7 @@ pub enum QuorumAttemptJoinResponse {
 
 /// Response destined to the ordering protocol, indicating the result of the quorum alteration
 /// Requested by it
+#[derive(Debug)]
 pub enum QuorumAlterationResponse {
     Successful(NodeId),
     Failed(NodeId, AlterationFailReason),

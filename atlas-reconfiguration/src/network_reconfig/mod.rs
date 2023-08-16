@@ -458,7 +458,7 @@ impl GeneralNodeInfo {
                     certificates: Default::default(),
                 };
 
-                return NetworkProtocolResponse::Running;
+                return NetworkProtocolResponse::Nil;
             }
             NetworkNodeState::IntroductionPhase { .. } => {}
             NetworkNodeState::JoiningNetwork { .. } => {}
@@ -527,7 +527,7 @@ impl GeneralNodeInfo {
                     certificates: Default::default(),
                 };
 
-                return NetworkProtocolResponse::Running;
+                return NetworkProtocolResponse::Nil;
             }
             NetworkNodeState::IntroductionPhase { .. } => {}
             NetworkNodeState::Init => {}
@@ -604,16 +604,16 @@ impl GeneralNodeInfo {
                             warn!("Received a network join response from {:?} but we had already seen it", header.from());
                         }
 
-                        NetworkProtocolResponse::Running
+                        NetworkProtocolResponse::Nil
                     }
                     NetworkReconfigMessage::NetworkHelloRequest(hello_request, confirmations) => {
                         self.handle_hello_request(network_node, header, seq, hello_request, confirmations);
 
-                        NetworkProtocolResponse::Running
+                        NetworkProtocolResponse::Nil
                     }
                     NetworkReconfigMessage::NetworkHelloReply(known_nodes) => {
                         // Ignored as we are not yet in this phase
-                        NetworkProtocolResponse::Running
+                        NetworkProtocolResponse::Nil
                     }
                 };
             }
