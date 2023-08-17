@@ -9,7 +9,7 @@ use log::{debug, error, info, warn};
 use atlas_common::async_runtime as rt;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::hash::Digest;
-use atlas_common::node_id::NodeId;
+use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo, tbo_advance_message_queue, tbo_pop_message, tbo_queue_message};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
@@ -310,7 +310,12 @@ impl ReplicaQuorumView {
         where NT: ReconfigurationNode<ReconfData> + 'static {
         let reconf_message = ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::NetworkViewStateRequest);
 
-        let known_nodes = node.network_view.known_nodes();
+        let known_nodes: Vec<_> = node.network_view.known_nodes_and_types().iter().filter_map(|(node, node_type)| {
+            match node_type {
+                NodeType::Replica => Some(*node),
+                NodeType::Client => None,
+            }
+        }).collect();
 
         let contacted_nodes = known_nodes.len();
 

@@ -288,6 +288,18 @@ impl NetworkInfo {
             .collect()
     }
 
+    pub fn known_nodes_and_types(&self) -> Vec<(NodeId, NodeType)> {
+        self.known_nodes
+            .read()
+            .unwrap()
+            .node_info()
+            .iter()
+            .map(|(node_id, info)| {
+                (*node_id, info.node_type.clone())
+            })
+            .collect()
+    }
+
     pub fn node_triple(&self) -> NodeTriple {
         NodeTriple::new(
             self.node_id,

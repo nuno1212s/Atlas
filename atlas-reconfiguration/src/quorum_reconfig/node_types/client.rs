@@ -5,7 +5,7 @@ use log::{debug, error, info};
 use atlas_common::channel::ChannelSyncTx;
 
 use atlas_common::crypto::hash::Digest;
-use atlas_common::node_id::NodeId;
+use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::SeqNo;
 use atlas_communication::message::Header;
 
@@ -57,7 +57,12 @@ impl ClientQuorumView {
             ClientState::Init => {
                 let reconf_message = QuorumReconfigMessage::NetworkViewStateRequest;
 
-                let known_nodes = node.network_view.known_nodes();
+                let known_nodes: Vec<_> = node.network_view.known_nodes_and_types().iter().filter_map(|(node, node_type)| {
+                    match node_type {
+                        NodeType::Replica => Some(*node),
+                        NodeType::Client => None,
+                    }
+                }).collect();
 
                 let contacted_nodes = known_nodes.len();
 

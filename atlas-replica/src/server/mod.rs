@@ -359,7 +359,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                         metric_increment(REPLICA_ORDERED_RQS_PROCESSED_ID, Some(1));
                     }
                     OrderProtocolPoll::RunCst => {
-                        self.run_state_transfer_protocol(state_transfer)?;
+                        self.run_all_state_transfer(state_transfer)?;
                     }
                     OrderProtocolPoll::Decided(decisions) => {
                         self.execute_decisions(state_transfer, decisions)?;
@@ -603,7 +603,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
         match self.ordering_protocol.handle_timeout(timed_out)? {
             OrderProtocolExecResult::RunCst => {
-                self.run_state_transfer_protocol(state_transfer)?;
+                self.run_all_state_transfer(state_transfer)?;
             }
             _ => {}
         };
@@ -704,16 +704,14 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 // If both the state and the log start at 0, then we can just run the ordering protocol since
 // There is no state currently present.
                 if state_transfer.next() != *log_first && (state_transfer != SeqNo::ZERO && *log_first != SeqNo::ZERO) {
-                    error!("{:?} // Log transfer protocol and state transfer protocol are not in sync. Received {:?} state and {:?} - {:?} log",
-self.id(), state_transfer, * log_first, * log_last);
+                    error!("{:?} // Log transfer protocol and state transfer protocol are not in sync. Received {:?} state and {:?} - {:?} log", self.id(), state_transfer, * log_first, * log_last);
 
 // Run both the protocols again
 // This might work better since we already have a more up-to-date state (in
 // The case of a hugely large state) so the state transfer protocol should take less time
                     self.run_all_state_transfer(state_transfer_protocol)?;
                 } else {
-                    info!("{:?} // State transfer protocol and log transfer protocol are in sync. Received {:?} state and {:?} - {:?} log",
-self.id(), state_transfer, * log_first, * log_last);
+                    info!("{:?} // State transfer protocol and log transfer protocol are in sync. Received {:?} state and {:?} - {:?} log", self.id(), state_transfer, * log_first, * log_last);
 
                     /// If the protocols are lined up so we can start running the ordering protocol
                     self.run_ordering_protocol()?;
@@ -739,8 +737,10 @@ self.id(), state_transfer, * log_first, * log_last);
             }
             ReplicaPhase::StateTransferProtocol { state_transfer, log_transfer } => {
 
-                *state_transfer = None;
-                *log_transfer = None;
+                warn!("{:?} // Why would we want to run the protocols when we are already running them?", ProtocolNetworkNode::id(&*self.node));
+
+                return Ok(());
+
             }
         }
 
@@ -753,13 +753,15 @@ self.id(), state_transfer, * log_first, * log_last);
 
     /// Run the state transfer protocol on this replica
     fn run_state_transfer_protocol(&mut self, state_transfer_p: &mut ST) -> Result<()> {
-        info!("{:?} // Running log transfer protocol. {:?}", ProtocolNetworkNode::id(&*self.node), self.replica_phase);
+        info!("{:?} // Running state transfer protocol. {:?}", ProtocolNetworkNode::id(&*self.node), self.replica_phase);
 
         match &mut self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
                 self.run_all_state_transfer(state_transfer_p)?;
             }
             ReplicaPhase::StateTransferProtocol { state_transfer, .. } => {
+                warn!("{:?} // Why would we want to run the state transfer protocol when we are already running it?", ProtocolNetworkNode::id(&*self.node));
+
                 *state_transfer = None;
 
                 state_transfer_p.request_latest_state(self.ordering_protocol.view())?;
@@ -778,6 +780,8 @@ self.id(), state_transfer, * log_first, * log_last);
                 self.run_all_state_transfer(state_transfer)?;
             }
             ReplicaPhase::StateTransferProtocol { log_transfer, .. } => {
+                warn!("{:?} // Why would we want to run the log transfer protocol when we are already running it?", ProtocolNetworkNode::id(&*self.node));
+
                 *log_transfer = None;
 
                 self.log_transfer_protocol.request_latest_log(&mut self.ordering_protocol)?;
@@ -912,7 +916,7 @@ impl QuorumReconfig {
 /// Every `PERIOD` messages, the message log is cleared,
 /// and a new log checkpoint is initiated.
 /// TODO: Move this to an env variable as it can be highly dependent on the service implemented on top of it
-pub const CHECKPOINT_PERIOD: u32 = 10;
+pub const CHECKPOINT_PERIOD: u32 = 1000;
 
 impl<R> PartialEq for ReplicaPhase<R> where {
     fn eq(&self, other: &Self) -> bool {
