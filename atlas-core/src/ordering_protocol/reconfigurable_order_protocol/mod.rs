@@ -8,6 +8,7 @@ use crate::serialize::ReconfigurationProtocolMessage;
 /// is not instantaneous, the ordering protocol should notify the replica of
 /// the updated quorum as soon as the change is complete, utilizing the correspondent
 /// [ordering_protocol::OrderProtocolExecResult] message
+#[derive(Debug)]
 pub enum ReconfigurationAttemptResult {
     Failed,
     AlreadyPartOfQuorum,

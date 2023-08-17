@@ -784,12 +784,12 @@ self.id(), state_transfer, * log_first, * log_last);
             ReconfigurationAttemptResult::Failed => {
                 self.reply_to_attempt_quorum_join(true)?;
             }
-            ReconfigurationAttemptResult::AlreadyPartOfQuorum => {}
             ReconfigurationAttemptResult::CurrentlyReconfiguring(_) => {
                 self.reply_to_attempt_quorum_join(true)?;
             }
             ReconfigurationAttemptResult::InProgress => {}
-            ReconfigurationAttemptResult::Successful => {
+            ReconfigurationAttemptResult::Successful | ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
+                // If we are already part of the quorum, then we can immediately reply to it
                 self.reply_to_attempt_quorum_join(false)?;
             }
         };
@@ -801,7 +801,11 @@ self.id(), state_transfer, * log_first, * log_last);
     fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
         match self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
-                match self.ordering_protocol.attempt_quorum_node_join(node)? {
+                let quorum_node_join = self.ordering_protocol.attempt_quorum_node_join(node)?;
+
+                debug!("{:?} // Attempting to join quorum with result {:?}", self.id(), quorum_node_join);
+
+                match quorum_node_join {
                     ReconfigurationAttemptResult::Failed => {
                         self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::Failed))?;
                     }
@@ -833,8 +837,6 @@ self.id(), state_transfer, * log_first, * log_last);
     fn handle_quorum_joined(&mut self, node: NodeId, members: Vec<NodeId>) -> Result<()> {
 
         if node == self.id() {
-            error!("Received quorum joined message for ourselves?");
-
             self.reply_to_attempt_quorum_join(false)?;
 
             return Ok(());
@@ -846,7 +848,7 @@ self.id(), state_transfer, * log_first, * log_last);
     }
 
     fn reply_to_attempt_quorum_join(&mut self, failed: bool) -> Result<()> {
-        info!("{:?} // Sending attempt quorum join response to reconfiguration protocol with success: {:?}", self.id(), failed);
+        info!("{:?} // Sending attempt quorum join response to reconfiguration protocol. Has failed: {:?}", self.id(), failed);
 
         if failed {
             self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(QuorumAttemptJoinResponse::Failed))

@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 use either::Either;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo, tbo_advance_message_queue, tbo_queue_message};
 use atlas_communication::message::{Header, StoredMessage};
@@ -79,6 +79,7 @@ impl QuorumViewHandling {
             Either::Left(_) => {}
             Either::Right(0) => {
                 // We don't need to handle any messages for our current quorum view seq, as it's already installed
+                debug!("Received a vote for a view whose seq that is the same as our current view, ignoring")
             }
             Either::Right(1) => {
                 return self.process_vote(voter, recv_view);
@@ -323,7 +324,7 @@ impl Node {
                 QuorumNodeResponse::Nil
             }
             NodeType::Replica(replica) => {
-                replica.handle_quorum_join_response(seq_gen, node, network_node, timeouts, header, message)
+                replica.handle_quorum_enter_response(seq_gen, node, network_node, timeouts, header, message)
             }
         }
     }
@@ -355,7 +356,7 @@ impl Node {
                                           timeouts: &Timeouts,
                                           header: Header, seq: SeqNo, quorum_reconfig: QuorumReconfigMessage) -> QuorumProtocolResponse
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        info!("Received a quorum reconfig message {:?} from {:?} with header {:?}",quorum_reconfig, header.from(), header, );
+        debug!("Received a quorum reconfig message {:?} from {:?} with header {:?}",quorum_reconfig, header.from(), header, );
 
         let result = match quorum_reconfig {
             QuorumReconfigMessage::NetworkViewStateRequest => {
