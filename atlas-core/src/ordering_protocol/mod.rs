@@ -94,6 +94,7 @@ pub enum OrderProtocolPoll<P, O> {
     ReceiveFromReplicas,
     Exec(StoredMessage<Protocol<P>>),
     Decided(Vec<ProtocolConsensusDecision<O>>),
+    QuorumJoined(Option<Vec<ProtocolConsensusDecision<O>>>, NodeId, Vec<NodeId>),
     RePoll,
 }
 
@@ -164,6 +165,9 @@ impl<P, O> Debug for OrderProtocolPoll<P, O> where P: Debug {
             }
             OrderProtocolPoll::Decided(rqs) => {
                 write!(f, "{} committed decisions", rqs.len())
+            }
+            OrderProtocolPoll::QuorumJoined(decs, node, quorum) => {
+                write!(f, "{:?} Joined Quorum. Current: {:?}. {} decisions", node, quorum, decs.as_ref().map(|d| d.len()).unwrap_or(0))
             }
         }
     }

@@ -3,7 +3,7 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 
@@ -208,20 +208,22 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                     for rq_timeout in timeout {
                         match rq_timeout.timeout_kind() {
                             TimeoutKind::Reconfiguration(seq) => {
-                                if *seq != self.seq_gen.curr_seq() {
-                                    warn!("Received a timeout with an invalid sequence number {:?} vs {:?} (Ours)", seq, self.seq_gen);
-                                    continue;
-                                }
-
                                 match self.node_state {
                                     ReconfigurableNodeState::NetworkReconfigurationProtocol => {
+                                        if *seq != self.seq_gen.curr_seq() {
+                                            error!("Received a reconfiguration timeout with a different sequence number than the current one {:?} != {:?}",
+                                                   seq, self.seq_gen.curr_seq());
+
+                                            continue
+                                        }
+
                                         self.node.handle_timeout(&mut self.seq_gen, &self.network_node, &self.timeouts);
                                     }
                                     ReconfigurableNodeState::QuorumReconfigurationProtocol => {
                                         self.node_type.handle_timeout(&mut self.seq_gen, &self.node, &self.network_node, &self.timeouts);
                                     }
                                     ReconfigurableNodeState::Stable => {
-                                        info!("Received a reconfiguration timeout while we are stable, this does not make sense");
+                                        error!("Received a reconfiguration timeout while we are stable, this does not make sense");
                                     }
                                 }
 

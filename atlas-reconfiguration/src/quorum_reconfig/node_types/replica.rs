@@ -314,13 +314,15 @@ impl ReplicaQuorumView {
 
         let contacted_nodes = known_nodes.len();
 
-        info!("{:?} // Broadcasting network view state request to {:?}", node.network_view.node_id(), known_nodes);
+        let msg_seq = seq_no.next_seq();
 
-        let reconfig_message = ReconfigurationMessage::new(seq_no.next_seq(), reconf_message);
+        info!("{:?} // Broadcasting network view state request to {:?}. Seq {:?}", node.network_view.node_id(), known_nodes, msg_seq);
+
+        let reconfig_message = ReconfigurationMessage::new(msg_seq, reconf_message);
 
         let _ = network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter());
 
-        timeouts.timeout_reconfig_request(TIMEOUT_DUR, ((contacted_nodes * 2 / 3) + 1) as u32, seq_no.curr_seq());
+        timeouts.timeout_reconfig_request(TIMEOUT_DUR, ((contacted_nodes * 2 / 3) + 1) as u32, msg_seq);
 
         self.current_state = JoiningReplicaState::Initializing(contacted_nodes, Default::default(), Default::default());
 

@@ -288,7 +288,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                                 self.execute_decisions(state_transfer, decision)?;
                                             }
 
-                                            self.handle_quorum_joined(node_id, current_quorum)?;
+                                            self.handle_quorum_joined(node_id, current_quorum, state_transfer)?;
                                         }
                                     }
                                 }
@@ -315,7 +315,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                                 self.execute_decisions(state_transfer, decision)?;
                                             }
 
-                                            self.handle_quorum_joined(node_id, current_quorum)?;
+                                            self.handle_quorum_joined(node_id, current_quorum, state_transfer)?;
                                         }
                                     }
                                 }
@@ -352,7 +352,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                     self.execute_decisions(state_transfer, decision)?;
                                 }
 
-                                self.handle_quorum_joined(node_id, current_quorum)?;
+                                self.handle_quorum_joined(node_id, current_quorum, state_transfer)?;
                             }
                         }
                         metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
@@ -362,7 +362,14 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                         self.run_state_transfer_protocol(state_transfer)?;
                     }
                     OrderProtocolPoll::Decided(decisions) => {
-                        for decision in decisions {}
+                        self.execute_decisions(state_transfer, decisions)?;
+                    }
+                    OrderProtocolPoll::QuorumJoined(decision, node_id, current_quorum) => {
+                        if let Some(decision) = decision {
+                            self.execute_decisions(state_transfer, decision)?;
+                        }
+
+                        self.handle_quorum_joined(node_id, current_quorum, state_transfer)?;
                     }
                 }
             }
@@ -834,9 +841,11 @@ self.id(), state_transfer, * log_first, * log_last);
         self.quorum_reconfig_data.append_pending_node_join(node)
     }
 
-    fn handle_quorum_joined(&mut self, node: NodeId, members: Vec<NodeId>) -> Result<()> {
+    fn handle_quorum_joined(&mut self, node: NodeId, members: Vec<NodeId>, state_transfer: &mut ST) -> Result<()> {
 
         if node == self.id() {
+            info!("{:?} // We have joined the quorum, responding to the reconfiguration protocol", self.id());
+
             self.reply_to_attempt_quorum_join(false)?;
 
             return Ok(());
