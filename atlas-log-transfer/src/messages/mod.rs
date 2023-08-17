@@ -60,7 +60,7 @@ impl<V, P, DL> Debug for LTMessage<V, P, DL> {
                 write!(f, "Reply log state {:?}", opt.as_ref().map(|(seq, (last, _))| (*seq, *last)).unwrap_or((SeqNo::ZERO, SeqNo::ZERO)))
             }
             LogTransferMessageKind::RequestProofs(_) => {
-                write!(f, "Request log parts")
+                write!(f, "Request log proofs")
             }
             LogTransferMessageKind::ReplyLogParts(_, _) => {
                 write!(f, "Reply log parts")

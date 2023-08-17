@@ -126,6 +126,8 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
         let message = LTMessage::new(message.sequence_number(), response_msg);
 
+        debug!("{:?} // Sending log state {:?} to {:?}", self.node.id(), message, header.from());
+
         self.node.send(message, header.from(), true);
 
         Ok(())

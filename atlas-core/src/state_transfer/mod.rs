@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 #[cfg(feature = "serialize_serde")]
@@ -142,4 +143,10 @@ pub trait StateTransferProtocol<S, NT, PL> {
                          view: V,
                          timeout: Vec<RqTimeout>) -> Result<STTimeoutResult>
         where V: NetworkView;
+}
+
+impl<S> Debug for Checkpoint<S> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Checkpoint {{ seq: {:?}, digest: {:?} }}", self.seq, self.digest)
+    }
 }

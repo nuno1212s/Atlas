@@ -1,11 +1,11 @@
 //! Contains the server side core protocol logic of `febft`.
 
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Formatter, write};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
@@ -52,16 +52,16 @@ const REPLICA_MESSAGE_CHANNEL: usize = 1024;
 pub const REPLICA_WAIT_TIME: Duration = Duration::from_millis(1000);
 
 pub type StateTransferDone = Option<SeqNo>;
-pub type LogTransferDone<D: ApplicationData> = Option<(SeqNo, SeqNo, Vec<D::Request>)>;
+pub type LogTransferDone<R> = Option<(SeqNo, SeqNo, Vec<R>)>;
 
 #[derive(Clone)]
-pub(crate) enum ReplicaPhase<D> where D: ApplicationData {
+pub(crate) enum ReplicaPhase<R>  {
     // The replica is currently executing the ordering protocol
     OrderingProtocol,
     // The replica is currently executing the state transfer protocol
     StateTransferProtocol {
         state_transfer: StateTransferDone,
-        log_transfer: LogTransferDone<D>,
+        log_transfer: LogTransferDone<R>,
     },
 }
 
@@ -71,7 +71,7 @@ pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'sta
                                                        ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
                                                        PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static,
                                                        RP: ReconfigurationProtocol + 'static {
-    replica_phase: ReplicaPhase<D>,
+    replica_phase: ReplicaPhase<D::Request>,
 
     quorum_reconfig_data: QuorumReconfig,
 
@@ -639,7 +639,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
     }
 
     /// Is the log transfer protocol finished?
-    fn is_log_transfer_done(log: &LogTransferDone<D>) -> bool {
+    fn is_log_transfer_done(log: &LogTransferDone<D::Request>) -> bool {
         return log.is_some();
     }
 
@@ -726,7 +726,7 @@ self.id(), state_transfer, * log_first, * log_last);
 
     /// Run the state transfer and log transfer protocols
     fn run_all_state_transfer(&mut self, state_transfer: &mut ST) -> Result<()> {
-        info!("{:?} // Running state and log transfer protocols.", ProtocolNetworkNode::id(&*self.node));
+        info!("{:?} // Running state and log transfer protocols. {:?}", ProtocolNetworkNode::id(&*self.node), self.replica_phase);
 
         match &mut self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
@@ -738,6 +738,7 @@ self.id(), state_transfer, * log_first, * log_last);
                 };
             }
             ReplicaPhase::StateTransferProtocol { state_transfer, log_transfer } => {
+
                 *state_transfer = None;
                 *log_transfer = None;
             }
@@ -752,7 +753,7 @@ self.id(), state_transfer, * log_first, * log_last);
 
     /// Run the state transfer protocol on this replica
     fn run_state_transfer_protocol(&mut self, state_transfer_p: &mut ST) -> Result<()> {
-        info!("{:?} // Running log transfer protocol.", ProtocolNetworkNode::id(&*self.node));
+        info!("{:?} // Running log transfer protocol. {:?}", ProtocolNetworkNode::id(&*self.node), self.replica_phase);
 
         match &mut self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
@@ -770,7 +771,7 @@ self.id(), state_transfer, * log_first, * log_last);
 
     /// Runs the log transfer protocol on this replica
     fn run_log_transfer_protocol(&mut self, state_transfer: &mut ST) -> Result<()> {
-        info!("{:?} // Running log transfer protocol.", ProtocolNetworkNode::id(&*self.node));
+        info!("{:?} // Running log transfer protocol. {:?}", ProtocolNetworkNode::id(&*self.node), self.replica_phase);
 
         match &mut self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
@@ -913,7 +914,7 @@ impl QuorumReconfig {
 /// TODO: Move this to an env variable as it can be highly dependent on the service implemented on top of it
 pub const CHECKPOINT_PERIOD: u32 = 10;
 
-impl<D> PartialEq for ReplicaPhase<D> where D: ApplicationData {
+impl<R> PartialEq for ReplicaPhase<R> where {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (ReplicaPhase::OrderingProtocol, ReplicaPhase::OrderingProtocol) => true,
@@ -923,14 +924,22 @@ impl<D> PartialEq for ReplicaPhase<D> where D: ApplicationData {
     }
 }
 
-impl<D> Debug for ReplicaPhase<D> where D: ApplicationData {
+impl<R> Debug for ReplicaPhase<R> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ReplicaPhase::OrderingProtocol => {
                 write!(f, "OrderingProtocol")
             }
             ReplicaPhase::StateTransferProtocol { log_transfer, state_transfer } => {
-                write!(f, "StateTransferProtocol {:?}", state_transfer)
+                write!(f, "StateTransferProtocol {:?}", state_transfer)?;
+
+                write!(f, ", Log transfer protocol")?;
+
+                if let Some((seq, seq_2, _)) = log_transfer {
+                    write!(f, " from {:?} to {:?}", seq, seq_2)
+                } else {
+                    write!(f, " None")
+                }
             }
         }
     }
