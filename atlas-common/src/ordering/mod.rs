@@ -182,7 +182,6 @@ pub fn tbo_queue_message<M: Orderable>(
             //
             // NOTE: alternatively, if this seq no pertains to consensus,
             // we can try running the state transfer protocol
-            warn!("Message is behind our current sequence no {:?}", curr_seq, );
             return;
         }
     };
@@ -191,8 +190,6 @@ pub fn tbo_queue_message<M: Orderable>(
         let len = index - tbo.len() + 1;
         tbo.extend(std::iter::repeat_with(VecDeque::new).take(len));
     }
-
-    trace!("Pushing message to index: {:?}, TBO queue: {:?}", index, m.sequence_number());
 
     tbo[index].push_back(m);
 }
