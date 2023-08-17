@@ -338,12 +338,17 @@ impl ReplicaQuorumView {
             self.current_state = JoiningReplicaState::JoinedQuorumWaitingForOrderProtocol;
 
             if current_quorum_members.len() >= self.min_stable_quorum {
+
+                info!("Sending stable protocol message to ordering protocol with quorum {:?}, we are part of the quorum", current_quorum_members);
+
                 self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members)).unwrap();
             }
         } else {
             match self.current_state {
                 JoiningReplicaState::Initializing(_, _, _) => {
                     self.current_state = JoiningReplicaState::InitializedWaitingForOrderProtocol;
+
+                    info!("Sending stable protocol message to ordering protocol with quorum {:?}, we are NOT part of the quorum", current_quorum_members);
 
                     self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members.clone())).unwrap();
 
