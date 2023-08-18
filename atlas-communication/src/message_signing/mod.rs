@@ -1,18 +1,46 @@
+use std::marker::PhantomData;
 use std::sync::Arc;
 use intmap::IntMap;
 use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::crypto::signature::{KeyPair, PublicKey, Signature};
 use atlas_common::error::*;
-use atlas_common::node_id::NodeId;
 use crate::config::PKConfig;
-use crate::message::{WireMessage};
+use crate::message::{Header, WireMessage};
+use crate::reconfiguration_node::NetworkInformationProvider;
+use crate::serialize::{Buf, Serializable};
 
-#[deprecated(since="0.1.0", note="please use `ReconfigurableNetworkNode` instead")]
+/// A trait that defines the signature verification function
+pub trait NetworkMessageSignatureVerifier<M, NI>
+    where M: Serializable, NI: NetworkInformationProvider {
+    
+    /// Verify the signature of the internal message structure
+    /// Returns Result<bool> where true means the signature is valid, false means it is not
+    fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: &M::Message, buf: &Buf) -> Result<bool>;
+}
+
+struct DefaultSignatureVerifier<M: Serializable, NI: NetworkInformationProvider>(Arc<NI>, PhantomData<M>);
+
+impl<M, NI> NetworkMessageSignatureVerifier<M, NI> for DefaultSignatureVerifier<M, NI>
+    where M: Serializable, NI: NetworkInformationProvider {
+    
+    fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: &M::Message, buf: &Buf) -> Result<bool> {
+        let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
+
+        let sig = header.signature();
+
+        if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), &buf[..]) {
+            M::verify_message_internal(info_provider, header, msg, buf)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+#[deprecated(since = "0.1.0", note = "please use `ReconfigurableNetworkNode` instead")]
 pub struct NodePKShared {
     my_key: Arc<KeyPair>,
     peer_keys: IntMap<PublicKey>,
 }
-
 
 impl NodePKShared {
     pub fn from_config(config: PKConfig) -> Arc<Self> {

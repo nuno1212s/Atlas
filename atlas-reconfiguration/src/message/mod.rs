@@ -7,8 +7,8 @@ use atlas_common::crypto::signature::Signature;
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::peer_addr::PeerAddr;
-use atlas_communication::message::StoredMessage;
-use atlas_communication::serialize::Serializable;
+use atlas_communication::message::{Header, StoredMessage};
+use atlas_communication::serialize::{Buf, Serializable};
 use atlas_core::serialize::ReconfigurationProtocolMessage;
 use atlas_core::timeouts::RqTimeout;
 
@@ -240,6 +240,11 @@ pub struct ReconfData;
 
 impl Serializable for ReconfData {
     type Message = ReconfigurationMessage;
+
+    fn verify_message_internal(header: &Header, msg: &Self::Message, full_raw_msg: &Buf) -> atlas_common::error::Result<bool> {
+        /// Reconfiguration messages do not require any extra internal verification. All verification needed
+        Ok(true)
+    }
 
     //TODO: Implement capnproto messages
 }

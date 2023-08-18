@@ -1,11 +1,8 @@
 use std::io::{Read, Write};
-use std::mem::size_of;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
-use atlas_common::crypto::hash::{Context, Digest};
 
 use atlas_common::error::*;
-
 
 /// Marker trait containing the types used by the application,
 /// as well as routines to serialize the application data.

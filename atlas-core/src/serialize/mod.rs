@@ -1,23 +1,19 @@
-use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::ops::Deref;
 use std::sync::Arc;
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
-use atlas_common::crypto::hash::Digest;
 
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::FullNetworkNode;
-use atlas_communication::message::{SerializedMessage, StoredSerializedProtocolMessage};
-use atlas_communication::protocol_node::ProtocolNetworkNode;
-use atlas_communication::reconfiguration_node::{NetworkInformationProvider, ReconfigurationNode};
-use atlas_communication::serialize::Serializable;
+use atlas_communication::message::{Header};
+use atlas_communication::message_signing::NetworkMessageSignatureVerifier;
+use atlas_communication::reconfiguration_node::NetworkInformationProvider;
+use atlas_communication::serialize::{Buf, Serializable};
 use atlas_execution::serialize::ApplicationData;
 
-use crate::messages::SystemMessage;
+use crate::messages::{RequestMessage, SystemMessage};
 
 #[cfg(feature = "serialize_capnp")]
 pub mod capnp;
@@ -43,6 +39,14 @@ pub trait OrderProtocolLog: Orderable {
 pub trait OrderProtocolProof: Orderable {
 
     // At the moment I only need orderable, but I might need more in the future
+}
+
+/// A trait that indicates that a given message can be "recursively" verifiable
+/// so we can verify the messages contained within
+pub trait InternallyVerifiable {
+
+
+
 }
 
 /// We do not need a serde module since serde serialization is just done on the network level.
@@ -87,6 +91,9 @@ pub trait OrderingProtocolMessage: Send + Sync {
     #[cfg(feature = "serialize_capnp")]
     type ProofMetadata: Orderable + Send + Clone;
 
+    /// Verify the protocol message signature (if there are any messages
+    fn verify_protocol_message(header: &Header, msg: &Self::ProtocolMessage) -> atlas_common::error::Result<bool>;
+
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::consensus_messages_capnp::protocol_message::Builder, msg: &Self::ProtocolMessage) -> Result<()>;
 
@@ -115,6 +122,8 @@ pub trait LogTransferMessage: Send + Sync {
     #[cfg(feature = "serialize_serde")]
     type LogTransferMessage: for<'a> Deserialize<'a> + Serialize + Send + Clone;
 
+    fn verify_log_transfer_message(header: &Header, msg: &Self::LogTransferMessage) -> atlas_common::error::Result<bool>;
+
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::cst_messages_capnp::cst_message::Builder, msg: &Self::LogTransferMessage) -> Result<()>;
 
@@ -130,6 +139,9 @@ pub trait StateTransferMessage: Send + Sync {
 
     #[cfg(feature = "serialize_serde")]
     type StateTransferMessage: for<'a> Deserialize<'a> + Serialize + Send + Clone;
+
+    /// Verify a state transfer message
+    fn verify_state_transfer_message(header: &Header, msg: &Self::StateTransferMessage) -> atlas_common::error::Result<bool>;
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::cst_messages_capnp::cst_message::Builder, msg: &Self::StateTransferMessage) -> Result<()>;
@@ -173,8 +185,58 @@ pub type ClientServiceMsg<D: ApplicationData> = ServiceMsg<D, NoProtocol, NoProt
 
 pub type ClientMessage<D: ApplicationData> = <ClientServiceMsg<D> as Serializable>::Message;
 
+pub trait VerificationWrapper<M, D> where D: ApplicationData {
+    // Wrap a given client request into a message
+    fn wrap_request(header: Header, request: RequestMessage<D::Request>) -> M;
+
+    fn wrap_reply(header: Header, reply: D::Reply) -> M;
+}
+
 impl<D: ApplicationData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage> Serializable for ServiceMsg<D, P, S, L> {
     type Message = SystemMessage<D, P::ProtocolMessage, S::StateTransferMessage, L::LogTransferMessage>;
+
+    fn verify_message_internal<NI, SV>(info_provider: &Arc<NI>, header: &Header, msg: &Self::Message, full_raw_msg: &Buf) -> atlas_common::error::Result<bool>
+        where NI: NetworkInformationProvider,
+              SV: NetworkMessageSignatureVerifier<Self, NI> {
+
+        match msg {
+            SystemMessage::ProtocolMessage(protocol) => {
+                P::verify_protocol_message(header, protocol.payload())
+            }
+            SystemMessage::LogTransferMessage(log_transfer) => {
+                L::verify_log_transfer_message(header, log_transfer.payload())
+            }
+            SystemMessage::StateTransferMessage(state_transfer) => {
+                S::verify_state_transfer_message(header, state_transfer.payload())
+            }
+            SystemMessage::OrderedRequest(request) => {
+                Ok(true)
+            }
+            SystemMessage::OrderedReply(reply) => {
+                Ok(true)
+            }
+            SystemMessage::UnorderedReply(reply) => {
+                Ok(true)
+            }
+            SystemMessage::UnorderedRequest(request) => {
+                Ok(true)
+            }
+            SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
+                let header = fwd_protocol.header();
+                let message = fwd_protocol.message();
+            }
+            SystemMessage::ForwardedRequestMessage(fwd_requests) => {
+                for stored_rq in fwd_requests.requests().iter() {
+                    let header = stored_rq.header();
+                    let message = stored_rq.message();
+
+                    Self::verify_message_internal(info_provider, header, message, full_raw_msg)
+                }
+            }
+        }
+
+        Ok(true)
+    }
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::messages_capnp::system::Builder, msg: &Self::Message) -> Result<()> {
@@ -234,6 +296,10 @@ impl OrderingProtocolMessage for NoProtocol {
 
     type ProofMetadata = ();
 
+    fn verify_protocol_message(header: &Header, msg: &Self::ProtocolMessage) -> atlas_common::error::Result<bool> {
+        Ok(false)
+    }
+
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(_: febft_capnp::consensus_messages_capnp::protocol_message::Builder, _: &Self::ProtocolMessage) -> Result<()> {
         unimplemented!()
@@ -258,6 +324,10 @@ impl OrderingProtocolMessage for NoProtocol {
 impl StateTransferMessage for NoProtocol {
     type StateTransferMessage = ();
 
+    fn verify_state_transfer_message(header: &Header, msg: &Self::StateTransferMessage) -> atlas_common::error::Result<bool> {
+        Ok(false)
+    }
+
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(_: febft_capnp::cst_messages_capnp::cst_message::Builder, msg: &Self::StateTransferMessage) -> Result<()> {
         unimplemented!()
@@ -271,6 +341,10 @@ impl StateTransferMessage for NoProtocol {
 
 impl LogTransferMessage for NoProtocol {
     type LogTransferMessage = ();
+
+    fn verify_log_transfer_message(header: &Header, msg: &Self::LogTransferMessage) -> atlas_common::error::Result<bool> {
+        Ok(false)
+    }
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(_: febft_capnp::cst_messages_capnp::cst_message::Builder, msg: &Self::LogTransferMessage) -> Result<()> {
