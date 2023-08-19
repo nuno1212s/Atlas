@@ -457,10 +457,9 @@ impl GeneralNodeInfo {
 
                     info!("{:?} // Connected to node {:?}",self.network_view.node_id(), node);
                 }
+                let res = network_node.broadcast_reconfig_message(join_message, known_nodes.clone().into_iter());
 
-                info!("Broadcasting reconfiguration network join message to known nodes {:?}", known_nodes);
-
-                network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter()).unwrap();
+                info!("Broadcasting reconfiguration network join message to known nodes {:?}, {:?}", known_nodes, res);
 
                 timeouts.timeout_reconfig_request(TIMEOUT_DUR, ((contacted * 2 / 3) + 1) as u32, seq.curr_seq());
 
@@ -738,6 +737,8 @@ impl GeneralNodeInfo {
             let message = NetworkReconfigMessage::NetworkJoinResponse(result);
 
             let reconfig_message = ReconfigurationMessage::new(seq, ReconfigurationMessageType::NetworkReconfig(message));
+            
+            debug!("Responding to network join request a network join response to {:?} with message {:?}", target, reconfig_message);
 
             let _ = network.send_reconfig_message(reconfig_message, target);
 

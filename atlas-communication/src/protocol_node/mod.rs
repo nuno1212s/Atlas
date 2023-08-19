@@ -42,7 +42,7 @@ pub trait ProtocolNetworkNode<M>: Send + Sync where M: Serializable + 'static {
     type IncomingRqHandler: NodeIncomingRqHandler<StoredMessage<M::Message>>;
 
     /// The signature verifier for this node
-    type NetworkSignatureVerifier: NetworkMessageSignatureVerifier<M>;
+    type NetworkSignatureVerifier: NetworkMessageSignatureVerifier<M, Self::NetworkInfoProvider>;
 
     /// Reports the id of this `Node`.
     fn id(&self) -> NodeId;

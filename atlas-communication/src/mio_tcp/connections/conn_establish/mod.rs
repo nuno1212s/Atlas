@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt::{Debug, Formatter};
 use std::fs::read;
 use std::io;
 use std::io::Write;
@@ -229,9 +230,10 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
 
                 match update_message {
                     NetworkUpdateMessage::NodeConnectionPermitted(node_id, node_type, pk) => {
-                        debug!("Received network update message for node {:?} with type {:?}. Moving connections to the final connection pool", node_id, node_type);
+                        debug!("Received network update message for node {:?} with type {:?}. Moving connections to the final connection pool, {:?}", node_id, node_type,
+                    self.currently_accepting.iter().map(|(token, conn)| (Token(token), conn)).collect::<Vec<_>>());
 
-                        while let Some(position) = self.currently_accepting.iter().position(|(token, pend)| {
+                        while let Some((position, _)) = self.currently_accepting.iter().find(|(token, pend)| {
                             return match pend {
                                 PendingConnection::PendingConn { peer_id, .. } => {
                                     if let Some(node) = peer_id {
@@ -294,7 +296,8 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
     fn handle_connection_result(&mut self, token: Token, result: ConnectionResult) -> io::Result<()> {
         match result {
             ConnectionResult::Connected(node_id, node_type, pending_messages) => {
-                debug!("{:?} // Incoming connection to {:?} is now established with type {:?}", self.my_id, node_id, node_type);
+                debug!("{:?} // Incoming connection to {:?} is now established with type {:?} with token {:?}, {:?}", self.my_id, node_id, node_type, token,
+                    self.currently_accepting.iter().map(|(token, conn)| (Token(token), conn)).collect::<Vec<_>>());
 
                 // We have identified the peer and should now handle the connection
                 for (header, message) in pending_messages {
@@ -319,6 +322,8 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
                         }
                         _ => unreachable!()
                     }
+                } else {
+                    unreachable!()
                 }
             }
             ConnectionResult::ConnectionBroken => {
@@ -332,6 +337,8 @@ impl<NI, RM, PM> ServerWorker<NI, RM, PM>
                         }
                         _ => unreachable!()
                     }
+                } else {
+                    unreachable!()
                 }
             }
             ConnectionResult::Working => {}
@@ -764,6 +771,22 @@ impl PendingConnection {
                 *channel = Some(ch);
             }
             _ => unreachable!()
+        }
+    }
+}
+
+impl Debug for PendingConnection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PendingConnection::PendingConn { peer_id, node_type, socket, .. } => {
+                write!(f, "Peer conn {:?}, type {:?}, addr {:?}", peer_id, node_type, socket.peer_addr())
+            }
+            PendingConnection::Waker => {
+                write!(f, "Waker")
+            }
+            PendingConnection::ServerToken => {
+                write!(f, "ServerToken")
+            }
         }
     }
 }

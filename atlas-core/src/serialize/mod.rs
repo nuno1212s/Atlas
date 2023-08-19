@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use log::info;
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
@@ -43,15 +44,17 @@ pub trait OrderProtocolProof: Orderable {
 
 /// A trait that indicates that a given message can be "recursively" verifiable
 /// so we can verify the messages contained within
-pub trait InternallyVerifiable {
-
-
-
+pub trait InternallyVerifiable<M> {
+    /// Internally verify
+    fn verify_internal_message<S, SV, NI>(network_info: &Arc<NI>, header: &Header, msg: &M) -> atlas_common::error::Result<bool>
+        where S: Serializable,
+              SV: NetworkMessageSignatureVerifier<S, NI>,
+              NI: NetworkInformationProvider;
 }
 
 /// We do not need a serde module since serde serialization is just done on the network level.
 /// The abstraction for ordering protocol messages.
-pub trait OrderingProtocolMessage: Send + Sync {
+pub trait OrderingProtocolMessage: Send + Sync + InternallyVerifiable<Self::ProtocolMessage> {
     #[cfg(feature = "serialize_capnp")]
     type ViewInfo: NetworkView + Send + Clone;
 
@@ -91,9 +94,6 @@ pub trait OrderingProtocolMessage: Send + Sync {
     #[cfg(feature = "serialize_capnp")]
     type ProofMetadata: Orderable + Send + Clone;
 
-    /// Verify the protocol message signature (if there are any messages
-    fn verify_protocol_message(header: &Header, msg: &Self::ProtocolMessage) -> atlas_common::error::Result<bool>;
-
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::consensus_messages_capnp::protocol_message::Builder, msg: &Self::ProtocolMessage) -> Result<()>;
 
@@ -114,15 +114,14 @@ pub trait OrderingProtocolMessage: Send + Sync {
     fn deserialize_proof_capnp(reader: febft_capnp::cst_messages_capnp::proof::Reader) -> Result<Self::Proof>;
 }
 
-
-pub trait LogTransferMessage: Send + Sync {
+/// The abstraction for log transfer protocol messages.
+/// This allows us to have any log transfer protocol work with the same backbone
+pub trait LogTransferMessage: Send + Sync + InternallyVerifiable<Self::LogTransferMessage> {
     #[cfg(feature = "serialize_capnp")]
     type LogTransferMessage: Send + Clone;
 
     #[cfg(feature = "serialize_serde")]
     type LogTransferMessage: for<'a> Deserialize<'a> + Serialize + Send + Clone;
-
-    fn verify_log_transfer_message(header: &Header, msg: &Self::LogTransferMessage) -> atlas_common::error::Result<bool>;
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::cst_messages_capnp::cst_message::Builder, msg: &Self::LogTransferMessage) -> Result<()>;
@@ -133,15 +132,12 @@ pub trait LogTransferMessage: Send + Sync {
 
 /// The abstraction for state transfer protocol messages.
 /// This allows us to have any state transfer protocol work with the same backbone
-pub trait StateTransferMessage: Send + Sync {
+pub trait StateTransferMessage: Send + Sync + InternallyVerifiable<Self::StateTransferMessage> {
     #[cfg(feature = "serialize_capnp")]
     type StateTransferMessage: Send + Clone;
 
     #[cfg(feature = "serialize_serde")]
     type StateTransferMessage: for<'a> Deserialize<'a> + Serialize + Send + Clone;
-
-    /// Verify a state transfer message
-    fn verify_state_transfer_message(header: &Header, msg: &Self::StateTransferMessage) -> atlas_common::error::Result<bool>;
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::cst_messages_capnp::cst_message::Builder, msg: &Self::StateTransferMessage) -> Result<()>;
@@ -195,19 +191,18 @@ pub trait VerificationWrapper<M, D> where D: ApplicationData {
 impl<D: ApplicationData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage> Serializable for ServiceMsg<D, P, S, L> {
     type Message = SystemMessage<D, P::ProtocolMessage, S::StateTransferMessage, L::LogTransferMessage>;
 
-    fn verify_message_internal<NI, SV>(info_provider: &Arc<NI>, header: &Header, msg: &Self::Message, full_raw_msg: &Buf) -> atlas_common::error::Result<bool>
+    fn verify_message_internal<SV, NI>(info_provider: &Arc<NI>, header: &Header, msg: &Self::Message, full_raw_msg: &Buf) -> atlas_common::error::Result<bool>
         where NI: NetworkInformationProvider,
               SV: NetworkMessageSignatureVerifier<Self, NI> {
-
         match msg {
             SystemMessage::ProtocolMessage(protocol) => {
-                P::verify_protocol_message(header, protocol.payload())
+                P::verify_internal_message::<Self, SV, NI>(info_provider, header, protocol.payload())
             }
             SystemMessage::LogTransferMessage(log_transfer) => {
-                L::verify_log_transfer_message(header, log_transfer.payload())
+                L::verify_internal_message::<Self, SV, NI>(info_provider, header, log_transfer.payload())
             }
             SystemMessage::StateTransferMessage(state_transfer) => {
-                S::verify_state_transfer_message(header, state_transfer.payload())
+                S::verify_internal_message::<Self, SV, NI>(info_provider, header, state_transfer.payload())
             }
             SystemMessage::OrderedRequest(request) => {
                 Ok(true)
@@ -224,18 +219,24 @@ impl<D: ApplicationData, P: OrderingProtocolMessage, S: StateTransferMessage, L:
             SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
                 let header = fwd_protocol.header();
                 let message = fwd_protocol.message();
+
+                Ok(true)
             }
             SystemMessage::ForwardedRequestMessage(fwd_requests) => {
+                let mut result = true;
+
                 for stored_rq in fwd_requests.requests().iter() {
                     let header = stored_rq.header();
                     let message = stored_rq.message();
 
-                    Self::verify_message_internal(info_provider, header, message, full_raw_msg)
+                    let message = SystemMessage::OrderedRequest(message.clone());
+
+                    result &= Self::verify_message_internal::<SV, NI>(info_provider, header, &message, full_raw_msg)?;
                 }
+
+                Ok(result)
             }
         }
-
-        Ok(true)
     }
 
     #[cfg(feature = "serialize_capnp")]
@@ -285,6 +286,13 @@ impl NetworkView for NoView {
     }
 }
 
+impl InternallyVerifiable<()> for NoProtocol {
+    fn verify_internal_message<S, SV, NI>(network_info: &Arc<NI>, header: &Header, msg: &()) -> atlas_common::error::Result<bool>
+        where S: Serializable, SV: NetworkMessageSignatureVerifier<S, NI>, NI: NetworkInformationProvider {
+        Ok(true)
+    }
+}
+
 impl OrderingProtocolMessage for NoProtocol {
     type ViewInfo = NoView;
 
@@ -295,10 +303,6 @@ impl OrderingProtocolMessage for NoProtocol {
     type Proof = ();
 
     type ProofMetadata = ();
-
-    fn verify_protocol_message(header: &Header, msg: &Self::ProtocolMessage) -> atlas_common::error::Result<bool> {
-        Ok(false)
-    }
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(_: febft_capnp::consensus_messages_capnp::protocol_message::Builder, _: &Self::ProtocolMessage) -> Result<()> {
@@ -324,10 +328,6 @@ impl OrderingProtocolMessage for NoProtocol {
 impl StateTransferMessage for NoProtocol {
     type StateTransferMessage = ();
 
-    fn verify_state_transfer_message(header: &Header, msg: &Self::StateTransferMessage) -> atlas_common::error::Result<bool> {
-        Ok(false)
-    }
-
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(_: febft_capnp::cst_messages_capnp::cst_message::Builder, msg: &Self::StateTransferMessage) -> Result<()> {
         unimplemented!()
@@ -341,10 +341,6 @@ impl StateTransferMessage for NoProtocol {
 
 impl LogTransferMessage for NoProtocol {
     type LogTransferMessage = ();
-
-    fn verify_log_transfer_message(header: &Header, msg: &Self::LogTransferMessage) -> atlas_common::error::Result<bool> {
-        Ok(false)
-    }
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(_: febft_capnp::cst_messages_capnp::cst_message::Builder, msg: &Self::LogTransferMessage) -> Result<()> {

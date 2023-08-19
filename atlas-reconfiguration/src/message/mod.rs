@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,8 @@ use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::message::{Header, StoredMessage};
+use atlas_communication::message_signing::NetworkMessageSignatureVerifier;
+use atlas_communication::reconfiguration_node::NetworkInformationProvider;
 use atlas_communication::serialize::{Buf, Serializable};
 use atlas_core::serialize::ReconfigurationProtocolMessage;
 use atlas_core::timeouts::RqTimeout;
@@ -77,7 +80,7 @@ pub struct NodeTriple {
 
 /// The response to the request to join the network
 /// Returns the list of known nodes in the network, including the newly added node
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum NetworkJoinResponseMessage {
     Successful(Signature, KnownNodesMessage),
@@ -95,7 +98,7 @@ pub enum NetworkJoinRejectionReason {
     NotNecessary,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct ReconfigurationMessage {
     seq: SeqNo,
@@ -103,7 +106,7 @@ pub struct ReconfigurationMessage {
 }
 
 /// Reconfiguration message type
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum ReconfigurationMessageType {
     NetworkReconfig(NetworkReconfigMessage),
@@ -113,7 +116,7 @@ pub enum ReconfigurationMessageType {
 pub type NetworkJoinCert = (NodeId, Signature);
 
 /// Network reconfiguration messages (Related only to the network view)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum NetworkReconfigMessage {
     NetworkJoinRequest(NodeTriple),
@@ -241,8 +244,8 @@ pub struct ReconfData;
 impl Serializable for ReconfData {
     type Message = ReconfigurationMessage;
 
-    fn verify_message_internal(header: &Header, msg: &Self::Message, full_raw_msg: &Buf) -> atlas_common::error::Result<bool> {
-        /// Reconfiguration messages do not require any extra internal verification. All verification needed
+    fn verify_message_internal<SV, NI>(info_provider: &Arc<NI>, header: &Header, msg: &Self::Message, full_raw_msg: &Buf) -> atlas_common::error::Result<bool>
+        where NI: NetworkInformationProvider, SV: NetworkMessageSignatureVerifier<Self, NI>, Self: Sized {
         Ok(true)
     }
 

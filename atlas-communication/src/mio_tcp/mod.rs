@@ -23,6 +23,7 @@ use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::config::MioConfig;
 use crate::conn_utils::ConnCounts;
 use crate::message::{NetworkMessageKind, SerializedMessage, StoredMessage, StoredSerializedNetworkMessage, StoredSerializedProtocolMessage, WireMessage};
+use crate::message_signing::DefaultSignatureVerifier;
 use crate::metric::THREADPOOL_PASS_TIME_ID;
 use crate::mio_tcp::connections::{Connections, PeerConnection};
 use crate::mio_tcp::connections::conn_establish::pending_conn::{NetworkUpdateHandler, PendingConnHandle};
@@ -228,6 +229,7 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for MIOTcpNode<NI, RM, PM>
     type ConnectionManager = Connections<NI, RM, PM>;
     type NetworkInfoProvider = NI;
     type IncomingRqHandler = PeerIncomingRqHandling<StoredMessage<PM::Message>>;
+    type NetworkSignatureVerifier = DefaultSignatureVerifier<PM, NI>;
 
     fn id(&self) -> NodeId {
         self.id

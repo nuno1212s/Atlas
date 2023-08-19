@@ -15,6 +15,8 @@ use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, 
 use crate::smr::networking::NodeWrap;
 
 pub trait LogTransferSendNode<LPM> where LPM: LogTransferMessage {
+
+    /// Our own ID
     #[inline(always)]
     fn id(&self) -> NodeId;
 
@@ -31,7 +33,6 @@ pub trait LogTransferSendNode<LPM> where LPM: LogTransferMessage {
     /// on the success of the message dispatch
     #[inline(always)]
     fn send_signed(&self, message: LPM::LogTransferMessage, target: NodeId, flush: bool) -> Result<()>;
-
 
     /// Broadcast a message to all of the given targets
     /// Does not block on the message sent. Returns a result that is

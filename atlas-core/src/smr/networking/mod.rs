@@ -76,6 +76,7 @@ impl<NT, D, P, S, L, NI, RM> ProtocolNetworkNode<ServiceMsg<D, P, S, L>> for Nod
     type ConnectionManager = <NT as ProtocolNetworkNode<ServiceMsg<D, P, S, L>>>::ConnectionManager;
     type NetworkInfoProvider = <NT as ProtocolNetworkNode<ServiceMsg<D, P, S, L>>>::NetworkInfoProvider;
     type IncomingRqHandler = NT::IncomingRqHandler;
+    type NetworkSignatureVerifier = NT::NetworkSignatureVerifier;
 
     fn id(&self) -> NodeId {
         ProtocolNetworkNode::id(&self.0)

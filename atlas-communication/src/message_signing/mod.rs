@@ -11,25 +11,25 @@ use crate::serialize::{Buf, Serializable};
 
 /// A trait that defines the signature verification function
 pub trait NetworkMessageSignatureVerifier<M, NI>
-    where M: Serializable, NI: NetworkInformationProvider {
-    
+    where M: Serializable, NI: NetworkInformationProvider, Self: Sized {
+
     /// Verify the signature of the internal message structure
     /// Returns Result<bool> where true means the signature is valid, false means it is not
     fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: &M::Message, buf: &Buf) -> Result<bool>;
 }
 
-struct DefaultSignatureVerifier<M: Serializable, NI: NetworkInformationProvider>(Arc<NI>, PhantomData<M>);
+pub struct DefaultSignatureVerifier<M: Serializable, NI: NetworkInformationProvider>(Arc<NI>, PhantomData<M>);
 
 impl<M, NI> NetworkMessageSignatureVerifier<M, NI> for DefaultSignatureVerifier<M, NI>
     where M: Serializable, NI: NetworkInformationProvider {
-    
+
     fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: &M::Message, buf: &Buf) -> Result<bool> {
         let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
 
         let sig = header.signature();
 
         if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), &buf[..]) {
-            M::verify_message_internal(info_provider, header, msg, buf)
+            M::verify_message_internal::<Self, NI>(info_provider, header, msg, buf)
         } else {
             Ok(false)
         }
