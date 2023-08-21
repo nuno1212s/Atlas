@@ -164,6 +164,17 @@ impl<RM, PM> NetworkMessageKind<RM, PM> where RM: Serializable, PM: Serializable
         }
     }
 
+    pub fn deref_reconfig(&self) -> &RM::Message {
+        match self {
+            NetworkMessageKind::ReconfigurationMessage(reconfig) => {
+                reconfig
+            }
+            _ => {
+                unreachable!()
+            }
+        }
+    }
+
     pub fn into(self) -> PM::Message {
         match self {
             NetworkMessageKind::System(sys_msg) => {
@@ -179,6 +190,17 @@ impl<RM, PM> NetworkMessageKind<RM, PM> where RM: Serializable, PM: Serializable
         match self {
             NetworkMessageKind::System(sys_msg) => {
                 sys_msg.inner
+            }
+            _ => {
+                unreachable!()
+            }
+        }
+    }
+
+    pub fn into_reconfig(self) -> RM::Message {
+        match self {
+            NetworkMessageKind::ReconfigurationMessage(reconfig_msg) => {
+                reconfig_msg.inner
             }
             _ => {
                 unreachable!()

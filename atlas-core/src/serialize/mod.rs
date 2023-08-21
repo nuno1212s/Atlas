@@ -55,6 +55,7 @@ pub trait InternallyVerifiable<M> {
 /// We do not need a serde module since serde serialization is just done on the network level.
 /// The abstraction for ordering protocol messages.
 pub trait OrderingProtocolMessage: Send + Sync + InternallyVerifiable<Self::ProtocolMessage> {
+    
     #[cfg(feature = "serialize_capnp")]
     type ViewInfo: NetworkView + Send + Clone;
 

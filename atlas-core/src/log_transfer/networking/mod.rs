@@ -1,3 +1,6 @@
+pub mod signature_ver;
+pub mod serialize;
+
 use std::collections::BTreeMap;
 
 use atlas_common::crypto::hash::Digest;

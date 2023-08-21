@@ -5,31 +5,63 @@ use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::crypto::signature::{KeyPair, PublicKey, Signature};
 use atlas_common::error::*;
 use crate::config::PKConfig;
-use crate::message::{Header, WireMessage};
+use crate::cpu_workers;
+use crate::message::{Header, NetworkMessageKind, WireMessage};
 use crate::reconfiguration_node::NetworkInformationProvider;
-use crate::serialize::{Buf, Serializable};
+use crate::serialize::{Buf, digest_message, Serializable};
 
 /// A trait that defines the signature verification function
 pub trait NetworkMessageSignatureVerifier<M, NI>
     where M: Serializable, NI: NetworkInformationProvider, Self: Sized {
+    fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: M::Message) -> Result<(bool, M::Message)>;
 
     /// Verify the signature of the internal message structure
     /// Returns Result<bool> where true means the signature is valid, false means it is not
-    fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: &M::Message, buf: &Buf) -> Result<bool>;
+    fn verify_signature_with_buf(info_provider: &Arc<NI>, header: &Header, msg: &M::Message, buf: &Buf) -> Result<bool>;
 }
 
-pub struct DefaultSignatureVerifier<M: Serializable, NI: NetworkInformationProvider>(Arc<NI>, PhantomData<M>);
+pub enum MessageKind {
+    Reconfig,
+    Protocol,
+}
 
-impl<M, NI> NetworkMessageSignatureVerifier<M, NI> for DefaultSignatureVerifier<M, NI>
-    where M: Serializable, NI: NetworkInformationProvider {
+pub struct DefaultReconfigSignatureVerifier<PM: Serializable, RM: Serializable, NI: NetworkInformationProvider>(Arc<NI>, PhantomData<M>);
 
-    fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: &M::Message, buf: &Buf) -> Result<bool> {
+impl<PM, RM, NI> NetworkMessageSignatureVerifier<RM, NI> for DefaultReconfigSignatureVerifier<PM, RM, NI>
+    where PM: Serializable, RM: Serializable, NI: NetworkInformationProvider {
+    fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: RM::Message) -> Result<(bool, RM::Message)> {
         let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
 
         let sig = header.signature();
 
-        if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), &buf[..]) {
-            M::verify_message_internal::<Self, NI>(info_provider, header, msg, buf)
+        let network = NetworkMessageKind::<RM, PM>::from_reconfig(msg);
+
+        if let Ok((buf, digest)) = cpu_workers::serialize_digest_no_threadpool(&network) {
+            if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), digest.as_ref()) {
+                if RM::verify_message_internal::<Self, NI>(info_provider, header, network.deref_reconfig(), &buf)? {
+                    Ok((true, network.into_reconfig()))
+                } else {
+                    Ok((false, network.into_reconfig()))
+                }
+            } else {
+                Ok((false, network.into_reconfig()))
+            }
+        } else {
+            Ok((false, network.into_reconfig()))
+        }
+    }
+
+    fn verify_signature_with_buf(info_provider: &Arc<NI>, header: &Header, msg: &RM::Message, buf: &Buf) -> Result<bool> {
+        let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
+
+        let sig = header.signature();
+
+        if let Ok(digest) = digest_message(buf.clone()) {
+            if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), digest.as_ref()) {
+                RM::verify_message_internal::<Self, NI>(info_provider, header, msg, buf)
+            } else {
+                Ok(false)
+            }
         } else {
             Ok(false)
         }
@@ -129,8 +161,8 @@ pub(crate) fn verify_parts(
     from: u32,
     to: u32,
     nonce: u64,
-    payload: &[u8],
+    payload_digest: &[u8],
 ) -> Result<()> {
-    let digest = digest_parts(from, to, nonce, payload);
+    let digest = digest_parts(from, to, nonce, payload_digest);
     pk.verify(digest.as_ref(), sig)
 }

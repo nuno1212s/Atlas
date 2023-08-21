@@ -1,3 +1,6 @@
+pub mod signature_ver;
+pub mod serialize;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use atlas_common::crypto::hash::Digest;
@@ -18,6 +21,7 @@ pub trait OrderProtocolSendNode<D, OPM>: Send + Sync where D: ApplicationData + 
 
     fn id(&self) -> NodeId;
 
+    /// The network information provider
     fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider>;
 
     /// Forward requests to the given targets

@@ -59,6 +59,12 @@ pub fn serialize_digest<W, RM, PM>(message: &NetworkMessageKind<RM, PM>, w: &mut
     Ok(ctx.finish())
 }
 
+pub fn digest_message(message: Buf) -> Result<Digest> {
+    let mut ctx = Context::new();
+    ctx.update(message.as_ref());
+    Ok(ctx.finish())
+}
+
 
 /// The trait that should be implemented for all systems which wish to use this communication method
 pub trait Serializable: Send + Sync {
