@@ -516,7 +516,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                     }
                 }
                 QuorumReconfigurationMessage::ReconfigurationProtocolStable(_) => {
-                    info!("Received reconfiguration protocol stable, but we are even done with reconfiguration stabilization?");
+                    info!("Received reconfiguration protocol stable but we are already done?");
                 }
             }
         }

@@ -776,11 +776,11 @@ impl<S, D, OPM, SOPM, STM> OrderingProtocolLog<OPM> for DivisibleStatePersistent
     }
 
     fn write_proof(&self, write_mode: OperationMode, proof: SerProof<OPM>) -> Result<()> {
-        self.write_proof(write_mode, proof)
+        self.inner_log.write_proof(write_mode, proof)
     }
 
     fn write_invalidate(&self, write_mode: OperationMode, seq: SeqNo) -> Result<()> {
-        self.write_invalidate(write_mode, seq)
+        self.inner_log.write_invalidate(write_mode, seq)
     }
 }
 
