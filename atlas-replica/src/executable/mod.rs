@@ -1,34 +1,24 @@
 //! User application execution business logic.
 
-pub mod monolithic_executor;
-pub mod divisible_state_exec;
-
-use log::error;
-use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
-use atlas_common::{channel, threadpool};
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 
+use atlas_common::threadpool;
 use atlas_common::error::*;
-use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::{FullNetworkNode};
-use atlas_communication::message::{NetworkMessageKind};
-use atlas_communication::metric::REPLICA_RQ_PASSING_TIME_ID;
+use atlas_communication::FullNetworkNode;
 use atlas_communication::protocol_node::ProtocolNetworkNode;
-use atlas_execution::app::{BatchReplies, Reply, Request, UnorderedBatch, UpdateBatch};
-use atlas_execution::{ExecutionRequest, ExecutorHandle};
-use atlas_execution::serialize::ApplicationData;
-use atlas_core::messages::{Message, ReplyMessage, SystemMessage};
+use atlas_core::messages::ReplyMessage;
 use atlas_core::ordering_protocol::OrderingProtocol;
-use atlas_core::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
 use atlas_core::smr::exec::{ReplyNode, ReplyType};
+use atlas_execution::app::BatchReplies;
+use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::metric_duration;
-use atlas_reconfiguration::message::ReconfData;
-use atlas_reconfiguration::network_reconfig::NetworkInfo;
-use crate::metric::{EXECUTION_LATENCY_TIME_ID, EXECUTION_TIME_TAKEN_ID, REPLIES_PASSING_TIME_ID, REPLIES_SENT_TIME_ID};
-use crate::server::client_replier::ReplyHandle;
+
+use crate::metric::REPLIES_SENT_TIME_ID;
+
+pub mod monolithic_executor;
+pub mod divisible_state_exec;
 
 const EXECUTING_BUFFER: usize = 16384;
 //const REPLY_CONCURRENCY: usize = 4;

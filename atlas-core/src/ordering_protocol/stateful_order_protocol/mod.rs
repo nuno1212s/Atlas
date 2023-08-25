@@ -2,8 +2,8 @@ use atlas_common::error::Result;
 use atlas_common::ordering::SeqNo;
 use atlas_execution::serialize::ApplicationData;
 use crate::ordering_protocol::{OrderingProtocol, OrderingProtocolArgs, SerProof, View};
+use crate::ordering_protocol::networking::serialize::StatefulOrderProtocolMessage;
 use crate::persistent_log::StatefulOrderingProtocolLog;
-use crate::serialize::StatefulOrderProtocolMessage;
 
 pub type DecLog<OP> = <OP as StatefulOrderProtocolMessage>::DecLog;
 

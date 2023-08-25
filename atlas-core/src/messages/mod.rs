@@ -1,22 +1,21 @@
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
-use std::sync::Arc;
-use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::error::*;
-use atlas_communication::message::{Header, NetworkMessage, StoredMessage};
-use atlas_execution::serialize::ApplicationData;
-use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
 
 #[cfg(feature = "serialize_serde")]
-use serde::{Serialize, Deserialize};
-use atlas_common::crypto::hash::Digest;
-use atlas_common::globals::ReadOnly;
-use atlas_common::node_id::NodeId;
-use atlas_communication::protocol_node::ProtocolNetworkNode;
-use crate::state_transfer::Checkpoint;
-use crate::timeouts::{TimedOut, Timeout};
+use serde::{Deserialize, Serialize};
 
+use atlas_common::crypto::hash::Digest;
+use atlas_common::error::*;
+use atlas_common::node_id::NodeId;
+use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_communication::message::StoredMessage;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
+use atlas_execution::serialize::ApplicationData;
+
+use crate::timeouts::TimedOut;
+
+pub mod signature_ver;
 
 /// The `Message` type encompasses all the messages traded between different
 /// asynchronous tasks in the system.

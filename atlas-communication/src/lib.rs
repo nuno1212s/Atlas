@@ -52,6 +52,21 @@ pub trait NodeConnections {
     async fn disconnect_from_node(&self, node: &NodeId) -> Result<()>;
 }
 
+pub trait NetworkNode {
+
+    type ConnectionManager: NodeConnections;
+
+    type NetworkInfoProvider: NetworkInformationProvider;
+
+    /// Reports the id of this `Node`.
+    fn id(&self) -> NodeId;
+
+    /// Get a handle to the connection manager of this node.
+    fn node_connections(&self) -> &Arc<Self::ConnectionManager>;
+
+    fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider>;
+}
+
 /// A full network node implementation
 pub trait FullNetworkNode<NI, RM, PM>: ProtocolNetworkNode<PM> + ReconfigurationNode<RM> + Send + Sync
     where

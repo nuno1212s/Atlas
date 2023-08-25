@@ -1,18 +1,20 @@
-pub mod networking;
-
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::message::StoredMessage;
 use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_execution::serialize::ApplicationData;
-use crate::messages::{LogTransfer, StateTransfer};
-use crate::ordering_protocol::{OrderingProtocol, OrderingProtocolArgs, SerProof, View};
+
+use crate::log_transfer::networking::serialize::LogTransferMessage;
+use crate::messages::LogTransfer;
+use crate::ordering_protocol::OrderingProtocol;
 use crate::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use crate::persistent_log::StatefulOrderingProtocolLog;
-use crate::serialize::{LogTransferMessage, ServiceMsg, StatefulOrderProtocolMessage, StateTransferMessage};
 use crate::timeouts::{RqTimeout, Timeouts};
+
+pub mod networking;
 
 pub type LogTM<M: LogTransferMessage> = <M as LogTransferMessage>::LogTransferMessage;
 

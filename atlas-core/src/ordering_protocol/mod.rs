@@ -11,9 +11,9 @@ use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::ApplicationData;
 
 use crate::messages::{ClientRqInfo, Protocol};
+use crate::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use crate::persistent_log::OrderingProtocolLog;
 use crate::request_pre_processing::{BatchOutput, RequestPreProcessor};
-use crate::serialize::{NetworkView, OrderingProtocolMessage, StateTransferMessage};
 use crate::timeouts::{RqTimeout, Timeouts};
 
 pub mod reconfigurable_order_protocol;

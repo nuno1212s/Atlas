@@ -8,8 +8,8 @@ use atlas_communication::message::StoredMessage;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 use crate::ordering_protocol::stateful_order_protocol::DecLog;
-use crate::ordering_protocol::{LoggableMessage, ProtocolMessage, SerProof, SerProofMetadata, View};
-use crate::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use crate::ordering_protocol::{LoggableMessage, SerProof, SerProofMetadata, View};
+use crate::ordering_protocol::networking::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 use crate::state_transfer::{Checkpoint};
 
 

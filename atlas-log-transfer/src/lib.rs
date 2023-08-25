@@ -13,10 +13,10 @@ use atlas_core::log_transfer::{LogTM, LogTransferProtocol, LTResult, LTTimeoutRe
 use atlas_core::log_transfer::networking::LogTransferSendNode;
 use atlas_core::messages::LogTransfer;
 use atlas_core::ordering_protocol::{OrderingProtocol, SerProof, View};
+use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderProtocolLog};
 use atlas_core::ordering_protocol::stateful_order_protocol::{DecLog, StatefulOrderProtocol};
 use atlas_core::persistent_log::StatefulOrderingProtocolLog;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_core::serialize::{NetworkView, OrderingProtocolMessage, OrderProtocolLog, StatefulOrderProtocolMessage, StateTransferMessage};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::metric_duration;

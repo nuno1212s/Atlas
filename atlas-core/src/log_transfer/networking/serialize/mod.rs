@@ -5,7 +5,7 @@ use atlas_common::error::*;
 use atlas_communication::reconfiguration_node::NetworkInformationProvider;
 use atlas_execution::serialize::ApplicationData;
 use crate::log_transfer::networking::signature_ver::LogTransferVerificationHelper;
-use crate::serialize::OrderingProtocolMessage;
+use crate::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 
 /// The abstraction for log transfer protocol messages.
 /// This allows us to have any log transfer protocol work with the same backbone
@@ -20,7 +20,8 @@ pub trait LogTransferMessage: Send + Sync {
     fn verify_log_message<NI, LVH, D, OP>(network_info: &Arc<NI>,
                                           header: &Header,
                                           message: Self::LogTransferMessage) -> Result<(bool, Self::LogTransferMessage)>
-        where NI: NetworkInformationProvider, LVH: LogTransferVerificationHelper<D, OP, NI>,
+        where NI: NetworkInformationProvider,
+              LVH: LogTransferVerificationHelper<D, OP, NI>,
               D: ApplicationData, OP: OrderingProtocolMessage;
 
     #[cfg(feature = "serialize_capnp")]

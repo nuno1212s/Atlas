@@ -9,8 +9,11 @@ use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_execution::app::{Request};
 use atlas_execution::serialize::ApplicationData;
 use atlas_core::followers::{FollowerChannelMsg, FollowerEvent, FollowerHandle};
+use atlas_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_core::messages::{Protocol, SystemMessage};
-use atlas_core::serialize::{OrderingProtocolMessage, ServiceMsg, StateTransferMessage, NetworkView, LogTransferMessage};
+use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
+use atlas_core::serialize::Service;
+use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
 
 /// Store information of the current followers of the quorum
 /// This information will be used to calculate which replicas have to send the
@@ -35,7 +38,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage + 'static,
-              NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> {
+              NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         let (tx, rx) = channel::new_bounded_sync(1024);
 
         let follower_handling = Self {
@@ -53,7 +56,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     fn start_thread<D, ST, LP>(self) where D: ApplicationData + 'static,
                                            ST: StateTransferMessage + 'static,
                                            LP: LogTransferMessage + 'static,
-                                           NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> {
+                                           NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         std::thread::Builder::new()
             .name(format!(
                 "Follower Handling Thread for node {:?}",
@@ -69,7 +72,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage + 'static,
-              NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> {
+              NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         loop {
             let message = self.rx.recv().unwrap();
 
@@ -142,7 +145,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
             LP: LogTransferMessage + 'static,
-            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> {
+            NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         if view.primary() == self.own_id {
             //Leaders don't send pre_prepares to followers in order to save bandwidth
             //as they already have to send the to all of the replicas
@@ -171,7 +174,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
             LP: LogTransferMessage + 'static,
-            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> {
+            NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         if prepare.header().from() != self.own_id {
             //We only broadcast our own prepare messages, not other peoples
             return;
@@ -198,7 +201,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
             LP: LogTransferMessage + 'static,
-            NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> {
+            NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         if commit.header().from() != self.own_id {
             //Like with prepares, we only broadcast our own commit messages
             return;
@@ -218,7 +221,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
         LP: LogTransferMessage + 'static,
-              NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> {
+              NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         let header = msg.header().clone();
         let message = msg.message().clone();
 

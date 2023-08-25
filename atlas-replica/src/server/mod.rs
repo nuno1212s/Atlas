@@ -14,10 +14,12 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
 use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
+use atlas_communication::NetworkNode;
 use atlas_core::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult};
 use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
 use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocolArgs, ProtocolConsensusDecision};
+use atlas_core::ordering_protocol::networking::serialize::OrderProtocolLog;
 use atlas_core::ordering_protocol::OrderProtocolExecResult;
 use atlas_core::ordering_protocol::OrderProtocolPoll;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::{ReconfigurableOrderProtocol, ReconfigurationAttemptResult};
@@ -28,7 +30,6 @@ use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::{AlterationFailReason, QuorumAlterationResponse, QuorumAttemptJoinResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
-use atlas_core::serialize::{OrderingProtocolMessage, OrderProtocolLog, ReconfigurationProtocolMessage, StateTransferMessage};
 use atlas_core::smr::networking::SMRNetworkNode;
 use atlas_core::state_transfer::{StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
@@ -237,7 +238,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
     }
 
     fn id(&self) -> NodeId {
-        ProtocolNetworkNode::id(&*self.node)
+        NetworkNode::id(&*self.node)
     }
 
     pub fn run(&mut self, state_transfer: &mut ST) -> Result<()> {
@@ -251,7 +252,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
             ReplicaPhase::OrderingProtocol => {
                 let poll_res = self.ordering_protocol.poll();
 
-                trace!("{:?} // Polling ordering protocol with result {:?}", ProtocolNetworkNode::id(&*self.node), poll_res);
+                trace!("{:?} // Polling ordering protocol with result {:?}", NetworkNode::id(&*self.node), poll_res);
 
                 match poll_res {
                     OrderProtocolPoll::RePoll => {
@@ -323,7 +324,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                     self.log_transfer_protocol.handle_off_ctx_message(&mut self.ordering_protocol, StoredMessage::new(header, log_transfer)).unwrap();
                                 }
                                 _ => {
-                                    error!("{:?} // Received unsupported message {:?}", ProtocolNetworkNode::id(&*self.node), message);
+                                    error!("{:?} // Received unsupported message {:?}", NetworkNode::id(&*self.node), message);
                                 }
                             }
                         } else {
@@ -394,7 +395,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                     self.executor_handle.poll_state_channel()?;
                                 }
                                 STResult::StateTransferFinished(seq_no) => {
-                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", ProtocolNetworkNode::id(&*self.node));
+                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", NetworkNode::id(&*self.node));
 
                                     self.executor_handle.poll_state_channel()?;
 
@@ -426,7 +427,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                     self.log_transfer_protocol_done(state_transfer, log.first_seq().unwrap_or(SeqNo::ZERO), log.sequence_number(), Vec::new())?;
                                 }
                                 LTResult::LTPFinished(first_seq, last_seq, requests_to_execute) => {
-                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", ProtocolNetworkNode::id(&*self.node));
+                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", NetworkNode::id(&*self.node));
                                     self.log_transfer_protocol_done(state_transfer, first_seq, last_seq, requests_to_execute)?;
                                 }
                             }
@@ -554,13 +555,13 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         }
 
         if !client_rq.is_empty() {
-            debug!("{:?} // Received client request timeouts: {}", ProtocolNetworkNode::id(&*self.node), client_rq.len());
+            debug!("{:?} // Received client request timeouts: {}", NetworkNode::id(&*self.node), client_rq.len());
 
             self.rq_pre_processor.process_timeouts(client_rq, self.processed_timeout.0.clone());
         }
 
         if !cst_rq.is_empty() {
-            debug!("{:?} // Received cst timeouts: {}", ProtocolNetworkNode::id(&*self.node), cst_rq.len());
+            debug!("{:?} // Received cst timeouts: {}", NetworkNode::id(&*self.node), cst_rq.len());
 
             match state_transfer.handle_timeout(self.ordering_protocol.view(), cst_rq)? {
                 STTimeoutResult::RunCst => {
@@ -571,7 +572,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         }
 
         if !log_transfer.is_empty() {
-            debug!("{:?} // Received log transfer timeouts: {}", ProtocolNetworkNode::id(&*self.node), log_transfer.len());
+            debug!("{:?} // Received log transfer timeouts: {}", NetworkNode::id(&*self.node), log_transfer.len());
 
             match self.log_transfer_protocol.handle_timeout(log_transfer)? {
                 LTTimeoutResult::RunLTP => {
@@ -582,7 +583,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         }
 
         if !reconfiguration.is_empty() {
-            debug!("{:?} // Received reconfiguration timeouts: {}", ProtocolNetworkNode::id(&*self.node), reconfiguration.len());
+            debug!("{:?} // Received reconfiguration timeouts: {}", NetworkNode::id(&*self.node), reconfiguration.len());
 
             self.reconfig_protocol.handle_timeout(reconfiguration)?;
         }
@@ -613,7 +614,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
     /// Run the ordering protocol on this replica
     fn run_ordering_protocol(&mut self) -> Result<()> {
-        info!("{:?} // Running ordering protocol.", ProtocolNetworkNode::id(&*self.node));
+        info!("{:?} // Running ordering protocol.", NetworkNode::id(&*self.node));
 
         let phase = std::mem::replace(&mut self.replica_phase, ReplicaPhase::OrderingProtocol);
 
@@ -724,7 +725,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
     /// Run the state transfer and log transfer protocols
     fn run_all_state_transfer(&mut self, state_transfer: &mut ST) -> Result<()> {
-        info!("{:?} // Running state and log transfer protocols. {:?}", ProtocolNetworkNode::id(&*self.node), self.replica_phase);
+        info!("{:?} // Running state and log transfer protocols. {:?}", NetworkNode::id(&*self.node), self.replica_phase);
 
         match &mut self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
@@ -737,7 +738,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
             }
             ReplicaPhase::StateTransferProtocol { state_transfer, log_transfer } => {
 
-                warn!("{:?} // Why would we want to run the protocols when we are already running them?", ProtocolNetworkNode::id(&*self.node));
+                warn!("{:?} // Why would we want to run the protocols when we are already running them?", NetworkNode::id(&*self.node));
 
                 return Ok(());
 
@@ -753,14 +754,14 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
     /// Run the state transfer protocol on this replica
     fn run_state_transfer_protocol(&mut self, state_transfer_p: &mut ST) -> Result<()> {
-        info!("{:?} // Running state transfer protocol. {:?}", ProtocolNetworkNode::id(&*self.node), self.replica_phase);
+        info!("{:?} // Running state transfer protocol. {:?}", NetworkNode::id(&*self.node), self.replica_phase);
 
         match &mut self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
                 self.run_all_state_transfer(state_transfer_p)?;
             }
             ReplicaPhase::StateTransferProtocol { state_transfer, .. } => {
-                warn!("{:?} // Why would we want to run the state transfer protocol when we are already running it?", ProtocolNetworkNode::id(&*self.node));
+                warn!("{:?} // Why would we want to run the state transfer protocol when we are already running it?", NetworkNode::id(&*self.node));
 
                 *state_transfer = None;
 
@@ -773,14 +774,14 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
 
     /// Runs the log transfer protocol on this replica
     fn run_log_transfer_protocol(&mut self, state_transfer: &mut ST) -> Result<()> {
-        info!("{:?} // Running log transfer protocol. {:?}", ProtocolNetworkNode::id(&*self.node), self.replica_phase);
+        info!("{:?} // Running log transfer protocol. {:?}", NetworkNode::id(&*self.node), self.replica_phase);
 
         match &mut self.replica_phase {
             ReplicaPhase::OrderingProtocol => {
                 self.run_all_state_transfer(state_transfer)?;
             }
             ReplicaPhase::StateTransferProtocol { log_transfer, .. } => {
-                warn!("{:?} // Why would we want to run the log transfer protocol when we are already running it?", ProtocolNetworkNode::id(&*self.node));
+                warn!("{:?} // Why would we want to run the log transfer protocol when we are already running it?", NetworkNode::id(&*self.node));
 
                 *log_transfer = None;
 

@@ -3,27 +3,28 @@ extern crate core;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
+
 use atlas_common::channel;
 use atlas_common::channel::ChannelSyncTx;
 use atlas_common::crypto::hash::Digest;
-use atlas_core::ordering_protocol::stateful_order_protocol::DecLog;
-use atlas_execution::ExecutorHandle;
-use atlas_execution::serialize::ApplicationData;
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::persistentdb::KVDB;
-use atlas_common::socket::init;
 use atlas_communication::message::StoredMessage;
-use atlas_core::ordering_protocol::{LoggableMessage, ProtocolConsensusDecision, ProtocolMessage, SerProof, SerProofMetadata, View};
-use atlas_core::persistent_log::{DivisibleStateLog, MonolithicStateLog, OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog, OperationMode};
-use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
-use atlas_core::state_transfer::{Checkpoint};
+use atlas_core::ordering_protocol::{LoggableMessage, ProtocolConsensusDecision, SerProof, SerProofMetadata, View};
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use atlas_core::ordering_protocol::stateful_order_protocol::DecLog;
+use atlas_core::persistent_log::{DivisibleStateLog, MonolithicStateLog, OperationMode, OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog};
+use atlas_core::state_transfer::Checkpoint;
+use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
+use atlas_execution::ExecutorHandle;
+use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
+
 use crate::backlog::{ConsensusBacklog, ConsensusBackLogHandle};
-use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, invalidate_seq, PersistentDivisibleStateStub, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, read_latest_state, write_latest_seq_no, write_latest_view, write_message, write_proof, write_proof_metadata, write_state};
+use crate::worker::{COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, write_latest_seq_no};
 use crate::worker::divisible_state_worker::{DivStatePersistentLogWorker, PersistentDivStateHandle, PersistentDivStateStub};
 use crate::worker::monolithic_worker::{MonStatePersistentLogWorker, PersistentMonolithicStateHandle, PersistentMonolithicStateStub, read_mon_state};
 

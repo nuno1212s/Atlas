@@ -244,7 +244,7 @@ pub struct ReconfData;
 impl Serializable for ReconfData {
     type Message = ReconfigurationMessage;
 
-    fn verify_message_internal<SV, NI>(info_provider: &Arc<NI>, header: &Header, msg: &Self::Message, full_raw_msg: &Buf) -> atlas_common::error::Result<bool>
+    fn verify_message_internal<NI, SV>(info_provider: &Arc<NI>, header: &Header, msg: &Self::Message) -> atlas_common::error::Result<bool>
         where NI: NetworkInformationProvider, SV: NetworkMessageSignatureVerifier<Self, NI>, Self: Sized {
         Ok(true)
     }

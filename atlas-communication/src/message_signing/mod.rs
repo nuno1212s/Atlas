@@ -25,10 +25,10 @@ pub enum MessageKind {
     Protocol,
 }
 
-pub struct DefaultReconfigSignatureVerifier<PM: Serializable, RM: Serializable, NI: NetworkInformationProvider>(Arc<NI>, PhantomData<M>);
+pub struct DefaultReconfigSignatureVerifier<RM: Serializable, PM: Serializable, NI: NetworkInformationProvider>(Arc<NI>, PhantomData<(RM, PM)>);
 
-impl<PM, RM, NI> NetworkMessageSignatureVerifier<RM, NI> for DefaultReconfigSignatureVerifier<PM, RM, NI>
-    where PM: Serializable, RM: Serializable, NI: NetworkInformationProvider {
+impl<PM, RM, NI> NetworkMessageSignatureVerifier<RM, NI> for DefaultReconfigSignatureVerifier<RM, PM, NI>
+    where PM: Serializable, RM: Serializable, NI: NetworkInformationProvider + 'static {
     fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: RM::Message) -> Result<(bool, RM::Message)> {
         let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
 
@@ -38,7 +38,7 @@ impl<PM, RM, NI> NetworkMessageSignatureVerifier<RM, NI> for DefaultReconfigSign
 
         if let Ok((buf, digest)) = cpu_workers::serialize_digest_no_threadpool(&network) {
             if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), digest.as_ref()) {
-                if RM::verify_message_internal::<Self, NI>(info_provider, header, network.deref_reconfig(), &buf)? {
+                if RM::verify_message_internal::<NI, Self>(info_provider, header, network.deref_reconfig())? {
                     Ok((true, network.into_reconfig()))
                 } else {
                     Ok((false, network.into_reconfig()))
@@ -58,7 +58,50 @@ impl<PM, RM, NI> NetworkMessageSignatureVerifier<RM, NI> for DefaultReconfigSign
 
         if let Ok(digest) = digest_message(buf.clone()) {
             if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), digest.as_ref()) {
-                RM::verify_message_internal::<Self, NI>(info_provider, header, msg, buf)
+                RM::verify_message_internal::<NI, Self>(info_provider, header, msg)
+            } else {
+                Ok(false)
+            }
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+pub struct DefaultProtocolSignatureVerifier<RM: Serializable, PM: Serializable, NI: NetworkInformationProvider>(Arc<NI>, PhantomData<(RM, PM)>);
+
+impl<RM, PM, NI> NetworkMessageSignatureVerifier<PM, NI> for DefaultProtocolSignatureVerifier<RM, PM, NI>
+    where RM: Serializable, PM: Serializable, NI: NetworkInformationProvider + 'static {
+    fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: PM::Message) -> Result<(bool, PM::Message)> {
+        let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
+
+        let sig = header.signature();
+
+        let network = NetworkMessageKind::<RM, PM>::from_system(msg);
+
+        if let Ok((buf, digest)) = cpu_workers::serialize_digest_no_threadpool(&network) {
+            if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), digest.as_ref()) {
+                if PM::verify_message_internal::<NI, Self>(info_provider, header, network.deref_system())? {
+                    Ok((true, network.into_system()))
+                } else {
+                    Ok((false, network.into_system()))
+                }
+            } else {
+                Ok((false, network.into_system()))
+            }
+        } else {
+            Ok((false, network.into_system()))
+        }
+    }
+
+    fn verify_signature_with_buf(info_provider: &Arc<NI>, header: &Header, msg: &PM::Message, buf: &Buf) -> Result<bool> {
+        let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
+
+        let sig = header.signature();
+
+        if let Ok(digest) = digest_message(buf.clone()) {
+            if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), digest.as_ref()) {
+                PM::verify_message_internal::<NI, Self>(info_provider, header, msg)
             } else {
                 Ok(false)
             }

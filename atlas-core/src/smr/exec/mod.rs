@@ -4,10 +4,13 @@ use atlas_communication::FullNetworkNode;
 use atlas_communication::reconfiguration_node::NetworkInformationProvider;
 use atlas_communication::serialize::Serializable;
 use atlas_execution::serialize::ApplicationData;
+use crate::log_transfer::networking::serialize::LogTransferMessage;
 
 use crate::messages::{ReplyMessage, SystemMessage};
-use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
+use crate::ordering_protocol::networking::serialize::OrderingProtocolMessage;
+use crate::serialize::Service;
 use crate::smr::networking::NodeWrap;
+use crate::state_transfer::networking::serialize::StateTransferMessage;
 
 pub enum ReplyType {
     Ordered,
@@ -32,7 +35,7 @@ impl<NT, D, P, S, L, NI, RM> ReplyNode<D> for NodeWrap<NT, D, P, S, L, NI, RM>
           L: LogTransferMessage + 'static,
           NI: NetworkInformationProvider + 'static,
           RM: Serializable + 'static,
-          NT: FullNetworkNode<NI, RM, ServiceMsg<D, P, S, L>> + 'static,
+          NT: FullNetworkNode<NI, RM, Service<D, P, S, L>> + 'static,
 {
     fn send(&self, reply_type: ReplyType, reply: ReplyMessage<D::Reply>, target: NodeId, flush: bool) -> Result<()> {
         let message = match reply_type {

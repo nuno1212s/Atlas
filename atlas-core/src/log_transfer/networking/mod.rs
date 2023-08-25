@@ -12,10 +12,13 @@ use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_communication::reconfiguration_node::NetworkInformationProvider;
 use atlas_communication::serialize::Serializable;
 use atlas_execution::serialize::ApplicationData;
+use crate::log_transfer::networking::serialize::LogTransferMessage;
 
 use crate::messages::SystemMessage;
-use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
+use crate::ordering_protocol::networking::serialize::OrderingProtocolMessage;
+use crate::serialize::Service;
 use crate::smr::networking::NodeWrap;
+use crate::state_transfer::networking::serialize::StateTransferMessage;
 
 pub trait LogTransferSendNode<LPM> where LPM: LogTransferMessage {
 
@@ -71,7 +74,7 @@ impl<NT, D, P, S, L, NI, RM> LogTransferSendNode<L> for NodeWrap<NT, D, P, S, L,
           L: LogTransferMessage + 'static,
           RM: Serializable + 'static,
           NI: NetworkInformationProvider + 'static,
-          NT: FullNetworkNode<NI, RM, ServiceMsg<D, P, S, L>>, {
+          NT: FullNetworkNode<NI, RM, Service<D, P, S, L>>, {
     #[inline(always)]
     fn id(&self) -> NodeId {
         self.0.id()

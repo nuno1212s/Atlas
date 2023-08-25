@@ -4,7 +4,7 @@ use std::time::Duration;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::error::*;
-use crate::{NodeConnections};
+use crate::{NetworkNode, NodeConnections};
 use crate::message::{SerializedMessage, StoredMessage, StoredSerializedProtocolMessage};
 use crate::message_signing::NetworkMessageSignatureVerifier;
 use crate::reconfiguration_node::NetworkInformationProvider;
@@ -33,25 +33,13 @@ pub trait NodeIncomingRqHandler<T>: Send {
 }
 
 /// A Network node devoted to handling
-pub trait ProtocolNetworkNode<M>: Send + Sync where M: Serializable + 'static {
-    type ConnectionManager: NodeConnections;
-
-    type NetworkInfoProvider: NetworkInformationProvider;
+pub trait ProtocolNetworkNode<M>: NetworkNode +  Send + Sync where M: Serializable + 'static {
 
     /// Incoming request handler for this node
     type IncomingRqHandler: NodeIncomingRqHandler<StoredMessage<M::Message>>;
 
     /// The signature verifier for this node
     type NetworkSignatureVerifier: NetworkMessageSignatureVerifier<M, Self::NetworkInfoProvider>;
-
-    /// Reports the id of this `Node`.
-    fn id(&self) -> NodeId;
-
-    /// Get a handle to the connection manager of this node.
-    fn node_connections(&self) -> &Arc<Self::ConnectionManager>;
-
-    /// Crypto
-    fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider>;
 
     /// Get a reference to the incoming request handling
     fn node_incoming_rq_handling(&self) -> &Arc<Self::IncomingRqHandler>;

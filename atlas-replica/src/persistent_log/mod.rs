@@ -1,9 +1,10 @@
 use std::path::Path;
 use atlas_core::ordering_protocol::ProtocolConsensusDecision;
 use atlas_core::persistent_log::{OrderingProtocolLog, PersistableOrderProtocol, PersistableStateTransferProtocol, StatefulOrderingProtocolLog};
-use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage, StateTransferMessage};
 use atlas_execution::serialize::ApplicationData;
 use atlas_common::error::*;
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_execution::ExecutorHandle;
 use atlas_execution::state::monolithic_state::MonolithicState;
 use atlas_persistent_log::{MonStatePersistentLog, PersistentLog, PersistentLogModeTrait};

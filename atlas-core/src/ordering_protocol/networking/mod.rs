@@ -6,15 +6,18 @@ use std::sync::Arc;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::error::*;
-use atlas_communication::FullNetworkNode;
+use atlas_communication::{FullNetworkNode, NetworkNode};
 use atlas_communication::message::{SerializedMessage, StoredMessage, StoredSerializedProtocolMessage};
 use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_communication::reconfiguration_node::NetworkInformationProvider;
 use atlas_communication::serialize::{Buf, Serializable};
 use atlas_execution::serialize::ApplicationData;
+use crate::log_transfer::networking::serialize::LogTransferMessage;
 use crate::messages::{ForwardedRequestsMessage, SystemMessage};
-use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
+use crate::ordering_protocol::networking::serialize::OrderingProtocolMessage;
+use crate::serialize::Service;
 use crate::smr::networking::NodeWrap;
+use crate::state_transfer::networking::serialize::StateTransferMessage;
 
 pub trait OrderProtocolSendNode<D, OPM>: Send + Sync where D: ApplicationData + 'static, OPM: OrderingProtocolMessage {
     type NetworkInfoProvider: NetworkInformationProvider + 'static;
@@ -69,9 +72,9 @@ impl<NT, D, P, S, L, RM, NI> OrderProtocolSendNode<D, P> for NodeWrap<NT, D, P, 
           L: LogTransferMessage + 'static,
           RM: Serializable + 'static,
           NI: NetworkInformationProvider + 'static,
-          NT: FullNetworkNode<NI, RM, ServiceMsg<D, P, S, L>>, {
+          NT: FullNetworkNode<NI, RM, Service<D, P, S, L>>, {
 
-    type NetworkInfoProvider = <NT as ProtocolNetworkNode<ServiceMsg<D, P, S, L>>>::NetworkInfoProvider;
+    type NetworkInfoProvider = NT::NetworkInfoProvider;
 
     #[inline(always)]
     fn id(&self) -> NodeId {
@@ -79,7 +82,7 @@ impl<NT, D, P, S, L, RM, NI> OrderProtocolSendNode<D, P> for NodeWrap<NT, D, P, 
     }
 
     fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider> {
-        ProtocolNetworkNode::network_info_provider(&self.0)
+        NT::network_info_provider(&self.0)
     }
 
     fn forward_requests(&self, fwd_requests: ForwardedRequestsMessage<D::Request>, targets: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> where D: ApplicationData + 'static {

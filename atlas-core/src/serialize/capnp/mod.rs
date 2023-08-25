@@ -5,11 +5,11 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::serialize::{Buf, Serializable};
 use crate::messages::{ForwardedProtocolMessage, ForwardedRequestsMessage, Protocol, ReplyMessage, RequestMessage, StateTransfer, SystemMessage};
-use crate::serialize::{OrderingProtocolMessage, StateTransferMessage, ServiceMsg};
+use crate::serialize::{OrderingProtocolMessage, StateTransferMessage, Service};
 
 const DEFAULT_SERIALIZE_BUFFER_SIZE: usize = 1024;
 
-pub type Message<D, P, SP> = <ServiceMsg<D, P, SP> as Serializable>::Message;
+pub type Message<D, P, SP> = <Service<D, P, SP> as Serializable>::Message;
 
 pub(super) fn serialize_message<D, P, SP>(builder: messages_capnp::system::Builder, msg: &Message<D, P, SP>) -> Result<()> where D: ApplicationData, P: OrderingProtocolMessage, SP: StateTransferMessage {
     match msg {

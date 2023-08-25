@@ -1,6 +1,6 @@
 use crate::message::{StoredMessage};
 use crate::serialize::Serializable;
-use crate::{NodeConnections};
+use crate::{NetworkNode, NodeConnections};
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, TryRecvError};
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::error::*;
@@ -52,20 +52,11 @@ pub trait ReconfigurationNetworkUpdate {
 }
 
 /// Trait for handling reconfiguration messages and etc
-pub trait ReconfigurationNode<M>: Send + Sync where M: Serializable + 'static {
-    type ConnectionManager: NodeConnections;
-
-    type NetworkInfoProvider: NetworkInformationProvider;
+pub trait ReconfigurationNode<M>: NetworkNode + Send + Sync where M: Serializable + 'static {
 
     type IncomingReconfigRqHandler: ReconfigurationIncomingHandler<StoredMessage<M::Message>>;
 
     type ReconfigurationNetworkUpdate: ReconfigurationNetworkUpdate;
-
-    /// The connection manager for this node
-    fn node_connections(&self) -> &Arc<Self::ConnectionManager>;
-
-    /// The network information provider for this node
-    fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider>;
 
     /// The network update handler for the reconfiguration protocol to deliver updates to
     /// the networking layer

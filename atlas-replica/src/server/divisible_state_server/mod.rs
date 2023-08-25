@@ -5,7 +5,7 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::ordering::Orderable;
 use atlas_communication::FullNetworkNode;
-use atlas_communication::protocol_node::ProtocolNetworkNode;
+use atlas_communication::NetworkNode;
 use atlas_core::log_transfer::LogTransferProtocol;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
 use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
@@ -65,7 +65,7 @@ impl<RP, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, S, A, OP, ST, LT, NT, PL> wh
         let node = inner_replica.node.clone();
 
         //CURRENTLY DISABLED, USING THREADPOOL INSTEAD
-        let reply_handle = Replier::new(ProtocolNetworkNode::id(&*node), node.clone());
+        let reply_handle = Replier::new(NetworkNode::id(&*node), node.clone());
 
         let (state_tx, checkpoint_rx) =
             DivisibleStateExecutor::init::<ReplicaReplier>

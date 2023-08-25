@@ -16,11 +16,14 @@ use atlas_communication::message::{Header, NetworkMessage, StoredMessage};
 use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
 use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::{metric_duration, metric_increment};
+use crate::log_transfer::networking::serialize::LogTransferMessage;
 
 use crate::messages::{ClientRqInfo, ForwardedRequestsMessage, RequestMessage, StoredRequestMessage, SystemMessage};
 use crate::metric::{RQ_PP_CLIENT_COUNT_ID, RQ_PP_CLIENT_MSG_ID, RQ_PP_CLONE_PENDING_TIME_ID, RQ_PP_CLONE_RQS_ID, RQ_PP_COLLECT_PENDING_ID, RQ_PP_COLLECT_PENDING_TIME_ID, RQ_PP_DECIDED_RQS_ID, RQ_PP_FWD_RQS_ID, RQ_PP_TIMEOUT_RQS_ID, RQ_PP_WORKER_PROPOSER_PASSING_TIME_ID, RQ_PP_WORKER_STOPPED_TIME_ID};
+use crate::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use crate::request_pre_processing::worker::{PreProcessorWorkMessage, PreProcessorWorkMessageOuter, RequestPreProcessingWorker, RequestPreProcessingWorkerHandle};
-use crate::serialize::{LogTransferMessage, OrderingProtocolMessage, ServiceMsg, StateTransferMessage};
+use crate::serialize::Service;
+use crate::state_transfer::networking::serialize::StateTransferMessage;
 use crate::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 
 mod worker;
@@ -135,7 +138,7 @@ struct RequestPreProcessingOrchestrator<WD, D, NT> where D: ApplicationData, WD:
 
 impl<WD, D, NT> RequestPreProcessingOrchestrator<WD, D, NT> where D: ApplicationData + 'static, WD: Send {
     fn run<OP, ST, LP>(mut self)
-        where NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>>,
+        where NT: ProtocolNetworkNode<Service<D, OP, ST, LP>>,
               OP: OrderingProtocolMessage + 'static,
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage + 'static,
@@ -147,7 +150,7 @@ impl<WD, D, NT> RequestPreProcessingOrchestrator<WD, D, NT> where D: Application
     }
 
     fn process_client_rqs<OP, ST, LP>(&mut self)
-        where NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>>,
+        where NT: ProtocolNetworkNode<Service<D, OP, ST, LP>>,
               OP: OrderingProtocolMessage + 'static,
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage + 'static,
@@ -386,7 +389,7 @@ pub fn initialize_request_pre_processor<WD, D, OP, ST, LP, NT>(concurrency: usiz
           OP: OrderingProtocolMessage + 'static,
           ST: StateTransferMessage + 'static,
           LP: LogTransferMessage + 'static,
-          NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> + 'static,
+          NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> + 'static,
           WD: WorkPartitioner<D::Request> + 'static {
     let (batch_tx, receiver) = new_bounded_sync(PROPOSER_QUEUE_SIZE);
 
@@ -435,7 +438,7 @@ fn launch_orchestrator_thread<WD, D, OP, ST, LP, NT>(orchestrator: RequestPrePro
           OP: OrderingProtocolMessage + 'static,
           ST: StateTransferMessage + 'static,
           LP: LogTransferMessage + 'static,
-          NT: ProtocolNetworkNode<ServiceMsg<D, OP, ST, LP>> + 'static,
+          NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> + 'static,
           WD: WorkPartitioner<D::Request> + 'static {
     std::thread::Builder::new()
         .name(format!("{}", RQ_PRE_PROCESSING_ORCHESTRATOR))

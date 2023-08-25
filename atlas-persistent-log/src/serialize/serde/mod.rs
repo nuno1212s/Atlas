@@ -1,7 +1,8 @@
 use std::io::{Read, Write};
+
 use atlas_common::error::*;
-use atlas_core::ordering_protocol::{LoggableMessage, ProtocolMessage, SerProofMetadata, View};
-use atlas_core::serialize::OrderingProtocolMessage;
+use atlas_core::ordering_protocol::{LoggableMessage, SerProofMetadata, View};
+use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 

@@ -18,12 +18,12 @@ use atlas_common::prng::ThreadSafePrng;
 use atlas_common::socket::SyncListener;
 use atlas_metrics::metrics::metric_duration;
 
-use crate::{FullNetworkNode};
+use crate::{FullNetworkNode, NetworkNode};
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 use crate::config::MioConfig;
 use crate::conn_utils::ConnCounts;
 use crate::message::{NetworkMessageKind, SerializedMessage, StoredMessage, StoredSerializedNetworkMessage, StoredSerializedProtocolMessage, WireMessage};
-use crate::message_signing::DefaultReconfigSignatureVerifier;
+use crate::message_signing::{DefaultProtocolSignatureVerifier, DefaultReconfigSignatureVerifier};
 use crate::metric::THREADPOOL_PASS_TIME_ID;
 use crate::mio_tcp::connections::{Connections, PeerConnection};
 use crate::mio_tcp::connections::conn_establish::pending_conn::{NetworkUpdateHandler, PendingConnHandle};
@@ -226,22 +226,8 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for MIOTcpNode<NI, RM, PM>
     where NI: NetworkInformationProvider + 'static,
           RM: Serializable + 'static,
           PM: Serializable + 'static {
-    type ConnectionManager = Connections<NI, RM, PM>;
-    type NetworkInfoProvider = NI;
     type IncomingRqHandler = PeerIncomingRqHandling<StoredMessage<PM::Message>>;
-    type NetworkSignatureVerifier = DefaultReconfigSignatureVerifier<PM, NI>;
-
-    fn id(&self) -> NodeId {
-        self.id
-    }
-
-    fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
-        &self.connections
-    }
-
-    fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider> {
-        &self.reconfiguration
-    }
+    type NetworkSignatureVerifier = DefaultProtocolSignatureVerifier<RM, PM, NI>;
 
     fn node_incoming_rq_handling(&self) -> &Arc<Self::IncomingRqHandler> {
         &self.client_pooling
@@ -369,14 +355,13 @@ impl<NI, RM, PM> ProtocolNetworkNode<PM> for MIOTcpNode<NI, RM, PM>
     }
 }
 
-impl<NI, RM, PM> ReconfigurationNode<RM> for MIOTcpNode<NI, RM, PM>
-    where NI: NetworkInformationProvider + 'static,
-          RM: Serializable + 'static,
-          PM: Serializable + 'static {
+impl<NI, RM, PM> NetworkNode for MIOTcpNode<NI, RM, PM> where NI: 'static + NetworkInformationProvider, PM: 'static + Serializable, RM: 'static + Serializable {
     type ConnectionManager = Connections<NI, RM, PM>;
     type NetworkInfoProvider = NI;
-    type IncomingReconfigRqHandler = ReconfigurationMessageHandler<StoredMessage<RM::Message>>;
-    type ReconfigurationNetworkUpdate = ReconfigurationMessageHandler<StoredMessage<RM::Message>>;
+
+    fn id(&self) -> NodeId {
+        self.id
+    }
 
     fn node_connections(&self) -> &Arc<Self::ConnectionManager> {
         &self.connections
@@ -385,6 +370,14 @@ impl<NI, RM, PM> ReconfigurationNode<RM> for MIOTcpNode<NI, RM, PM>
     fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider> {
         &self.reconfiguration
     }
+}
+
+impl<NI, RM, PM> ReconfigurationNode<RM> for MIOTcpNode<NI, RM, PM>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
+    type IncomingReconfigRqHandler = ReconfigurationMessageHandler<StoredMessage<RM::Message>>;
+    type ReconfigurationNetworkUpdate = ReconfigurationMessageHandler<StoredMessage<RM::Message>>;
 
     fn reconfiguration_network_update(&self) -> &Arc<Self::ReconfigurationNetworkUpdate> {
         &self.reconfig_handling

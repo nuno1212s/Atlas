@@ -14,11 +14,11 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::ordering_protocol::{LoggableMessage, ProtocolMessage, SerProof, SerProofMetadata, View};
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_core::state_transfer::{Checkpoint};
 use atlas_execution::serialize::ApplicationData;
 use crate::{CallbackType, ChannelMsg, DivisibleStateMessage, InstallState, MonolithicStateMessage, PWMessage, ResponseMessage, serialize};
 use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
-use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 
