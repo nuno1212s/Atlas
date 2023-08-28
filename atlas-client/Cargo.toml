@@ -22,3 +22,4 @@ atlas-execution = { path = "../atlas-execution" }
 atlas-common = { path = "../atlas-common" }
 atlas-core = { path = "../atlas-core" }
 atlas-metrics = {path = "../atlas-metrics" }
+atlas-reconfiguration = {path = "../atlas-reconfiguration" }

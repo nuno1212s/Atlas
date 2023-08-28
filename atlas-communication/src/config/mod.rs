@@ -1,8 +1,7 @@
 use intmap::IntMap;
 use rustls::{ClientConfig, ServerConfig};
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
-use atlas_common::node_id::NodeId;
-use crate::tcpip::PeerAddr;
+use atlas_common::node_id::{NodeId, NodeType};
 
 /// Configuration needed for a mio server
 pub struct MioConfig {
@@ -12,32 +11,18 @@ pub struct MioConfig {
     pub worker_count: usize,
 }
 
-/// The configuration of the network node
 pub struct NodeConfig {
     /// The id of this `Node`.
     pub id: NodeId,
-    /// The ID of the first client in the network
-    /// Every peer with id < first_cli is a replica and every peer with id > first_cli is
-    /// a client
-    pub first_cli: NodeId,
     /// TCP specific configuration
     pub tcp_config: TcpConfig,
     ///The configurations of the client pool config
     pub client_pool_config: ClientPoolConfig,
-    ///The configurations from the crypto part of the system
-    pub pk_crypto_config: PKConfig
 }
 
 pub struct TcpConfig {
-    /// The addresses of all nodes in the system (including clients),
-    /// as well as the domain name associated with each address.
-    ///
-    /// For any `NodeConfig` assigned to `c`, the IP address of
-    /// `c.addrs[&c.id]` should be equivalent to `localhost`.
-    pub addrs: IntMap<PeerAddr>,
     /// Configurations specific to the networking
     pub network_config: TlsConfig,
-
     /// How many concurrent connections should be established between replica nodes of the system
     pub replica_concurrent_connections: usize,
     /// How many client concurrent connections should be established between replica <-> client connections

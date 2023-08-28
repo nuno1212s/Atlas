@@ -14,7 +14,7 @@ readme = "README.md"
 [features]
 
 serialize_serde = ["atlas-core/serialize_serde", "atlas-communication/serialize_serde",
-    "atlas-execution/serialize_serde", "atlas-common/serialize_serde", "atlas-persistent-log/serialize_serde"]
+    "atlas-execution/serialize_serde", "atlas-common/serialize_serde", "atlas-persistent-log/serialize_serde", "atlas-reconfiguration/serialize_serde"]
 serialize_capnp = ["atlas-core/serialize_capnp", "atlas-execution/serialize_capnp",
     "atlas-communication/serialize_capnp", "atlas-persistent-log/serialize_capnp"]
 
@@ -29,4 +29,5 @@ atlas-common = { path = "../atlas-common" }
 atlas-core = { path = "../atlas-core" }
 atlas-metrics = {path = "../atlas-metrics" }
 atlas-persistent-log = { path = "../atlas-persistent-log" }
+atlas-reconfiguration = {path = "../atlas-reconfiguration"}
 futures-timer = "3.0.2"

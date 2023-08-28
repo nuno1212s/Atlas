@@ -1,18 +1,22 @@
 use std::sync::Arc;
 use log::error;
 
-use atlas_common::channel::ChannelMixedRx;
 use atlas_common::socket::SecureWriteHalfSync;
 use atlas_metrics::metrics::metric_duration;
 use crate::metric::COMM_REQUEST_SEND_TIME_ID;
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
 
-use crate::tcpip::connections::{ConnHandle, PeerConnection, NetworkSerializedMessage};
+use crate::tcpip::connections::{ConnHandle, PeerConnection, PeerConnections};
 
-pub(super) fn spawn_outgoing_thread<M: Serializable>(
+pub(super) fn spawn_outgoing_thread<NI, RM, PM>(
     conn_handle: ConnHandle,
-    mut peer: Arc<PeerConnection<M>>,
-    mut socket: SecureWriteHalfSync) {
+    node_conns: Arc<PeerConnections<NI, RM, PM>>,
+    mut peer: Arc<PeerConnection<RM, PM>>,
+    mut socket: SecureWriteHalfSync)
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     std::thread::Builder::new()
         .name(format!("Outgoing connection thread"))
         .spawn(move || {
@@ -41,7 +45,6 @@ pub(super) fn spawn_outgoing_thread<M: Serializable>(
                         if let Some(callback) = callback {
                             callback(true);
                         }
-
                     }
                     Err(error_kind) => {
                         error!("Failed to write message to socket. {:?}", error_kind);
@@ -53,6 +56,8 @@ pub(super) fn spawn_outgoing_thread<M: Serializable>(
                 }
             }
 
-            peer.delete_connection(conn_handle.id());
+            let remaining_conns = peer.delete_connection(conn_handle.id());
+
+            node_conns.handle_conn_lost(&peer.peer_node_id, remaining_conns);
         }).unwrap();
 }

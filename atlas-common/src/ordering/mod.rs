@@ -14,7 +14,7 @@ use either::{
     Right,
     Either,
 };
-use log::{error, warn};
+use log::{error, trace, warn};
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Serialize, Deserialize};
@@ -109,6 +109,11 @@ impl SeqNo {
         SeqNo(if overflow { 0 } else { next })
     }
 
+    #[inline]
+    pub fn prev(self) -> SeqNo {
+        self.0.checked_sub(1).map_or(SeqNo::ZERO, SeqNo)
+    }
+
     /// Returns the difference between two sequence numbers.
     /// Returns an index that is to the right or to the left of self, as if they were both placed
     /// on a straight line.
@@ -177,7 +182,6 @@ pub fn tbo_queue_message<M: Orderable>(
             //
             // NOTE: alternatively, if this seq no pertains to consensus,
             // we can try running the state transfer protocol
-            warn!("Message is behind our current sequence no {:?}", curr_seq, );
             return;
         }
     };

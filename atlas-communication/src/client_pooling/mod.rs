@@ -8,11 +8,13 @@ use log::{error, info, trace};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelMultRx, ChannelMultTx, ChannelSyncRx, ChannelSyncTx, TryRecvError};
 use atlas_common::error::*;
+use atlas_common::node_id::NodeType;
 use atlas_metrics::metrics::metric_duration;
 
-use crate::{NodeId, NodeIncomingRqHandler};
+use crate::{NodeId};
 use crate::config::ClientPoolConfig;
 use crate::metric::{CLIENT_POOL_BATCH_PASSING_TIME_ID, CLIENT_POOL_COLLECT_TIME_ID, REPLICA_RQ_PASSING_TIME_ID};
+use crate::protocol_node::NodeIncomingRqHandler;
 
 fn channel_init<T>(capacity: usize) -> (ChannelMultTx<T>, ChannelMultRx<T>) {
     channel::new_bounded_mult(capacity)
@@ -34,8 +36,6 @@ type ReplicaRqOutput<T> = (T, Instant);
 /// actually serializing the messages. This only handles already serialized messages.
 pub struct PeerIncomingRqHandling<T: Send + 'static> {
     batch_size: usize,
-    //The first client id, so we can distinguish clients from replicas
-    first_cli: NodeId,
     //Our own ID
     own_id: NodeId,
     //The loopback channel to our own node reception
@@ -61,7 +61,7 @@ unsafe impl<T> Sync for PeerIncomingRqHandling<T> where T: Send {}
 unsafe impl<T> Send for PeerIncomingRqHandling<T> where T: Send {}
 
 impl<T> PeerIncomingRqHandling<T> where T: Send {
-    pub fn new(id: NodeId, first_cli: NodeId, config: ClientPoolConfig) -> PeerIncomingRqHandling<T> {
+    pub fn new(id: NodeId, node_type: NodeType, config: ClientPoolConfig) -> PeerIncomingRqHandling<T> {
         //We only want to setup client handling if we are a replica
         let client_handling;
 
@@ -71,21 +71,25 @@ impl<T> PeerIncomingRqHandling<T> where T: Send {
             batch_size, clients_per_pool, batch_timeout_micros, batch_sleep_micros
         } = config;
 
-        if id < first_cli {
-            let (client_tx, client_rx) = channel::new_bounded_sync(NODE_CHAN_BOUND);
+        match node_type {
+            NodeType::Replica => {
+                let (client_tx, client_rx) = channel::new_bounded_sync(NODE_CHAN_BOUND);
 
-            client_handling = Some(ConnectedPeersGroup::new(DEFAULT_CLIENT_QUEUE,
-                                                            batch_size,
-                                                            client_tx.clone(),
-                                                            id,
-                                                            clients_per_pool,
-                                                            batch_timeout_micros,
-                                                            batch_sleep_micros));
-            client_channel = Some((client_tx, client_rx));
-        } else {
-            client_handling = None;
-            client_channel = None;
-        };
+                client_handling = Some(ConnectedPeersGroup::new(DEFAULT_CLIENT_QUEUE,
+                                                                batch_size,
+                                                                client_tx.clone(),
+                                                                id,
+                                                                clients_per_pool,
+                                                                batch_timeout_micros,
+                                                                batch_sleep_micros));
+                client_channel = Some((client_tx, client_rx));
+            }
+            NodeType::Client => {
+
+                client_handling = None;
+                client_channel = None;
+            }
+        }
 
         let replica_handling = ReplicaHandling::new(NODE_CHAN_BOUND);
 
@@ -99,7 +103,6 @@ impl<T> PeerIncomingRqHandling<T> where T: Send {
 
         let peers = PeerIncomingRqHandling {
             batch_size,
-            first_cli,
             own_id: id,
             peer_loopback: loopback_address,
             replica_handling,
@@ -118,28 +121,34 @@ impl<T> PeerIncomingRqHandling<T> where T: Send {
     ///Initialize a new peer connection
     /// This will be used by the networking layer to deliver the received messages to the
     /// Actual system
-    pub fn init_peer_conn(&self, peer: NodeId) -> Arc<ConnectedPeer<T>> {
+    pub fn init_peer_conn(&self, peer: NodeId, node_type: NodeType) -> Arc<ConnectedPeer<T>> {
         //debug!("Initializing peer connection for peer {:?} on peer {:?}", peer, self.own_id);
 
-        return if peer >= self.first_cli {
-            self.client_handling.as_ref().expect("Tried to init client request from client itself?")
-                .init_client(peer)
-        } else {
-            self.replica_handling.init_client(peer)
-        };
+        match node_type {
+            NodeType::Replica => {
+                self.replica_handling.init_client(peer)
+            }
+            NodeType::Client => {
+                self.client_handling.as_ref().expect("Tried to init client request from client itself?")
+                    .init_client(peer)
+            }
+        }
     }
 
     ///Get the incoming request queue for a given node
-    pub fn resolve_peer_conn(&self, peer: NodeId) -> Option<Arc<ConnectedPeer<T>>> {
+    pub fn resolve_peer_conn(&self, peer: NodeId, node_type: NodeType) -> Option<Arc<ConnectedPeer<T>>> {
         if peer == self.own_id {
             return Some(self.peer_loopback.clone());
         }
 
-        return if peer < self.first_cli {
-            self.replica_handling.resolve_connection(peer)
-        } else {
-            self.client_handling.as_ref().expect("Tried to resolve client conn in the client")
-                .get_client_conn(peer)
+        return match node_type {
+            NodeType::Replica => {
+                self.replica_handling.resolve_connection(peer)
+            }
+            NodeType::Client => {
+                self.client_handling.as_ref().expect("Tried to resolve client conn in the client")
+                    .get_client_conn(peer)
+            }
         };
     }
 

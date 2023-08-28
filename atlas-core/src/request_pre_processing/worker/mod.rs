@@ -12,7 +12,7 @@ use atlas_common::globals::ReadOnly;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_execution::serialize::SharedData;
+use atlas_execution::serialize::ApplicationData;
 use atlas_metrics::metrics::{metric_duration, metric_increment};
 
 use crate::messages::{ClientRqInfo, RequestMessage, StoredRequestMessage};

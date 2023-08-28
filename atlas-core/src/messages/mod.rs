@@ -1,49 +1,37 @@
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
-use std::sync::Arc;
-use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::error::*;
-use atlas_communication::message::{Header, NetworkMessage, StoredMessage};
-use atlas_execution::serialize::SharedData;
-use crate::serialize::{OrderingProtocolMessage, ServiceMsg};
 
 #[cfg(feature = "serialize_serde")]
-use serde::{Serialize, Deserialize};
-use atlas_common::crypto::hash::Digest;
-use atlas_common::globals::ReadOnly;
-use atlas_common::node_id::NodeId;
-use crate::state_transfer::Checkpoint;
-use crate::timeouts::{TimedOut, Timeout};
+use serde::{Deserialize, Serialize};
 
+use atlas_common::crypto::hash::Digest;
+use atlas_common::error::*;
+use atlas_common::node_id::NodeId;
+use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_communication::message::StoredMessage;
+use atlas_communication::protocol_node::ProtocolNetworkNode;
+use atlas_execution::serialize::ApplicationData;
+
+use crate::timeouts::TimedOut;
+
+pub mod signature_ver;
 
 /// The `Message` type encompasses all the messages traded between different
 /// asynchronous tasks in the system.
 ///
-pub enum Message<D> where D: SharedData {
-    /// Same as `Message::ExecutionFinished`, but includes a snapshot of
-    /// the application state.
-    ///
-    /// This is useful for local checkpoints.
-    ExecutionFinishedWithAppstate((SeqNo, D::State)),
-    DigestedAppState(Arc<ReadOnly<Checkpoint<D::State>>>),
+pub enum Message {
     /// We received a timeout from the timeouts layer.
     Timeout(TimedOut),
     /// Timeouts that have already been processed by the request pre processing layer.
     ProcessedTimeout(TimedOut, TimedOut),
 }
 
-impl<D> Debug for Message<D> where D: SharedData {
+impl Debug for Message {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Message::ExecutionFinishedWithAppstate(_) => {
-                write!(f, "Execution finished")
-            }
             Message::Timeout(_) => {
                 write!(f, "timeout")
-            }
-            Message::DigestedAppState(_) => {
-                write!(f, "DigestedAppState")
             }
             Message::ProcessedTimeout(_, _) => {
                 write!(f, "Digested Timeouts")
@@ -52,32 +40,8 @@ impl<D> Debug for Message<D> where D: SharedData {
     }
 }
 
-impl<D: SharedData> Message<D> {
-    /// Returns the `Header` of this message, if it is
-    /// a `SystemMessage`.
-    pub fn header(&self) -> Result<&Header> {
-        match self {
-            Message::ExecutionFinishedWithAppstate(_) =>
-                Err("Expected System found ExecutionFinishedWithAppstate")
-                    .wrapped(ErrorKind::CommunicationMessage),
-            Message::Timeout(_) =>
-                Err("Expected System found Timeout")
-                    .wrapped(ErrorKind::CommunicationMessage),
-            Message::DigestedAppState(_) => {
-                Err("Expected System found DigestedAppState")
-                    .wrapped(ErrorKind::CommunicationMessage)
-            }
-            Message::ProcessedTimeout(_, _) => {
-                Err("Expected System found ProcessedTimeout")
-                    .wrapped(ErrorKind::CommunicationMessage)
-            }
-        }
-    }
-}
-
-
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum SystemMessage<D: SharedData, P, ST> {
+pub enum SystemMessage<D: ApplicationData, P, ST, LT> {
     ///An ordered request
     OrderedRequest(RequestMessage<D::Request>),
     ///An unordered request
@@ -94,15 +58,21 @@ pub enum SystemMessage<D: SharedData, P, ST> {
     ForwardedProtocolMessage(ForwardedProtocolMessage<P>),
     ///A state transfer protocol message
     StateTransferMessage(StateTransfer<ST>),
+    ///A Log trasnfer protocol message
+    LogTransferMessage(LogTransfer<LT>),
 }
 
-impl<D, P, ST> SystemMessage<D, P, ST> where D: SharedData {
+impl<D, P, ST, LT> SystemMessage<D, P, ST, LT> where D: ApplicationData {
     pub fn from_protocol_message(msg: P) -> Self {
         SystemMessage::ProtocolMessage(Protocol::new(msg))
     }
 
     pub fn from_state_transfer_message(msg: ST) -> Self {
         SystemMessage::StateTransferMessage(StateTransfer::new(msg))
+    }
+
+    pub fn from_log_transfer_message(msg: LT) -> Self {
+        SystemMessage::LogTransferMessage(LogTransfer::new(msg))
     }
 
     pub fn from_fwd_protocol_message(msg: StoredMessage<Protocol<P>>) -> Self {
@@ -128,9 +98,18 @@ impl<D, P, ST> SystemMessage<D, P, ST> where D: SharedData {
             _ => { unreachable!() }
         }
     }
+    
+    pub fn into_log_transfer_message(self) -> LT {
+        match self {
+            SystemMessage::LogTransferMessage(l) => {
+                l.into_inner()
+            }
+            _ => { unreachable!() }
+        }
+    }
 }
 
-impl<D, P, ST> Clone for SystemMessage<D, P, ST> where D: SharedData, P: Clone, ST: Clone {
+impl<D, P, ST, LT> Clone for SystemMessage<D, P, ST, LT> where D: ApplicationData, P: Clone, ST: Clone, LT: Clone {
     fn clone(&self) -> Self {
         match self {
             SystemMessage::OrderedRequest(req) => {
@@ -157,11 +136,14 @@ impl<D, P, ST> Clone for SystemMessage<D, P, ST> where D: SharedData, P: Clone, 
             SystemMessage::StateTransferMessage(state_transfer) => {
                 SystemMessage::StateTransferMessage(state_transfer.clone())
             }
+            SystemMessage::LogTransferMessage(log_transfer) => {
+                SystemMessage::LogTransferMessage(log_transfer.clone())
+            }
         }
     }
 }
 
-impl<D, P, ST> Debug for SystemMessage<D, P, ST> where D: SharedData, P: Clone, ST: Clone {
+impl<D, P, ST, LT> Debug for SystemMessage<D, P, ST, LT> where D: ApplicationData, P: Clone, ST: Clone, LT: Clone {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             SystemMessage::OrderedRequest(_) => {
@@ -187,6 +169,9 @@ impl<D, P, ST> Debug for SystemMessage<D, P, ST> where D: SharedData, P: Clone, 
             }
             SystemMessage::StateTransferMessage(_) => {
                 write!(f, "State Transfer Message")
+            }
+            SystemMessage::LogTransferMessage(_) => {
+                write!(f, "Log transfer message")
             }
         }
     }
@@ -308,6 +293,9 @@ impl<P> Deref for Protocol<P> {
     }
 }
 
+///
+/// State transfer messages
+///
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
 pub struct StateTransfer<P> {
@@ -334,7 +322,39 @@ impl<P> Deref for StateTransfer<P> {
     }
 }
 
+///
+/// Log transfer messages
+///
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Clone)]
+pub struct LogTransfer<P> {
+    payload: P,
+}
+
+impl<P> LogTransfer<P> {
+    pub fn new(payload: P) -> Self {
+        Self { payload }
+    }
+
+    pub fn payload(&self) -> &P { &self.payload }
+
+    pub fn into_inner(self) -> P {
+        self.payload
+    }
+}
+
+impl<P> Deref for LogTransfer<P> {
+    type Target = P;
+
+    fn deref(&self) -> &Self::Target {
+        &self.payload
+    }
+}
+
+
+///
 /// A message containing a number of forwarded requests
+///
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
 pub struct ForwardedRequestsMessage<O> {

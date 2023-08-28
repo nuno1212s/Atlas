@@ -2,45 +2,59 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
+use atlas_common::peer_addr::PeerAddr;
 use bytes::Bytes;
 use either::Either;
 use log::{debug, error, warn};
 use rustls::{ClientConnection, ServerConnection, ServerName};
 
-use atlas_common::{prng, socket, threadpool};
-use atlas_common::error::*;
 use atlas_common::channel::{new_oneshot_channel, OneShotRx};
+use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
-use atlas_common::socket::{SecureReadHalf, SecureSocketSync, SecureWriteHalf, SyncListener, SyncSocket};
+use atlas_common::socket::{
+    SecureReadHalf, SecureSocketSync, SecureWriteHalf, SyncListener, SyncSocket,
+};
+use atlas_common::{prng, socket, threadpool};
 
 use crate::message::{Header, WireMessage};
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
-use crate::tcpip::{PeerAddr, TlsNodeAcceptor, TlsNodeConnector};
 use crate::tcpip::connections::conn_establish::ConnectionHandler;
 use crate::tcpip::connections::PeerConnections;
+use crate::tcpip::{TlsNodeAcceptor, TlsNodeConnector};
 
-pub(super) fn setup_conn_acceptor_thread<M: Serializable + 'static>(tcp_listener: SyncListener,
-                                                                    conn_handler: Arc<ConnectionHandler>,
-                                                                    peer_connection: Arc<PeerConnections<M>>) {
+pub(super) fn setup_conn_acceptor_thread<NI, RM, PM>(
+    tcp_listener: SyncListener,
+    conn_handler: Arc<ConnectionHandler>,
+    peer_connection: Arc<PeerConnections<NI, RM, PM>>,
+)
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     std::thread::Builder::new()
         .name(format!("Connection acceptor thread"))
-        .spawn(move || {
-            loop {
-                match tcp_listener.accept() {
-                    Ok(connection) => {
-                        conn_handler.accept_conn::<M>(&peer_connection, Either::Right(connection))
-                    }
-                    Err(err) => {
-                        error!("Failed to accept connection. {:?}", err);
-                    }
+        .spawn(move || loop {
+            match tcp_listener.accept() {
+                Ok(connection) => {
+                    conn_handler.accept_conn::<NI, RM, PM>(&peer_connection, Either::Right(connection))
+                }
+                Err(err) => {
+                    error!("Failed to accept connection. {:?}", err);
                 }
             }
-        }).unwrap();
+        })
+        .unwrap();
 }
 
-pub(super) fn connect_to_node_sync<M: Serializable + 'static>(conn_handler: Arc<ConnectionHandler>,
-                                                              connections: Arc<PeerConnections<M>>,
-                                                              peer_id: NodeId, addr: PeerAddr) -> OneShotRx<Result<()>> {
+pub(super) fn connect_to_node_sync<NI, RM, PM>(
+    conn_handler: Arc<ConnectionHandler>,
+    connections: Arc<PeerConnections<NI, RM, PM>>,
+    peer_id: NodeId,
+    addr: PeerAddr,
+) -> OneShotRx<Result<()>>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     let (tx, rx) = new_oneshot_channel();
 
     std::thread::Builder::new()
@@ -48,8 +62,10 @@ pub(super) fn connect_to_node_sync<M: Serializable + 'static>(conn_handler: Arc<
             let my_id = conn_handler.id();
 
             if !conn_handler.register_connecting_to_node(peer_id) {
-                warn!("{:?} // Tried to connect to node that I'm already connecting to {:?}",
-                my_id, peer_id);
+                warn!(
+                    "{:?} // Tried to connect to node that I'm already connecting to {:?}",
+                    my_id, peer_id
+                );
 
                 return;
             }
@@ -74,28 +90,33 @@ pub(super) fn connect_to_node_sync<M: Serializable + 'static>(conn_handler: Arc<
                     match addr.client_facing_socket.as_ref() {
                         Some(addr) => addr,
                         None => {
-                            error!("{:?} // Failed to find IP address for peer {:?}",
-                                my_id, peer_id);
+                            error!(
+                                "{:?} // Failed to find IP address for peer {:?}",
+                                my_id, peer_id
+                            );
 
                             return;
                         }
-                    }.clone()
+                    }
+                        .clone()
                 }
             };
 
-            debug!("{:?} // Starting connection to node {:?} with address {:?}",
-            my_id,
-            peer_id,
-            addr.0);
+            debug!(
+                "{:?} // Starting connection to node {:?} with address {:?}",
+                my_id, peer_id, addr.0
+            );
 
             let connector = match &conn_handler.connector {
-                TlsNodeConnector::Sync(connector) => { connector }
-                TlsNodeConnector::Async(_) => { panic!("Failed, trying to use async connector in sync mode") }
-            }.clone();
+                TlsNodeConnector::Sync(connector) => connector,
+                TlsNodeConnector::Async(_) => {
+                    panic!("Failed, trying to use async connector in sync mode")
+                }
+            }
+                .clone();
 
             const SECS: u64 = 1;
             const RETRY: usize = 3 * 60;
-
 
             // NOTE:
             // ========
@@ -108,17 +129,16 @@ pub(super) fn connect_to_node_sync<M: Serializable + 'static>(conn_handler: Arc<
             // failure with a channel send op
             for _try in 0..RETRY {
                 debug!(
-                "Attempting to connect to node {:?} with addr {:?} for the {} time",
-                peer_id, addr, _try);
+                    "Attempting to connect to node {:?} with addr {:?} for the {} time",
+                    peer_id, addr, _try
+                );
 
                 match socket::connect_sync(addr.0) {
                     Ok(mut sock) => {
-
                         // create header
                         let (header, _) =
-                            WireMessage::new(my_id, peer_id,
-                                             Bytes::new(), nonce,
-                                             None, None).into_inner();
+                            WireMessage::new(my_id, peer_id, Bytes::new(), nonce, None, None)
+                                .into_inner();
 
                         // serialize header
                         let mut buf = [0; Header::LENGTH];
@@ -128,24 +148,31 @@ pub(super) fn connect_to_node_sync<M: Serializable + 'static>(conn_handler: Arc<
                         if let Err(err) = sock.write_all(&buf[..]) {
                             // errors writing -> faulty connection;
                             // drop this socket
-                            error!("{:?} // Failed to connect to the node {:?} {:?} ", my_id, peer_id, err);
+                            error!(
+                                "{:?} // Failed to connect to the node {:?} {:?} ",
+                                my_id, peer_id, err
+                            );
                             break;
                         }
 
                         if let Err(err) = sock.flush() {
                             // errors flushing -> faulty connection;
                             // drop this socket
-                            error!("{:?} // Failed to connect to the node {:?} {:?} ", my_id, peer_id, err);
+                            error!(
+                                "{:?} // Failed to connect to the node {:?} {:?} ",
+                                my_id, peer_id, err
+                            );
                             break;
                         }
 
                         // TLS handshake; drop connection if it fails
                         let sock = if peer_id >= conn_handler.first_cli()
-                            || conn_handler.id() >= conn_handler.first_cli() {
+                            || conn_handler.id() >= conn_handler.first_cli()
+                        {
                             debug!(
-                            "{:?} // Connecting with plain text to node {:?}",
-                            my_id, peer_id
-                        );
+                                "{:?} // Connecting with plain text to node {:?}",
+                                my_id, peer_id
+                            );
 
                             SecureSocketSync::new_plain(sock)
                         } else {
@@ -177,14 +204,17 @@ pub(super) fn connect_to_node_sync<M: Serializable + 'static>(conn_handler: Arc<
                         conn_handler.done_connecting_to_node(&peer_id);
 
                         if let Err(err) = tx.send(Ok(())) {
-                            error!("Failed to deliver connection result {:?}",err);
+                            error!("Failed to deliver connection result {:?}", err);
                         }
 
                         return;
                     }
 
                     Err(err) => {
-                        error!("{:?} // Error on connecting to {:?} addr {:?}: {:?}", my_id, peer_id, addr, err);
+                        error!(
+                            "{:?} // Error on connecting to {:?} addr {:?}: {:?}",
+                            my_id, peer_id, addr, err
+                        );
                     }
                 }
 
@@ -196,20 +226,31 @@ pub(super) fn connect_to_node_sync<M: Serializable + 'static>(conn_handler: Arc<
 
             // announce we have failed to connect to the peer node
             //if we fail to connect, then just ignore
-            error!("{:?} // Failed to connect to the node {:?} ", my_id, peer_id);
+            error!(
+                "{:?} // Failed to connect to the node {:?} ",
+                my_id, peer_id
+            );
 
-            if let Err(err) =
-                tx.send(Err(Error::simple_with_msg(ErrorKind::Communication, "Failed to connect to node"))) {
+            if let Err(err) = tx.send(Err(Error::simple_with_msg(
+                ErrorKind::Communication,
+                "Failed to connect to node",
+            ))) {
                 error!("Failed to deliver connection result {:?}", err);
             }
-        }).unwrap();
+        })
+        .unwrap();
 
     rx
 }
 
-pub(super) fn handle_server_conn_established<M: Serializable + 'static>(conn_handler: Arc<ConnectionHandler>,
-                                                                        connections: Arc<PeerConnections<M>>,
-                                                                        mut sock: SyncSocket) {
+pub(super) fn handle_server_conn_established<NI, RM, PM>(
+    conn_handler: Arc<ConnectionHandler>,
+    connections: Arc<PeerConnections<NI, RM, PM>>,
+    mut sock: SyncSocket,
+)
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     threadpool::execute(move || {
         let acceptor = if let TlsNodeAcceptor::Sync(connector) = &conn_handler.tls_acceptor {
             connector.clone()
@@ -248,8 +289,10 @@ pub(super) fn handle_server_conn_established<M: Serializable + 'static>(conn_han
             };
 
             if !conn_handler.register_connecting_to_node(peer_id) {
-                warn!("{:?} // Tried to connect to node that I'm already connecting to {:?}",
-                my_id, peer_id);
+                warn!(
+                    "{:?} // Tried to connect to node that I'm already connecting to {:?}",
+                    my_id, peer_id
+                );
                 //Drop the connection since we are already establishing connection
 
                 return;
@@ -260,9 +303,7 @@ pub(super) fn handle_server_conn_established<M: Serializable + 'static>(conn_han
                 SecureSocketSync::new_plain(sock)
             } else {
                 match ServerConnection::new(acceptor) {
-                    Ok(s) => {
-                        SecureSocketSync::new_tls_server(s, sock)
-                    }
+                    Ok(s) => SecureSocketSync::new_tls_server(s, sock),
                     Err(error) => {
                         error!(
                             "{:?} // Failed to setup tls connection to node {:?}. {:?}",
@@ -274,7 +315,10 @@ pub(super) fn handle_server_conn_established<M: Serializable + 'static>(conn_han
                 }
             };
 
-            debug!("{:?} // Received new connection from id {:?}", my_id, peer_id);
+            debug!(
+                "{:?} // Received new connection from id {:?}",
+                my_id, peer_id
+            );
 
             let (write, read) = sock.split();
 

@@ -7,42 +7,50 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::time::Instant;
+use atlas_common::peer_addr::PeerAddr;
 use dashmap::DashMap;
-use intmap::IntMap;
 use log::{debug, error, warn};
 use atlas_common::channel::{ChannelMixedRx, ChannelMixedTx, new_bounded_mixed, new_oneshot_channel, OneShotRx};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
-use atlas_common::socket::{SecureSocket, SecureSocketAsync};
+use atlas_common::socket::SecureSocket;
 use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
-use crate::message::{NetworkMessage, WireMessage};
+use crate::message::{StoredMessage, WireMessage};
 use crate::NodeConnections;
+use crate::reconfiguration_node::{NetworkInformationProvider, ReconfigurationMessageHandler};
 use crate::serialize::Serializable;
 use crate::tcp_ip_simplex::connections::conn_establish::ConnectionHandler;
 use crate::tcp_ip_simplex::connections::ping_handler::PingHandler;
 use crate::tcpip::connections::{Callback, ConnCounts, ConnHandle, NetworkSerializedMessage};
-use crate::tcpip::{NodeConnectionAcceptor, PeerAddr, TlsNodeAcceptor, TlsNodeConnector};
+use crate::tcpip::{NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
 
 /// How many slots the outgoing queue has for messages.
 const TX_CONNECTION_QUEUE: usize = 1024;
 
-pub struct SimplexConnections<M: Serializable + 'static> {
+pub struct SimplexConnections<NI, RM, PM>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     id: NodeId,
     first_cli: NodeId,
-    address_map: IntMap<PeerAddr>,
+    node_lookup: Arc<NI>,
     conn_counts: ConnCounts,
-    client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>,
-    connection_map: DashMap<NodeId, Arc<PeerConnection<M>>>,
+    client_pooling: Arc<PeerIncomingRqHandling<StoredMessage<PM::Message>>>,
+    reconf_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
+    connection_map: DashMap<NodeId, Arc<PeerConnection<RM, PM>>>,
     connection_establishing: Arc<ConnectionHandler>,
     ping_handler: Arc<PingHandler>,
 }
 
-pub struct PeerConnection<M: Serializable + 'static> {
+pub struct PeerConnection<RM, PM>
+    where
+        RM: Serializable + 'static,
+        PM: Serializable + 'static {
     peer_node_id: NodeId,
-    // Connections of this given node
-    node_connections: Arc<SimplexConnections<M>>,
     //A handle to the request buffer of the peer we are connected to in the client pooling module
-    client: Arc<ConnectedPeer<NetworkMessage<M>>>,
+    client: Arc<ConnectedPeer<StoredMessage<PM::Message>>>,
+    //The handler for reconfiguration messages
+    reconf_handler: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
     //The channel used to send serialized messages to the tasks that are meant to handle them
     tx: ChannelMixedTx<NetworkSerializedMessage>,
     // The RX handle corresponding to the tx channel above. This is so we can quickly associate new
@@ -70,7 +78,10 @@ enum ConnectionDirection {
     Outgoing,
 }
 
-impl<M> NodeConnections for SimplexConnections<M> where M: Serializable + 'static {
+impl<NI, RM, PM> NodeConnections for SimplexConnections<NI, RM, PM>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     fn is_connected_to_node(&self, node: &NodeId) -> bool {
         self.connection_map.contains_key(node)
     }
@@ -86,7 +97,7 @@ impl<M> NodeConnections for SimplexConnections<M> where M: Serializable + 'stati
     }
 
     fn connect_to_node(self: &Arc<Self>, node: NodeId) -> Vec<OneShotRx<Result<()>>> {
-        let option = self.address_map.get(node.0 as u64);
+        let option = self.get_addr_for_node(node);
 
         match option {
             None => {
@@ -122,29 +133,38 @@ impl<M> NodeConnections for SimplexConnections<M> where M: Serializable + 'stati
     }
 }
 
-impl<M> SimplexConnections<M> where M: Serializable + 'static {
-
+impl<NI, RM, PM> SimplexConnections<NI, RM, PM>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     pub fn new(peer_id: NodeId, first_cli: NodeId,
                conn_counts: ConnCounts,
-               addrs: IntMap<PeerAddr>,
+               addrs: Arc<NI>,
                node_connector: TlsNodeConnector,
                node_acceptor: TlsNodeAcceptor,
-               client_pooling: Arc<PeerIncomingRqHandling<NetworkMessage<M>>>) -> Arc<Self> {
+               client_pooling: Arc<PeerIncomingRqHandling<StoredMessage<PM::Message>>>,
+               reconf_handling: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>,
+    ) -> Arc<Self> {
         let connection_establish = ConnectionHandler::new(peer_id, first_cli, conn_counts.clone(),
                                                           node_connector, node_acceptor);
 
         Arc::new(Self {
             id: peer_id,
             first_cli,
-            address_map: addrs,
+            node_lookup: addrs,
             connection_map: DashMap::new(),
             connection_establishing: connection_establish,
             client_pooling,
             conn_counts,
             ping_handler: PingHandler::new(),
+            reconf_handling,
         })
     }
-    
+
+    fn get_addr_for_node(&self, node: NodeId) -> Option<PeerAddr> {
+        self.node_lookup.get_addr_for_node(&node)
+    }
+
     /// Setup a tcp listener inside this peer connections object.
     pub(super) fn setup_tcp_listener(self: Arc<Self>, node_acceptor: NodeConnectionAcceptor) {
         self.connection_establishing.clone().setup_conn_worker(node_acceptor, self)
@@ -158,7 +178,7 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
     }
 
     /// Get the connection to a given node
-    pub fn get_connection(&self, node: &NodeId) -> Option<Arc<PeerConnection<M>>> {
+    pub fn get_connection(&self, node: &NodeId) -> Option<Arc<PeerConnection<RM, PM>>> {
         let option = self.connection_map.get(node);
 
         option.map(|conn| conn.value().clone())
@@ -172,7 +192,7 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
 
         let peer_conn = option.or_insert_with(||
             {
-                let con = PeerConnection::new_peer(Arc::clone(self), self.client_pooling.init_peer_conn(peer_id));
+                let con = PeerConnection::new_peer(self.client_pooling.init_peer_conn(peer_id), self.reconf_handling.clone());
 
                 debug!("{:?} // Creating new peer connection to {:?}. {:?}", self.id, peer_id,
                     con.client_pool_peer().client_id());
@@ -198,8 +218,7 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
                 }
 
                 while current_outgoing_connections < concurrency_level {
-
-                    let addr = self.address_map.get(peer_id.0 as u64).expect("Failed to get addr?");
+                    let addr = self.get_addr_for_node(peer_id).expect("Failed to get IP for node");
 
                     let _ = self.connection_establishing.connect_to_node(self, peer_id, addr.clone());
 
@@ -211,7 +230,7 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
             }
         }
 
-        peer_conn.insert_new_connection(&self.ping_handler, socket, direction, concurrency_level);
+        peer_conn.insert_new_connection::<NI>(self.clone(), &self.ping_handler, socket, direction, concurrency_level);
     }
 
     /// Handle a connection that has been lost
@@ -226,7 +245,7 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
 
         // Attempt to re-establish all of the missing connections
         if remaining_conns < concurrency_level {
-            let addr = self.address_map.get(node.0 as u64).unwrap();
+            let addr = self.get_addr_for_node(node).expect("Failed to get IP for node");
 
             for _ in 0..concurrency_level - remaining_conns {
                 self.connection_establishing.connect_to_node(self, node.clone(), addr.clone());
@@ -235,14 +254,16 @@ impl<M> SimplexConnections<M> where M: Serializable + 'static {
     }
 }
 
-impl<M> PeerConnection<M> where M: Serializable + 'static {
-    pub fn new_peer(node_conns: Arc<SimplexConnections<M>>, client: Arc<ConnectedPeer<NetworkMessage<M>>>) -> Arc<Self> {
+impl<RM, PM> PeerConnection<RM, PM>
+    where RM: Serializable + 'static, PM: Serializable + 'static {
+    pub fn new_peer(client: Arc<ConnectedPeer<StoredMessage<PM::Message>>>,
+                    reconf: Arc<ReconfigurationMessageHandler<StoredMessage<RM::Message>>>) -> Arc<Self> {
         let (tx, rx) = new_bounded_mixed(TX_CONNECTION_QUEUE);
 
         Arc::new(Self {
             peer_node_id: client.client_id().clone(),
-            node_connections: node_conns,
             client,
+            reconf_handler: reconf,
             tx,
             rx,
             conn_id_generator: AtomicU32::new(0),
@@ -271,10 +292,15 @@ impl<M> PeerConnection<M> where M: Serializable + 'static {
     }
 
     /// Insert a new connection
-    fn insert_new_connection(self: &Arc<Self>, ping_handler: &Arc<PingHandler>, socket: SecureSocket, direction: ConnectionDirection, conn_limit: usize) {
+    fn insert_new_connection<NI>(self: &Arc<Self>,
+                                 node_conns: Arc<SimplexConnections<NI, RM, PM>>,
+                                 ping_handler: &Arc<PingHandler>,
+                                 socket: SecureSocket,
+                                 direction: ConnectionDirection, conn_limit: usize)
+        where NI: NetworkInformationProvider + 'static {
         let conn_id = self.conn_id_generator.fetch_add(1, Ordering::Relaxed);
 
-        let conn_handle = ConnHandle::new(conn_id, self.node_connections.id, self.peer_node_id);
+        let conn_handle = ConnHandle::new(conn_id, node_conns.id, self.peer_node_id);
 
         let mut conns = match direction {
             ConnectionDirection::Incoming => &self.incoming_connections,
@@ -291,10 +317,10 @@ impl<M> PeerConnection<M> where M: Serializable + 'static {
 
         match direction {
             ConnectionDirection::Incoming => {
-                incoming::spawn_incoming_task_handler(conn_handle, Arc::clone(self), socket)
+                incoming::spawn_incoming_task_handler(conn_handle, node_conns, Arc::clone(self), socket)
             }
             ConnectionDirection::Outgoing => {
-                outgoing::spawn_outgoing_task_handler(conn_handle, Arc::clone(self), Arc::clone(ping_handler), socket);
+                outgoing::spawn_outgoing_task_handler(conn_handle, node_conns, Arc::clone(self), Arc::clone(ping_handler), socket);
             }
         }
 
@@ -332,10 +358,7 @@ impl<M> PeerConnection<M> where M: Serializable + 'static {
             active_connections.load(Ordering::Relaxed)
         };
 
-        // Retry to establish the connections if possible
-        self.node_connections.handle_conn_lost(self.peer_node_id, remaining_conns);
-
-        warn!("{:?} // Connection {} with peer {:?} has been deleted", self.node_connections.id,
+        warn!("Connection {} with peer {:?} has been deleted",
             conn_id,self.peer_node_id);
 
         remaining_conns
@@ -367,7 +390,7 @@ impl<M> PeerConnection<M> where M: Serializable + 'static {
     }
 
     /// The client pool peer handle for the our peer connection
-    pub fn client_pool_peer(&self) -> &Arc<ConnectedPeer<NetworkMessage<M>>> {
+    pub fn client_pool_peer(&self) -> &Arc<ConnectedPeer<StoredMessage<PM::Message>>> {
         &self.client
     }
 

@@ -126,8 +126,6 @@ rocksdb = { version = "0.20.1", optional = true }
 oneshot = "0.1.5"
 
 log = "0.4.17"
-env_logger = "0.10.0"
-log4rs = { version = "1.1.1", features = ["file_appender"] }
 #tracing = "0.1.32"
 #tracing-subscriber = { version = "0.3.11", features = ["fmt"] }
 

@@ -12,8 +12,11 @@ use atlas_capnp::objects_capnp;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_core::ordering_protocol::{ProtocolMessage, SerProofMetadata, View};
-use atlas_core::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use atlas_core::ordering_protocol::{LoggableMessage, ProtocolMessage, SerProofMetadata, View};
+use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
+use atlas_execution::serialize::ApplicationData;
+use atlas_execution::state::divisible_state::DivisibleState;
+use atlas_execution::state::monolithic_state::MonolithicState;
 
 pub(super) fn make_seq(seq: SeqNo) -> Result<Vec<u8>> {
     let mut seq_no = Vec::with_capacity(size_of::<SeqNo>());
@@ -79,11 +82,12 @@ pub(super) fn read_seq<R>(r: R) -> Result<SeqNo> where R: Read {
     Ok(SeqNo::from(seq_no.get_seq_no()))
 }
 
-pub(super) fn serialize_view<W, OPM>(w: &mut W, view: &View<OPM>) -> Result<usize>
+pub(super) fn serialize_view<W, D, OPM>(w: &mut W, view: &View<D, OPM>) -> Result<usize>
     where W: Write,
-          OPM: OrderingProtocolMessage {
+          D: ApplicationData,
+          OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::serialize_view::<W, OPM>(w, view);
+        let res = serde::serialize_view::<W, D, OPM>(w, view);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -91,11 +95,11 @@ pub(super) fn serialize_view<W, OPM>(w: &mut W, view: &View<OPM>) -> Result<usiz
     res
 }
 
-pub(super) fn serialize_message<W, OPM>(w: &mut W, msg: &ProtocolMessage<OPM>) -> Result<usize>
+pub(super) fn serialize_message<W, D, OPM>(w: &mut W, msg: &LoggableMessage<D, OPM>) -> Result<usize>
     where W: Write,
-          OPM: OrderingProtocolMessage {
+          OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::serialize_message::<W, OPM>(w, msg);
+        let res = serde::serialize_message::<W, D, OPM>(w, msg);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -103,11 +107,11 @@ pub(super) fn serialize_message<W, OPM>(w: &mut W, msg: &ProtocolMessage<OPM>) -
     res
 }
 
-pub(super) fn serialize_proof_metadata<W, OPM>(w: &mut W, metadata: &SerProofMetadata<OPM>) -> Result<usize>
+pub(super) fn serialize_proof_metadata<W, D, OPM>(w: &mut W, metadata: &SerProofMetadata<D, OPM>) -> Result<usize>
     where W: Write,
-          OPM: OrderingProtocolMessage {
+          OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::serialize_proof_metadata::<W, OPM>(w, metadata);
+        let res = serde::serialize_proof_metadata::<W, D, OPM>(w, metadata);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -115,11 +119,11 @@ pub(super) fn serialize_proof_metadata<W, OPM>(w: &mut W, metadata: &SerProofMet
     res
 }
 
-pub(super) fn deserialize_view<R, OPM>(r: &mut R) -> Result<View<OPM>>
+pub(super) fn deserialize_view<R, D, OPM>(r: &mut R) -> Result<View<D, OPM>>
     where R: Read,
-          OPM: OrderingProtocolMessage {
+          OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::deserialize_view::<R, OPM>(r);
+        let res = serde::deserialize_view::<R, D, OPM>(r);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -127,10 +131,10 @@ pub(super) fn deserialize_view<R, OPM>(r: &mut R) -> Result<View<OPM>>
     res
 }
 
-pub(super) fn deserialize_message<R, OPM>(r: &mut R) -> Result<ProtocolMessage<OPM>>
-    where R: Read, OPM: OrderingProtocolMessage {
+pub(super) fn deserialize_message<R, D, OPM>(r: &mut R) -> Result<LoggableMessage<D, OPM>>
+    where R: Read, OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::deserialize_message::<R, OPM>(r);
+        let res = serde::deserialize_message::<R,D, OPM>(r);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -138,10 +142,98 @@ pub(super) fn deserialize_message<R, OPM>(r: &mut R) -> Result<ProtocolMessage<O
     res
 }
 
-pub(super) fn deserialize_proof_metadata<R, OPM>(r: &mut R) -> Result<SerProofMetadata<OPM>>
-    where R: Read, OPM: OrderingProtocolMessage {
+pub(super) fn deserialize_proof_metadata<R, D, OPM>(r: &mut R) -> Result<SerProofMetadata<D, OPM>>
+    where R: Read, OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::deserialize_proof_metadata::<R, OPM>(r);
+        let res = serde::deserialize_proof_metadata::<R, D, OPM>(r);
+
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
+
+    res
+}
+
+pub(super) fn serialize_mon_state<W, S>(w: &mut W, state: &S) -> Result<usize>
+    where W: Write, S: MonolithicState {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::serialize_state::<W, S>(w, state);
+
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
+
+    res
+}
+
+pub(super) fn deserialize_mon_state<R, S>(r: &mut R) -> Result<S>
+    where R: Read, S: MonolithicState {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::deserialize_state::<R, S>(r);
+
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
+
+    res
+}
+
+pub(super) fn serialize_state_part_descriptor<W, S>(w: &mut W, state_desc: &S::PartDescription) -> Result<usize>
+    where W: Write, S: DivisibleState {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::serialize_state_part_descriptor::<W, S>(w, state_desc);
+
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
+
+    res
+}
+
+pub(super) fn deserialize_state_part_descriptor<R, S>(r: &mut R) -> Result<S::PartDescription>
+    where R: Read, S: DivisibleState {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::deserialize_state_part_descriptor::<R, S>(r);
+
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
+
+    res
+}
+
+pub(super) fn serialize_state_part<W, S>(w: &mut W, state_parts: &S::StatePart) -> Result<usize>
+    where W: Write, S: DivisibleState {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::serialize_state_part::<W, S>(w, state_parts);
+
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
+
+    res
+}
+
+pub(super) fn deserialize_state_part<R, S>(r: &mut R) -> Result<S::StatePart>
+    where R: Read, S: DivisibleState {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::deserialize_state_part::<R, S>(r);
+
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
+
+    res
+}
+
+pub(super) fn serialize_state_descriptor<W, S>(w: &mut W, descriptor: &S::StateDescriptor) -> Result<usize>
+    where W: Write, S: DivisibleState {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::serialize_state_descriptor::<W, S>(w, descriptor);
+
+    #[cfg(feature = "serialize_capnp")]
+        let res = todo!();
+
+    res
+}
+
+pub(super) fn deserialize_state_descriptor<R, S>(r: &mut R) -> Result<S::StateDescriptor>
+    where R: Read, S: DivisibleState {
+    #[cfg(feature = "serialize_serde")]
+        let res = serde::deserialize_state_descriptor::<R, S>(r);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();

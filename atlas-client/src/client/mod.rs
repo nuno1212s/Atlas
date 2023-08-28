@@ -4,31 +4,35 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::ops::Deref;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 use std::time::Instant;
 
 use futures_timer::Delay;
 use intmap::IntMap;
-use log::{error, debug, info};
-use atlas_common::async_runtime;
-use atlas_common::crypto::hash::Digest;
+use log::{debug, error, info};
 
+use atlas_common::{async_runtime, channel};
+use atlas_common::channel::ChannelSyncRx;
+use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::config::NodeConfig;
-use atlas_communication::message::{NetworkMessage, NetworkMessageKind, System};
-use atlas_communication::{Node, NodeConnections, NodeIncomingRqHandler};
-use atlas_execution::serialize::SharedData;
+use atlas_communication::{FullNetworkNode, NodeConnections};
+use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
+use atlas_core::messages::{Message, ReplyMessage, SystemMessage};
+use atlas_core::ordering_protocol::OrderProtocolTolerance;
+use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
+use atlas_core::reconfiguration_protocol::{QuorumUpdateMessage, ReconfigurableNodeTypes, ReconfigurationProtocol};
+use atlas_core::serialize::{ClientMessage, ClientServiceMsg};
+use atlas_core::timeouts::Timeouts;
+use atlas_execution::serialize::ApplicationData;
 use atlas_execution::system_params::SystemParams;
-use atlas_core::messages::{ReplyMessage, SystemMessage};
-use atlas_core::serialize::{ClientMessage, ClientServiceMsg, OrderingProtocolMessage, ServiceMessage, ServiceMsg, StateTransferMessage};
 use atlas_metrics::benchmarks::ClientPerf;
-use atlas_metrics::{measure_ready_rq_time, measure_response_deliver_time, measure_response_rcv_time, measure_sent_rq_info, measure_target_init_time, measure_time_rq_init, start_measurement};
 use atlas_metrics::metrics::{metric_duration, metric_increment};
+
 use crate::metric::{CLIENT_RQ_DELIVER_RESPONSE_ID, CLIENT_RQ_LATENCY_ID, CLIENT_RQ_PER_SECOND_ID, CLIENT_RQ_RECV_PER_SECOND_ID, CLIENT_RQ_RECV_TIME_ID, CLIENT_RQ_SEND_TIME_ID, CLIENT_RQ_TIMEOUT_ID};
 
 use self::unordered_client::{FollowerData, UnorderedClientMode};
@@ -87,9 +91,9 @@ impl<P> Deref for Callback<P> {
     }
 }
 
-pub struct ClientData<D>
+pub struct ClientData<RF, D>
     where
-        D: SharedData + 'static,
+        D: ApplicationData + 'static,
 {
     //The global session counter, so we don't have two client objects with the same session number
     session_counter: AtomicU32,
@@ -105,6 +109,12 @@ pub struct ClientData<D>
     //To call the awaiting tasks
     ready: Vec<Mutex<IntMap<ClientAwaker<D::Reply>>>>,
 
+    //Reconfiguration protocol
+    reconfig_protocol: RF,
+
+    // Receive messages from the reconfiguration protocol
+    reconfig_protocol_rx: ChannelSyncRx<QuorumUpdateMessage>,
+
     /*//We only want to have a single observer client for any and all sessions that the user
     //May have, so we keep this reference in here
     observer: Arc<Mutex<Option<ObserverClient>>>,
@@ -113,7 +123,7 @@ pub struct ClientData<D>
     stats: Option<Arc<ClientPerf>>,
 }
 
-pub trait ClientType<D: SharedData + 'static, NT> {
+pub trait ClientType<RF, D, NT> where D: ApplicationData + 'static {
     ///Initialize request in accordance with the type of clients
     fn init_request(
         session_id: SeqNo,
@@ -127,23 +137,23 @@ pub trait ClientType<D: SharedData + 'static, NT> {
     ///Initialize the targets for the requests according with the type of request made
     ///
     /// Returns the iterator along with the amount of items contained within it
-    fn init_targets(client: &Client<D, NT>) -> (Self::Iter, usize);
+    fn init_targets(client: &Client<RF, D, NT>) -> (Self::Iter, usize);
 
     ///How many responses does that client need to get the
-    fn needed_responses(client: &Client<D, NT>) -> usize;
+    fn needed_responses(client: &Client<RF, D, NT>) -> usize;
 }
 
 /// Represents a client node in `febft`.
 // TODO: maybe make the clone impl more efficient
-pub struct Client<D: SharedData + 'static, NT: 'static> {
+pub struct Client<RF, D, NT> where D: ApplicationData + 'static, NT: 'static {
     session_id: SeqNo,
     operation_counter: SeqNo,
-    data: Arc<ClientData<D>>,
+    data: Arc<ClientData<RF, D>>,
     params: SystemParams,
     node: Arc<NT>,
 }
 
-impl<D: SharedData, NT> Clone for Client<D, NT> {
+impl<RF, D: ApplicationData, NT> Clone for Client<RF, D, NT> {
     fn clone(&self) -> Self {
         let session_id = self
             .data
@@ -220,7 +230,10 @@ impl<'a, P> Future for ClientRequestFut<'a, P> {
 }
 
 /// Represents a configuration used to bootstrap a `Client`.
-pub struct ClientConfig<D: SharedData + 'static, NT: Node<ClientServiceMsg<D>>> {
+pub struct ClientConfig<RF, D, NT> where
+    RF: ReconfigurationProtocol + 'static,
+    D: ApplicationData + 'static,
+    NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, ClientServiceMsg<D>> {
     pub n: usize,
     pub f: usize,
 
@@ -228,6 +241,8 @@ pub struct ClientConfig<D: SharedData + 'static, NT: Node<ClientServiceMsg<D>>> 
 
     /// Check out the docs on `NodeConfig`.
     pub node: NT::Config,
+
+    pub reconfiguration: RF::Config,
 }
 
 ///Keeps track of the replica (or follower, depending on the request mode) votes for a given request
@@ -243,33 +258,72 @@ pub struct ReplicaVotes {
     digests: BTreeMap<Digest, usize>,
 }
 
-pub type RequestCallback<D: SharedData> = Box<dyn FnOnce(Result<D::Reply>) + Send>;
+pub type RequestCallback<D: ApplicationData> = Box<dyn FnOnce(Result<D::Reply>) + Send>;
 
-impl<D, NT> Client<D, NT>
+impl<D, RP, NT> Client<RP, D, NT>
     where
-        D: SharedData + 'static,
+        RP: ReconfigurationProtocol + 'static,
+        D: ApplicationData + 'static,
         NT: 'static
 {
     /// Bootstrap a client in `febft`.
-    pub async fn bootstrap(cfg: ClientConfig<D, NT>) -> Result<Self> where NT: Node<ClientServiceMsg<D>> {
+    pub async fn bootstrap<ROP>(cfg: ClientConfig<RP, D, NT>) -> Result<Self>
+        where NT: FullNetworkNode<RP::InformationProvider, RP::Serialization, ClientServiceMsg<D>>,
+              ROP: OrderProtocolTolerance + 'static, {
         let ClientConfig {
             n, f, node: node_config,
-            unordered_rq_mode,
+            unordered_rq_mode, reconfiguration,
         } = cfg;
 
         // system params
         let params = SystemParams::new(n, f)?;
+
+        // Actually, we have to get the configuration from here
+
+        let network_info_provider = RP::init_default_information(reconfiguration)?;
 
         // connect to peer nodes
         //
         // FIXME: can the client receive rogue reply messages?
         // perhaps when it reconnects to a replica after experiencing
         // network problems? for now ignore rogue messages...
-        let node = NT::bootstrap(node_config).await?;
+        let node = Arc::new(NT::bootstrap(network_info_provider.clone(), node_config).await?);
+
+        let default_timeout = Duration::from_secs(3);
+
+        let (exec_tx, exec_rx) = channel::new_bounded_sync(128);
+
+        let timeouts = Timeouts::new::<D>(node.id(), Duration::from_millis(1),
+                                          default_timeout, exec_tx.clone());
+
+        let (reconf_tx, reconf_rx) = channel::new_bounded_sync(128);
+
+        // TODO: Make timeouts actually work properly with the clients (including making the normal
+        //timeouts utilize this same system)
+
+        let reconfig_protocol = RP::initialize_protocol(network_info_provider,
+                                                        node.clone(),
+                                                        timeouts.clone(),
+                                                        ReconfigurableNodeTypes::ClientNode(reconf_tx),
+                                                        ROP::get_n_for_f(1)).await?;
+
+        info!("{:?} // Waiting for reconfiguration to stabilize...", node.id());
+
+        match reconf_rx.recv() {
+            Ok(message) => {
+                match message {
+                    QuorumUpdateMessage::UpdatedQuorumView(quorum_view) => {
+                        info!("{:?} // Reconfiguration stabilized, quorum view: {:?}", node.id(), quorum_view);
+                    }
+                }
+            }
+            Err(err) => {
+                return Err(Error::simple_with_msg(ErrorKind::ReconfigurationNotStable, format!("Error receiving reconfiguration message: {:?}", err).as_str()));
+            }
+        }
 
         let stats = {
             None
-            //Some(Arc::new(ClientPerf::new()))
         };
 
         // create shared data
@@ -284,6 +338,8 @@ impl<D, NT> Client<D, NT>
             ready: std::iter::repeat_with(|| Mutex::new(IntMap::new()))
                 .take(num_cpus::get())
                 .collect(),
+            reconfig_protocol,
+            reconfig_protocol_rx: reconf_rx,
             stats,
         });
 
@@ -294,22 +350,10 @@ impl<D, NT> Client<D, NT>
         // spawn receiving task
         std::thread::Builder::new()
             .name(format!("Client {:?} message processing thread", node.id()))
-            .spawn(move || Self::message_recv_task(params, task_data, node))
+            .spawn(move || Self::message_recv_task(params, task_data, node, timeouts, exec_rx))
             .expect("Failed to launch message processing thread");
 
         let session_id = data.session_counter.fetch_add(1, Ordering::Relaxed).into();
-
-        let mut conn = Vec::new();
-
-        for node_id in NodeId::targets(0..n) {
-            let mut result = cli_node.node_connections().connect_to_node(node_id);
-
-            conn.append(&mut result);
-        }
-
-        for result in conn {
-            result.await.unwrap()?;
-        }
 
         info!("{:?} // Client has connected to all nodes and is ready to start", cli_node.id());
 
@@ -342,7 +386,7 @@ impl<D, NT> Client<D, NT>
         &self.data.observer
     }*/
     #[inline]
-    pub fn id(&self) -> NodeId where NT: Node<ClientServiceMsg<D>> {
+    pub fn id(&self) -> NodeId where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         self.node.id()
     }
 
@@ -351,14 +395,19 @@ impl<D, NT> Client<D, NT>
         self.session_id
     }
 
-    pub(super) fn client_data(&self) -> &Arc<ClientData<D>> {
+    pub(super) fn client_data(&self) -> &Arc<ClientData<RP, D>> {
         &self.data
+    }
+
+    pub(super) fn get_quorum_view(&self) -> Vec<NodeId> {
+        self.data.reconfig_protocol.get_quorum_members()
     }
 
     pub(super) fn update_inner<T>(&mut self, operation: D::Request) -> Result<ClientRequestFut<D::Reply>>
         where
-            T: ClientType<D, NT>,
-            NT: Node<ClientServiceMsg<D>> {
+            T: ClientType<RP, D, NT>,
+            NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
+            RP: ReconfigurationProtocol + 'static {
         let start = Instant::now();
 
         let session_id = self.session_id;
@@ -380,17 +429,16 @@ impl<D, NT> Client<D, NT>
         };
 
         {
-
             let mut request_info_guard = request_info.lock().unwrap();
 
             request_info_guard.insert(request_key, sent_info);
         }
 
         // broadcast our request to the node group
-        self.node.broadcast(NetworkMessageKind::from(message), targets);
+        self.node.broadcast(message, targets);
 
         // await response
-        let ready = get_ready::<D>(session_id, &*self.data);
+        let ready = get_ready::<RP, D>(session_id, &*self.data);
 
         {
             let mut ready_stored = ready.lock().unwrap();
@@ -415,15 +463,17 @@ impl<D, NT> Client<D, NT>
     /// on top of `atlas`.
     pub async fn update<T>(&mut self, operation: D::Request) -> Result<D::Reply>
         where
-            T: ClientType<D, NT>,
-            NT: Node<ClientServiceMsg<D>>
+            T: ClientType<RP, D, NT>,
+            NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
+            RP: ReconfigurationProtocol + 'static
     {
         self.update_inner::<T>(operation)?.await
     }
 
     pub(super) fn update_callback_inner<T>(&mut self, operation: D::Request) -> u64 where
-        T: ClientType<D, NT>,
-        NT: Node<ClientServiceMsg<D>> {
+        T: ClientType<RP, D, NT>,
+        NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
+        RP: ReconfigurationProtocol + 'static {
         let start = Instant::now();
 
         let session_id = self.session_id;
@@ -453,7 +503,7 @@ impl<D, NT> Client<D, NT>
             request_info_guard.insert(request_key, sent_info);
         }
 
-        self.node.broadcast(NetworkMessageKind::from(message), targets);
+        self.node.broadcast(message, targets);
 
         Self::start_timeout(
             self.node.clone(),
@@ -481,8 +531,9 @@ impl<D, NT> Client<D, NT>
         operation: D::Request,
         callback: RequestCallback<D>,
     ) where
-        T: ClientType<D, NT>,
-        NT: Node<ClientServiceMsg<D>>
+        T: ClientType<RP, D, NT>,
+        NT: ProtocolNetworkNode<ClientServiceMsg<D>>,
+        RP: ReconfigurationProtocol + 'static
     {
         let rq_key = self.update_callback_inner::<T>(operation);
 
@@ -503,18 +554,18 @@ impl<D, NT> Client<D, NT>
         node: Arc<NT>,
         session_id: SeqNo,
         rq_id: SeqNo,
-        client_data: Arc<ClientData<D>>,
-    ) where NT: Node<ClientServiceMsg<D>> {
+        client_data: Arc<ClientData<RP, D>>,
+    ) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         let node = node.clone();
 
         async_runtime::spawn(async move {
             //Timeout delay
-            Delay::new(Duration::from_secs(1)).await;
+            Delay::new(Duration::from_secs(3)).await;
 
             let req_key = get_request_key(session_id, rq_id);
 
             {
-                let bucket = get_ready::<D>(session_id, &*client_data);
+                let bucket = get_ready::<RP, D>(session_id, &*client_data);
 
                 let bucket_guard = bucket.lock().unwrap();
 
@@ -530,8 +581,11 @@ impl<D, NT> Client<D, NT>
                         }
                         ClientAwaker::Async(None) => {
                             //TODO: This has to be handled (should populate the ready with an empty, but timed out ready)
+                            debug!("Weird timeout");
                         }
                     }
+
+                    debug!("Request {:?} of session {:?} timed out", rq_id, session_id);
 
                     /*if let Some(sent_rqs) = &node.sent_rqs {
                         let bucket = &sent_rqs[req_key as usize % sent_rqs.len()];
@@ -731,7 +785,8 @@ impl<D, NT> Client<D, NT>
     ///This task might become a large bottleneck with the scenario of few clients with high concurrent rqs,
     /// As the replicas will make very large batches and respond to all the sent requests in one go.
     /// This leaves this thread with a very large task to do in a very short time and it just can't keep up
-    fn message_recv_task(params: SystemParams, data: Arc<ClientData<D>>, node: Arc<NT>) where NT: Node<ClientServiceMsg<D>> {
+    fn message_recv_task(params: SystemParams, data: Arc<ClientData<RP, D>>,
+                         node: Arc<NT>, timeouts: Timeouts, timeout_rx: ChannelSyncRx<Message>) where NT: ProtocolNetworkNode<ClientServiceMsg<D>> {
         // use session id as key
         let mut last_operation_ids: IntMap<SeqNo> = IntMap::new();
         let mut replica_votes: IntMap<ReplicaVotes> = IntMap::new();
@@ -740,9 +795,7 @@ impl<D, NT> Client<D, NT>
         while let Ok(message) = node.node_incoming_rq_handling().receive_from_replicas(None) {
             let start = Instant::now();
 
-            let NetworkMessage { header, message } = message.unwrap();
-
-            let sys_msg = message.into();
+            let (header, sys_msg) = message.unwrap().into_inner();
 
             match &sys_msg {
                 SystemMessage::OrderedReply(msg_info)
@@ -797,14 +850,13 @@ impl<D, NT> Client<D, NT>
                     // wait for the amount of votes that we require identical replies
                     // In a BFT system, this is by default f+1
                     if count >= votes.needed_votes_count {
-
                         let votes = replica_votes.remove(request_key).unwrap();
 
                         last_operation_ids.insert(session_id.into(), operation_id);
 
                         //Get the wakers for this request and deliver the payload
 
-                        let ready = get_ready::<D>(session_id, &*data);
+                        let ready = get_ready::<RP, D>(session_id, &*data);
 
                         Self::deliver_response(
                             node.id(),
@@ -817,7 +869,6 @@ impl<D, NT> Client<D, NT>
                                 _ => unreachable!(),
                             },
                         );
-
                     } else {
                         //If we do not have f+1 replies yet, check if it's still possible to get those
                         //Replies by taking a look at the target count and currently received replies count
@@ -834,7 +885,7 @@ impl<D, NT> Client<D, NT>
                             replica_votes.remove(request_key);
 
                             //Get the wakers for this request and deliver the payload
-                            let ready = get_ready::<D>(session_id, &*data);
+                            let ready = get_ready::<RP, D>(session_id, &*data);
 
                             Self::deliver_error(
                                 node.id(),
@@ -850,6 +901,32 @@ impl<D, NT> Client<D, NT>
                     continue;
                 }
                 _ => {}
+            }
+
+            Self::receive_from_timeouts(&data, &timeout_rx)
+        }
+    }
+
+    fn receive_from_timeouts(data: &Arc<ClientData<RP, D>>, exec_rx: &ChannelSyncRx<Message>) {
+        while let Ok(timeout) = exec_rx.try_recv() {
+            match timeout {
+                Message::Timeout(timeout) => {
+                    data.reconfig_protocol.handle_timeout(timeout).expect("Failed to deliver timeout");
+                }
+                _ => {
+                    todo!()
+                }
+            }
+        }
+    }
+
+    fn receive_reconf_updates(data: &Arc<ClientData<RP, D>>) {
+        while let Ok(update) = data.reconfig_protocol_rx.try_recv() {
+            match update {
+                QuorumUpdateMessage::UpdatedQuorumView(update) => {}
+                _ => {
+                    todo!()
+                }
             }
         }
     }
@@ -871,11 +948,11 @@ fn get_correct_vec_for<T>(session_id: SeqNo, vec: &Vec<Mutex<T>>) -> &Mutex<T> {
 }
 
 #[inline]
-pub(super) fn register_callback<D: SharedData>(session_id: SeqNo,
-                                               request_key: u64,
-                                               data: &ClientData<D>,
-                                               callback: RequestCallback<D>) {
-    let ready = get_ready::<D>(session_id, &*data);
+pub(super) fn register_callback<RF, D: ApplicationData>(session_id: SeqNo,
+                                                        request_key: u64,
+                                                        data: &ClientData<RF, D>,
+                                                        callback: RequestCallback<D>) {
+    let ready = get_ready::<RF, D>(session_id, &*data);
 
     let callback = Callback {
         to_call: callback,
@@ -891,17 +968,17 @@ pub(super) fn register_callback<D: SharedData>(session_id: SeqNo,
 }
 
 #[inline]
-fn get_ready<D: SharedData>(
+fn get_ready<RF, D: ApplicationData>(
     session_id: SeqNo,
-    data: &ClientData<D>,
+    data: &ClientData<RF, D>,
 ) -> &Mutex<IntMap<ClientAwaker<D::Reply>>> {
     get_correct_vec_for(session_id, &data.ready)
 }
 
 #[inline]
-fn get_request_info<D: SharedData>(
+fn get_request_info<RF, D: ApplicationData>(
     session_id: SeqNo,
-    data: &ClientData<D>,
+    data: &ClientData<RF, D>,
 ) -> &Mutex<IntMap<SentRequestInfo>> {
     get_correct_vec_for(session_id, &data.request_info)
 }

@@ -1,23 +1,16 @@
 #![feature(async_fn_in_trait)]
 
-use std::collections::BTreeMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use intmap::IntMap;
-use rustls::{ClientConfig, ServerConfig};
-use crate::message::{NetworkMessage, NetworkMessageKind, StoredSerializedNetworkMessage};
 use crate::serialize::Serializable;
 use atlas_common::error::*;
-use crate::client_pooling::{ConnectedPeer, PeerIncomingRqHandling};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use atlas_common::channel::OneShotRx;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::node_id::NodeId;
-use crate::config::NodeConfig;
-use crate::message_signing::SignDetached;
-use crate::tcpip::{ConnectionType, NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
+use crate::reconfiguration_node::{NetworkInformationProvider, ReconfigurationNode};
+use crate::protocol_node::ProtocolNetworkNode;
 
 pub mod serialize;
 pub mod message;
@@ -26,8 +19,13 @@ pub mod client_pooling;
 pub mod config;
 pub mod message_signing;
 pub mod metric;
-pub mod tcpip;
-pub mod tcp_ip_simplex;
+pub mod reconfiguration_node;
+pub mod protocol_node;
+pub mod conn_utils;
+
+/// Actual node implementations
+//pub mod tcpip;
+//pub mod tcp_ip_simplex;
 pub mod mio_tcp;
 
 /// A trait defined that indicates how the connections are managed
@@ -52,94 +50,34 @@ pub trait NodeConnections {
 
     /// Disconnect this node from another node
     async fn disconnect_from_node(&self, node: &NodeId) -> Result<()>;
-
 }
 
-pub trait NodePK {
+pub trait NetworkNode {
 
-    /// Detached info for signatures
-    fn sign_detached(&self) -> SignDetached;
+    type ConnectionManager: NodeConnections;
 
-    /// Get the public key for a given node
-    fn get_public_key(&self, node: &NodeId) -> Option<PublicKey>;
-
-    /// Get our own key pair
-    fn get_key_pair(&self) -> &KeyPair;
-
-}
-
-/// Trait for taking requests from the network node
-pub trait NodeIncomingRqHandler<T>: Send {
-
-    fn rqs_len_from_clients(&self) -> usize;
-
-    fn receive_from_clients(&self, timeout: Option<Duration>) -> Result<Vec<T>>;
-
-    fn try_receive_from_clients(&self) -> Result<Option<Vec<T>>>;
-
-    fn rqs_len_from_replicas(&self) -> usize;
-
-    fn receive_from_replicas(&self, timeout: Option<Duration>) -> Result<Option<T>>;
-
-}
-
-/// A network node. Handles all the connections between nodes.
-pub trait Node<M: Serializable + 'static> : Send + Sync {
-
-    type Config;
-
-    type ConnectionManager : NodeConnections;
-
-    type Crypto: NodePK;
-
-    type IncomingRqHandler: NodeIncomingRqHandler<NetworkMessage<M>>;
-
-    /// Bootstrap the node
-    async fn bootstrap(node_config: Self::Config) -> Result<Arc<Self>>;
+    type NetworkInfoProvider: NetworkInformationProvider;
 
     /// Reports the id of this `Node`.
     fn id(&self) -> NodeId;
 
-    /// Reports the first Id
-    fn first_cli(&self) -> NodeId;
-
     /// Get a handle to the connection manager of this node.
     fn node_connections(&self) -> &Arc<Self::ConnectionManager>;
 
-    /// Crypto
-    fn pk_crypto(&self) -> &Self::Crypto;
+    fn network_info_provider(&self) -> &Arc<Self::NetworkInfoProvider>;
+}
 
-    /// Get a reference to the incoming request handling
-    fn node_incoming_rq_handling(&self) -> &Arc<Self::IncomingRqHandler>;
+/// A full network node implementation
+pub trait FullNetworkNode<NI, RM, PM>: ProtocolNetworkNode<PM> + ReconfigurationNode<RM> + Send + Sync
+    where
+        NI: NetworkInformationProvider,
+        RM: Serializable + 'static,
+        PM: Serializable + 'static {
 
-    /// Sends a message to a given target.
-    /// Does not block on the message sent. Returns a result that is
-    /// Ok if there is a current connection to the target or err if not. No other checks are made
-    /// on the success of the message dispatch
-    fn send(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> Result<()>;
+    /// The configuration type this node wants to accept
+    type Config;
 
-    /// Sends a signed message to a given target
-    /// Does not block on the message sent. Returns a result that is
-    /// Ok if there is a current connection to the target or err if not. No other checks are made
-    /// on the success of the message dispatch
-    fn send_signed(&self, message: NetworkMessageKind<M>, target: NodeId, flush: bool) -> Result<()>;
-
-    /// Broadcast a message to all of the given targets
-    /// Does not block on the message sent. Returns a result that is
-    /// Ok if there is a current connection to the targets or err if not. No other checks are made
-    /// on the success of the message dispatch
-    fn broadcast(&self, message: NetworkMessageKind<M>, targets: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>>;
-
-    /// Broadcast a signed message for all of the given targets
-    /// Does not block on the message sent. Returns a result that is
-    /// Ok if there is a current connection to the targets or err if not. No other checks are made
-    /// on the success of the message dispatch
-    fn broadcast_signed(&self, message: NetworkMessageKind<M>, target: impl Iterator<Item = NodeId>) -> std::result::Result<(), Vec<NodeId>>;
-
-    /// Broadcast the serialized messages provided.
-    /// Does not block on the message sent. Returns a result that is
-    /// Ok if there is a current connection to the targets or err if not. No other checks are made
-    /// on the success of the message dispatch
-    fn broadcast_serialized(&self, messages: BTreeMap<NodeId, StoredSerializedNetworkMessage<M>>) -> std::result::Result<(), Vec<NodeId>>;
-
+    /// Bootstrap the node
+    async fn bootstrap(network_info_provider: Arc<NI>, node_config: Self::Config) -> Result<Self>
+        where Self: Sized;
 }

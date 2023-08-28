@@ -11,13 +11,15 @@ readme = "README.md"
 members = [
     "atlas-common",
     "atlas-core",
+    "atlas-reconfiguration",
     "atlas-metrics",
     "atlas-capnp",
     "atlas-communication",
     "atlas-execution",
     "atlas-client",
     "atlas-replica",
-    "atlas-persistent-log"
+    "atlas-persistent-log",
+    "atlas-log-transfer"
 ]
 
 # https://doc.rust-lang.org/cargo/reference/profiles.html

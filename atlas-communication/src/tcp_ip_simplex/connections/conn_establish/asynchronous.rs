@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
+use atlas_common::peer_addr::PeerAddr;
 use bytes::Bytes;
 use either::Either;
 use futures::{AsyncReadExt, AsyncWriteExt};
@@ -11,21 +12,26 @@ use atlas_common::channel::{new_oneshot_channel, OneShotRx};
 use atlas_common::node_id::NodeId;
 use atlas_common::socket::{AsyncListener, AsyncSocket, SecureSocket, SecureSocketAsync};
 use crate::message::{Header, WireMessage};
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
 use crate::tcp_ip_simplex::connections::conn_establish::ConnectionHandler;
 use crate::tcp_ip_simplex::connections::{ConnectionDirection, SimplexConnections};
-use crate::tcpip::{PeerAddr, TlsNodeAcceptor, TlsNodeConnector};
+use crate::tcpip::{TlsNodeAcceptor, TlsNodeConnector};
 
 pub type Callback = Option<Box<dyn FnOnce(bool) + Send>>;
 
-pub(super) fn setup_conn_acceptor_task<M: Serializable + 'static>(tcp_listener: AsyncListener,
-                                                                  conn_handler: Arc<ConnectionHandler>,
-                                                                  peer_connections: Arc<SimplexConnections<M>>) {
+pub(super) fn setup_conn_acceptor_task<NI, RM, PM>(tcp_listener: AsyncListener,
+                                                   conn_handler: Arc<ConnectionHandler>,
+                                                   peer_connections: Arc<SimplexConnections<NI, RM, PM>>)
+    where
+        NI: NetworkInformationProvider + 'static,
+        RM: Serializable + 'static,
+        PM: Serializable + 'static {
     rt::spawn(async move {
         loop {
             match tcp_listener.accept().await {
                 Ok(connection) => {
-                    conn_handler.accept_conn::<M>(&peer_connections, Either::Left(connection))
+                    conn_handler.accept_conn::<NI, RM, PM>(&peer_connections, Either::Left(connection))
                 }
                 Err(err) => {
                     error!("Failed to accept connection. {:?}", err);
@@ -35,9 +41,12 @@ pub(super) fn setup_conn_acceptor_task<M: Serializable + 'static>(tcp_listener: 
     });
 }
 
-pub(super) fn connect_to_node_async<M: Serializable + 'static>(conn_handler: Arc<ConnectionHandler>,
-                                                               connections: Arc<SimplexConnections<M>>,
-                                                               peer_id: NodeId, addr: PeerAddr) -> OneShotRx<Result<()>> {
+pub(super) fn connect_to_node_async<NI, RM, PM>(conn_handler: Arc<ConnectionHandler>,
+                                                connections: Arc<SimplexConnections<NI, RM, PM>>,
+                                                peer_id: NodeId, addr: PeerAddr) -> OneShotRx<Result<()>>
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     let (tx, rx) = new_oneshot_channel();
 
     rt::spawn(async move {
@@ -142,7 +151,6 @@ pub(super) fn connect_to_node_async<M: Serializable + 'static>(conn_handler: Arc
 
                         SecureSocketAsync::new_plain(sock)
                     } else {
-
                         SecureSocketAsync::new_plain(sock)
                         /*let dns_ref = match ServerName::try_from(addr.1.as_str()) {
                             Ok(server_name) => server_name,
@@ -195,9 +203,10 @@ pub(super) fn connect_to_node_async<M: Serializable + 'static>(conn_handler: Arc
     rx
 }
 
-pub(super) fn handle_server_conn_established<M: Serializable + 'static>(conn_handler: Arc<ConnectionHandler>,
-                                                                        connections: Arc<SimplexConnections<M>>,
-                                                                        mut sock: AsyncSocket) {
+pub(super) fn handle_server_conn_established<NI, RM, PM>(conn_handler: Arc<ConnectionHandler>,
+                                                         connections: Arc<SimplexConnections<NI, RM, PM>>,
+                                                         mut sock: AsyncSocket)
+    where NI: NetworkInformationProvider + 'static, RM: Serializable + 'static, PM: Serializable + 'static {
     rt::spawn(async move {
         let acceptor = if let TlsNodeAcceptor::Async(connector) = &conn_handler.tls_acceptor {
             connector.clone()

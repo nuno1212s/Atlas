@@ -1,5 +1,6 @@
 //! Public key cryptographic operations.
 
+use std::fmt::{Debug, Formatter};
 #[cfg(feature = "serialize_serde")]
 use serde::{Serialize, Deserialize};
 
@@ -13,19 +14,25 @@ mod ring_ed25519;
 pub struct KeyPair {
     #[cfg(feature = "crypto_signature_ring_ed25519")]
     inner: ring_ed25519::KeyPair,
+
+    pub_key_bytes: Vec<u8>,
 }
 
 /// The public component of a `KeyPair`.
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct PublicKey {
     #[cfg(feature = "crypto_signature_ring_ed25519")]
     inner: ring_ed25519::PublicKey,
+
+    pk_bytes: Vec<u8>,
 }
 
 /// Reference to a `PublicKey`.
 pub struct PublicKeyRef<'a> {
     #[cfg(feature = "crypto_signature_ring_ed25519")]
     inner: &'a ring_ed25519::PublicKey,
+
+    byte_repr: &'a Vec<u8>,
 }
 
 /// A `Signature` is the result of using `KeyPair::sign`. Represents
@@ -47,11 +54,11 @@ pub struct Signature {
 impl KeyPair {
     /// Constructs a `KeyPair` from a byte buffer of appropriate size.
     pub fn from_bytes(raw_bytes: &[u8]) -> Result<Self> {
-        let inner = {
+        let (inner, pk_bytes) = {
             #[cfg(feature = "crypto_signature_ring_ed25519")]
             { ring_ed25519::KeyPair::from_bytes(raw_bytes)? }
         };
-        Ok(KeyPair { inner })
+        Ok(KeyPair { inner, pub_key_bytes: pk_bytes })
     }
 
     /// Returns a reference to the public component of this `KeyPair`.
@@ -60,7 +67,13 @@ impl KeyPair {
     /// yielding a `PublicKey`.
     pub fn public_key<'a>(&'a self) -> PublicKeyRef<'a> {
         let inner = self.inner.public_key();
-        PublicKeyRef { inner }
+        PublicKeyRef { inner, byte_repr: &self.pub_key_bytes }
+    }
+
+    /// Returns a reference to the public key bytes of this `KeyPair`.
+    /// This is used mostly for serialization stuff
+    pub fn public_key_bytes(&self) -> &[u8] {
+        &self.pub_key_bytes
     }
 
     /// Performs a cryptographic signature of an arbitrary message.
@@ -71,13 +84,12 @@ impl KeyPair {
         let inner = self.inner.sign(message)?;
         Ok(Signature { inner })
     }
-
 }
 
 impl<'a> From<PublicKeyRef<'a>> for PublicKey {
     fn from(pk: PublicKeyRef<'a>) -> PublicKey {
         let inner = pk.inner.clone();
-        PublicKey { inner }
+        PublicKey { inner, pk_bytes: pk.byte_repr.clone() }
     }
 }
 
@@ -95,7 +107,11 @@ impl PublicKey {
             #[cfg(feature = "crypto_signature_ring_ed25519")]
             { ring_ed25519::PublicKey::from_bytes(raw_bytes)? }
         };
-        Ok(PublicKey { inner })
+        Ok(PublicKey { inner, pk_bytes: raw_bytes.to_vec() })
+    }
+
+    pub fn pk_bytes(&self) -> &[u8] {
+        &self.pk_bytes
     }
 
     /// Verifies if a signature is valid, i.e. if this `KeyPair` performed it.
@@ -121,6 +137,12 @@ impl Signature {
             { ring_ed25519::Signature::from_bytes(raw_bytes)? }
         };
         Ok(Signature { inner })
+    }
+}
+
+impl Debug for Signature {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:x?}", self.inner.as_ref().chunks(4).next().unwrap())
     }
 }
 

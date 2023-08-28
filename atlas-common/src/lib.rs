@@ -25,11 +25,7 @@
 //! libraries performing identical duties.
 #![feature(type_alias_impl_trait)]
 
-use log4rs::append::file::FileAppender;
-use log4rs::Config;
-use log4rs::config::{Appender, Logger, Root};
-use log4rs::encode::pattern::PatternEncoder;
-use log::{debug, LevelFilter};
+use log::{debug};
 use crate::globals::Flag;
 use crate::error::*;
 
@@ -47,6 +43,7 @@ pub mod socket;
 pub mod mem_pool;
 pub mod node_id;
 pub mod config_utils;
+pub mod peer_addr;
 
 
 static INITIALIZED: Flag = Flag::new();
@@ -76,39 +73,6 @@ pub unsafe fn init(c: InitConfig) -> Result<Option<InitGuard>> {
     if INITIALIZED.test() {
         return Ok(None);
     }
-
-    let path = match c.id {
-        Some(id) => {
-            format!("./log/febft_{}.log", id)
-        }
-        None => {
-            String::from("./log/febft.log")
-        }
-    };
-
-    let appender = FileAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{l} {d} - {m}{n}")))
-        .build(path)
-        .wrapped(ErrorKind::MsgLog)?;
-
-    let config = Config::builder()
-        .appender(Appender::builder().build("appender", Box::new(appender)))
-        .logger(
-            Logger::builder()
-                .appender("appender")
-                .additive(false)
-                .build("app::appender", LevelFilter::Info),
-        )
-        .build(
-            Root::builder()
-                .appender("appender")
-                .build(LevelFilter::Info),
-        )
-        .wrapped(ErrorKind::MsgLog)?;
-
-    let _handle = log4rs::init_config(config).wrapped(ErrorKind::MsgLog)?;
-
-    //tracing_subscriber::fmt::init();
 
     threadpool::init(c.threadpool_threads)?;
     async_runtime::init(c.async_threads)?;

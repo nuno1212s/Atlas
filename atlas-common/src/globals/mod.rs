@@ -85,6 +85,7 @@ impl<T: Sync + 'static> Global<T> {
 
 
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+#[derive(Debug)]
 pub struct ReadOnly<T> {
 
     value: T

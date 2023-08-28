@@ -1,50 +1,141 @@
+use std::marker::PhantomData;
 use std::sync::Arc;
 use intmap::IntMap;
 use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::crypto::signature::{KeyPair, PublicKey, Signature};
 use atlas_common::error::*;
-use atlas_common::node_id::NodeId;
 use crate::config::PKConfig;
-use crate::message::{WireMessage};
-use crate::NodePK;
+use crate::cpu_workers;
+use crate::message::{Header, NetworkMessageKind, WireMessage};
+use crate::reconfiguration_node::NetworkInformationProvider;
+use crate::serialize::{Buf, digest_message, Serializable};
 
-pub struct NodePKShared {
-    my_key: KeyPair,
-    peer_keys: IntMap<PublicKey>,
+/// A trait that defines the signature verification function
+pub trait NetworkMessageSignatureVerifier<M, NI>
+    where M: Serializable, NI: NetworkInformationProvider, Self: Sized {
+    fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: M::Message) -> Result<(bool, M::Message)>;
+
+    /// Verify the signature of the internal message structure
+    /// Returns Result<bool> where true means the signature is valid, false means it is not
+    fn verify_signature_with_buf(info_provider: &Arc<NI>, header: &Header, msg: &M::Message, buf: &Buf) -> Result<bool>;
 }
 
-pub struct SignDetached {
-    shared: Arc<NodePKShared>,
+pub enum MessageKind {
+    Reconfig,
+    Protocol,
 }
 
-impl SignDetached {
+pub struct DefaultReconfigSignatureVerifier<RM: Serializable, PM: Serializable, NI: NetworkInformationProvider>(Arc<NI>, PhantomData<(RM, PM)>);
 
-    pub fn from(shared: &Arc<NodePKShared>) -> Self {
-        Self {
-            shared: Arc::clone(shared),
+impl<PM, RM, NI> NetworkMessageSignatureVerifier<RM, NI> for DefaultReconfigSignatureVerifier<RM, PM, NI>
+    where PM: Serializable, RM: Serializable, NI: NetworkInformationProvider + 'static {
+    fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: RM::Message) -> Result<(bool, RM::Message)> {
+        let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
+
+        let sig = header.signature();
+
+        let network = NetworkMessageKind::<RM, PM>::from_reconfig(msg);
+
+        if let Ok((buf, digest)) = cpu_workers::serialize_digest_no_threadpool(&network) {
+            if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), digest.as_ref()) {
+                if RM::verify_message_internal::<NI, Self>(info_provider, header, network.deref_reconfig())? {
+                    Ok((true, network.into_reconfig()))
+                } else {
+                    Ok((false, network.into_reconfig()))
+                }
+            } else {
+                Ok((false, network.into_reconfig()))
+            }
+        } else {
+            Ok((false, network.into_reconfig()))
         }
     }
 
-    pub fn key_pair(&self) -> &KeyPair {
-        &self.shared.my_key
+    fn verify_signature_with_buf(info_provider: &Arc<NI>, header: &Header, msg: &RM::Message, buf: &Buf) -> Result<bool> {
+        let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
+
+        let sig = header.signature();
+
+        if let Ok(digest) = digest_message(buf.clone()) {
+            if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), digest.as_ref()) {
+                RM::verify_message_internal::<NI, Self>(info_provider, header, msg)
+            } else {
+                Ok(false)
+            }
+        } else {
+            Ok(false)
+        }
     }
 }
 
-impl NodePKShared {
+pub struct DefaultProtocolSignatureVerifier<RM: Serializable, PM: Serializable, NI: NetworkInformationProvider>(Arc<NI>, PhantomData<(RM, PM)>);
 
+impl<RM, PM, NI> NetworkMessageSignatureVerifier<PM, NI> for DefaultProtocolSignatureVerifier<RM, PM, NI>
+    where RM: Serializable, PM: Serializable, NI: NetworkInformationProvider + 'static {
+    fn verify_signature(info_provider: &Arc<NI>, header: &Header, msg: PM::Message) -> Result<(bool, PM::Message)> {
+        let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
+
+        let sig = header.signature();
+
+        let network = NetworkMessageKind::<RM, PM>::from_system(msg);
+
+        if let Ok((buf, digest)) = cpu_workers::serialize_digest_no_threadpool(&network) {
+            if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), digest.as_ref()) {
+                if PM::verify_message_internal::<NI, Self>(info_provider, header, network.deref_system())? {
+                    Ok((true, network.into_system()))
+                } else {
+                    Ok((false, network.into_system()))
+                }
+            } else {
+                Ok((false, network.into_system()))
+            }
+        } else {
+            Ok((false, network.into_system()))
+        }
+    }
+
+    fn verify_signature_with_buf(info_provider: &Arc<NI>, header: &Header, msg: &PM::Message, buf: &Buf) -> Result<bool> {
+        let key = info_provider.get_public_key(&header.from()).ok_or(Error::simple_with_msg(ErrorKind::CommunicationPeerNotFound, "Could not find public key for peer"))?;
+
+        let sig = header.signature();
+
+        if let Ok(digest) = digest_message(buf.clone()) {
+            if let Ok(()) = verify_parts(&key, sig, header.from().0 as u32, header.to().0 as u32, header.nonce(), digest.as_ref()) {
+                PM::verify_message_internal::<NI, Self>(info_provider, header, msg)
+            } else {
+                Ok(false)
+            }
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+#[deprecated(since = "0.1.0", note = "please use `ReconfigurableNetworkNode` instead")]
+pub struct NodePKShared {
+    my_key: Arc<KeyPair>,
+    peer_keys: IntMap<PublicKey>,
+}
+
+impl NodePKShared {
     pub fn from_config(config: PKConfig) -> Arc<Self> {
         Arc::new(Self {
-            my_key: config.sk,
-            peer_keys: config.pk
+            my_key: Arc::new(config.sk),
+            peer_keys: config.pk,
         })
     }
 
-    
+    pub fn new(my_key: KeyPair, peer_keys: IntMap<PublicKey>) -> Self {
+        Self {
+            my_key: Arc::new(my_key),
+            peer_keys,
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct NodePKCrypto {
-    pk_shared: Arc<NodePKShared>
+    pk_shared: Arc<NodePKShared>,
 }
 
 impl NodePKCrypto {
@@ -52,21 +143,7 @@ impl NodePKCrypto {
         Self { pk_shared }
     }
 
-    pub fn my_key(&self) -> &KeyPair {
-        &self.pk_shared.my_key
-    }
-}
-
-impl NodePK for NodePKCrypto {
-    fn sign_detached(&self) -> SignDetached {
-        SignDetached::from(&self.pk_shared)
-    }
-
-    fn get_public_key(&self, node: &NodeId) -> Option<PublicKey> {
-        self.pk_shared.peer_keys.get(node.0 as u64).cloned()
-    }
-
-    fn get_key_pair(&self) -> &KeyPair {
+    pub fn my_key(&self) -> &Arc<KeyPair> {
         &self.pk_shared.my_key
     }
 }
@@ -127,8 +204,8 @@ pub(crate) fn verify_parts(
     from: u32,
     to: u32,
     nonce: u64,
-    payload: &[u8],
+    payload_digest: &[u8],
 ) -> Result<()> {
-    let digest = digest_parts(from, to, nonce, payload);
+    let digest = digest_parts(from, to, nonce, payload_digest);
     pk.verify(digest.as_ref(), sig)
 }

@@ -7,15 +7,20 @@ use atlas_common::error::*;
 use atlas_common::async_runtime as rt;
 use crate::cpu_workers;
 use crate::cpu_workers::serialize_digest_threadpool_return_msg;
-use crate::message::{Header, NetworkMessage, NetworkMessageKind, PingMessage, WireMessage};
+use crate::message::{Header, NetworkMessage, NetworkMessageKind, PingMessage, StoredMessage, WireMessage};
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
-use crate::tcp_ip_simplex::connections::{ConnectionDirection, PeerConnection};
+use crate::tcp_ip_simplex::connections::{ConnectionDirection, PeerConnection, SimplexConnections};
 use crate::tcpip::connections::ConnHandle;
 
-pub(super) fn spawn_incoming_task<M: Serializable + 'static>(
+pub(super) fn spawn_incoming_task<NI, RM, PM>(
     conn_handle: ConnHandle,
-    peer: Arc<PeerConnection<M>>,
-    mut socket: SecureSocketAsync) {
+    node_connections: Arc<SimplexConnections<NI, RM, PM>>,
+    peer: Arc<PeerConnection<RM, PM>>,
+    mut socket: SecureSocketAsync)
+    where NI: NetworkInformationProvider + 'static,
+          RM: Serializable + 'static,
+          PM: Serializable + 'static {
     rt::spawn(async move {
         let client_pool_buffer = Arc::clone(peer.client_pool_peer());
         let mut read_buffer = BytesMut::with_capacity(Header::LENGTH);
@@ -53,8 +58,8 @@ pub(super) fn spawn_incoming_task<M: Serializable + 'static>(
             }
 
             // Use the threadpool for CPU intensive work in order to not block the IO threads
-            let result = cpu_workers::deserialize_message(header.clone(),
-                                                          read_buffer).await.unwrap();
+            let result = cpu_workers::deserialize_message::<RM, PM>(header.clone(),
+                                                                    read_buffer).await.unwrap();
 
             let message = match result {
                 Ok((message, bytes)) => {
@@ -77,38 +82,51 @@ pub(super) fn spawn_incoming_task<M: Serializable + 'static>(
                         break;
                     }
 
-                    continue
+                    continue;
                 }
-                _ => {}
+                NetworkMessageKind::ReconfigurationMessage(reconf) => {
+                    let msg = StoredMessage::new(header, reconf.into());
+
+                    if let Err(err) = peer.reconf_handler.push_request(msg) {
+                        error!("{:?} // Failed to push reconfiguration message {:?}. {:?}",
+                            conn_handle.my_id(),
+                            peer_id,
+                            err,);
+                    }
+                }
+                NetworkMessageKind::System(sys_msg) => {
+                    let msg = StoredMessage::new(header, sys_msg.into());
+
+                    if let Err(inner) = client_pool_buffer.push_request(msg) {
+                        error!("{:?} // Channel closed, closing tcp connection as well to peer {:?}. {:?}",
+                            conn_handle.my_id(),
+                            peer_id,
+                            inner,);
+
+                        break;
+                    };
+                }
             }
-
-            let msg = NetworkMessage::new(header, message);
-
-            if let Err(inner) = client_pool_buffer.push_request(msg) {
-                error!("{:?} // Channel closed, closing tcp connection as well to peer {:?}. {:?}",
-                    conn_handle.my_id(),
-                    peer_id,
-                    inner,
-                );
-
-                break;
-            };
 
             //TODO: Statistics
         }
 
-        peer.delete_connection(conn_handle.id(), ConnectionDirection::Incoming);
+        let remaining_conns = peer.delete_connection(conn_handle.id(), ConnectionDirection::Incoming);
+
+        // Retry to establish the connections if possible
+        node_connections.handle_conn_lost(peer.peer_node_id, remaining_conns);
     });
 }
 
-async fn respond_to_ping<M: Serializable + 'static>(peer: &Arc<PeerConnection<M>>,
-                                                    socket: &mut SecureSocketAsync,
-                                                    conn_handle: &ConnHandle, rq: PingMessage) -> Result<()> {
+async fn respond_to_ping<RM, PM>(peer: &Arc<PeerConnection<RM, PM>>,
+                                 socket: &mut SecureSocketAsync,
+                                 conn_handle: &ConnHandle, rq: PingMessage) -> Result<()>
+    where RM: Serializable + 'static, PM: Serializable + 'static {
     if !rq.is_request() {
         return Err(Error::simple(ErrorKind::CommunicationPingHandler));
     }
 
-    let pong = NetworkMessageKind::<M>::Ping(PingMessage::new(false));
+    let pong = NetworkMessageKind::<RM, PM>::Ping(PingMessage::new(false));
 
     let (_, result) = serialize_digest_threadpool_return_msg(pong).await.wrapped(ErrorKind::CommunicationPingHandler)?;
 

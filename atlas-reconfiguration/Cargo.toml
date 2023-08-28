@@ -1,0 +1,26 @@
+[package]
+name = "atlas-reconfiguration"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+
+serialize_serde = []
+
+default = ["serialize_serde"]
+
+[dependencies]
+atlas-common = { path = "../atlas-common" }
+atlas-metrics = { path = "../atlas-metrics" }
+atlas-communication = {path = "../atlas-communication"}
+atlas-core = {path = "../atlas-core"}
+
+futures = "0.3.26"
+
+log = "0.4.17"
+
+bincode = "2.0.0-rc.3"
+serde = {version = "1"}
+either = "1.9.0"

@@ -1,14 +1,16 @@
 use std::collections::{BTreeMap};
 use std::sync::{Arc, Mutex};
+use atlas_common::peer_addr::PeerAddr;
 use either::Either;
 use log::debug;
 use atlas_common::channel::OneShotRx;
 use atlas_common::socket::{AsyncSocket, SyncSocket};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
+use crate::reconfiguration_node::NetworkInformationProvider;
 use crate::serialize::Serializable;
 use crate::tcp_ip_simplex::connections::{ConnectionDirection, SimplexConnections};
-use crate::tcpip::{NodeConnectionAcceptor, PeerAddr, TlsNodeAcceptor, TlsNodeConnector};
+use crate::tcpip::{NodeConnectionAcceptor, TlsNodeAcceptor, TlsNodeConnector};
 use crate::tcpip::connections::{ConnCounts};
 
 // mod synchronous;
@@ -22,7 +24,7 @@ pub struct ConnectionHandler {
     tls_acceptor: TlsNodeAcceptor,
     concurrent_conn: ConnCounts,
     currently_connecting_outgoing: Mutex<BTreeMap<NodeId, usize>>,
-    currently_connecting_incoming: Mutex<BTreeMap<NodeId, usize>>
+    currently_connecting_incoming: Mutex<BTreeMap<NodeId, usize>>,
 }
 
 impl ConnectionHandler {
@@ -42,9 +44,12 @@ impl ConnectionHandler {
         )
     }
 
-    pub(super) fn setup_conn_worker<M: Serializable + 'static>(self: Arc<Self>,
-                                                               listener: NodeConnectionAcceptor,
-                                                               peer_connections: Arc<SimplexConnections<M>>) {
+    pub(super) fn setup_conn_worker<NI, RM, PM>(self: Arc<Self>,
+                                                listener: NodeConnectionAcceptor,
+                                                peer_connections: Arc<SimplexConnections<NI, RM, PM>>)
+        where NI: NetworkInformationProvider + 'static,
+              RM: Serializable + 'static,
+              PM: Serializable + 'static {
         match listener {
             NodeConnectionAcceptor::Async(async_listener) => {
                 asynchronous::setup_conn_acceptor_task(async_listener, self, peer_connections)
@@ -65,8 +70,8 @@ impl ConnectionHandler {
 
     fn register_connecting_to_node(&self, peer_id: NodeId, direction: ConnectionDirection) -> bool {
         let mut connecting_guard = match direction {
-            ConnectionDirection::Incoming => {self.currently_connecting_incoming.lock().unwrap()}
-            ConnectionDirection::Outgoing => {self.currently_connecting_outgoing.lock().unwrap()}
+            ConnectionDirection::Incoming => { self.currently_connecting_incoming.lock().unwrap() }
+            ConnectionDirection::Outgoing => { self.currently_connecting_outgoing.lock().unwrap() }
         };
 
         let value = connecting_guard.entry(peer_id).or_insert(0);
@@ -84,8 +89,8 @@ impl ConnectionHandler {
 
     fn done_connecting_to_node(&self, peer_id: &NodeId, direction: ConnectionDirection) {
         let mut connection_guard = match direction {
-            ConnectionDirection::Incoming => {self.currently_connecting_incoming.lock().unwrap()}
-            ConnectionDirection::Outgoing => {self.currently_connecting_outgoing.lock().unwrap()}
+            ConnectionDirection::Incoming => { self.currently_connecting_incoming.lock().unwrap() }
+            ConnectionDirection::Outgoing => { self.currently_connecting_outgoing.lock().unwrap() }
         };
 
         connection_guard.entry(peer_id.clone()).and_modify(|value| { *value -= 1 });
@@ -97,8 +102,9 @@ impl ConnectionHandler {
         }
     }
 
-    pub fn connect_to_node<M: Serializable + 'static>(self: &Arc<Self>, peer_connections: &Arc<SimplexConnections<M>>,
-                                                      peer_id: NodeId, peer_addr: PeerAddr) -> OneShotRx<Result<()>> {
+    pub fn connect_to_node<NI, RM, PM>(self: &Arc<Self>, peer_connections: &Arc<SimplexConnections<NI, RM, PM>>,
+                                       peer_id: NodeId, peer_addr: PeerAddr) -> OneShotRx<Result<()>>
+        where NI: NetworkInformationProvider + 'static, RM: Serializable + 'static, PM: Serializable + 'static {
         debug!("{:?} // Connecting to node {:?} at {:?}", self.id(), peer_id, peer_addr);
 
         match &self.connector {
@@ -116,7 +122,8 @@ impl ConnectionHandler {
         }
     }
 
-    pub fn accept_conn<M: Serializable + 'static>(self: &Arc<Self>, peer_connections: &Arc<SimplexConnections<M>>, socket: Either<AsyncSocket, SyncSocket>) {
+    pub fn accept_conn<NI, RM, PM>(self: &Arc<Self>, peer_connections: &Arc<SimplexConnections<NI, RM, PM>>, socket: Either<AsyncSocket, SyncSocket>)
+        where NI: NetworkInformationProvider + 'static, RM: Serializable + 'static, PM: Serializable + 'static {
         match socket {
             Either::Left(asynchronous) => {
                 asynchronous::handle_server_conn_established(Arc::clone(self),
