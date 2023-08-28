@@ -9,17 +9,17 @@ use atlas_execution::ExecutorHandle;
 use atlas_execution::state::monolithic_state::MonolithicState;
 use atlas_persistent_log::{MonStatePersistentLog, PersistentLog, PersistentLogModeTrait};
 
-pub trait SMRPersistentLog<D, OPM, SOPM>: OrderingProtocolLog<OPM> + StatefulOrderingProtocolLog<OPM, SOPM>
+pub trait SMRPersistentLog<D, OPM, SOPM>: OrderingProtocolLog<D, OPM> + StatefulOrderingProtocolLog<D, OPM, SOPM>
     where D: ApplicationData + 'static,
-          OPM: OrderingProtocolMessage + 'static,
-          SOPM: StatefulOrderProtocolMessage + 'static {
+          OPM: OrderingProtocolMessage<D> + 'static,
+          SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static {
     type Config;
 
     fn init_log<K, T, POS, PSP>(executor: ExecutorHandle<D>, db_path: K) -> Result<Self>
         where
             K: AsRef<Path>,
             T: PersistentLogModeTrait,
-            POS: PersistableOrderProtocol<OPM, SOPM> + Send + 'static,
+            POS: PersistableOrderProtocol<D, OPM, SOPM> + Send + 'static,
             PSP: PersistableStateTransferProtocol + Send + 'static,
             Self: Sized;
 
@@ -31,14 +31,14 @@ pub trait SMRPersistentLog<D, OPM, SOPM>: OrderingProtocolLog<OPM> + StatefulOrd
 impl<S, D, OPM, SOPM, STM> SMRPersistentLog<D, OPM, SOPM> for MonStatePersistentLog<S, D, OPM, SOPM, STM>
     where S: MonolithicState + 'static,
           D: ApplicationData + 'static,
-          OPM: OrderingProtocolMessage + 'static,
-          SOPM: StatefulOrderProtocolMessage + 'static,
+          OPM: OrderingProtocolMessage<D> + 'static,
+          SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
           STM: StateTransferMessage + 'static {
     type Config = ();
 
     fn init_log<K, T, POS, PSP>(executor: ExecutorHandle<D>, db_path: K) -> Result<Self>
         where K: AsRef<Path>, T: PersistentLogModeTrait,
-              POS: PersistableOrderProtocol<OPM, SOPM> + Send + 'static,
+              POS: PersistableOrderProtocol<D, OPM, SOPM> + Send + 'static,
               PSP: PersistableStateTransferProtocol + Send + 'static,
               Self: Sized {
         atlas_persistent_log::initialize_mon_persistent_log::<S, D, K, T, OPM, SOPM, STM, POS, PSP>(executor, db_path)

@@ -78,9 +78,9 @@ impl<S> PersistentDivStateHandle<S> where S: DivisibleState {
 pub struct DivStatePersistentLogWorker<S, D, OPM, SOPM, POP, PSP>
     where S: DivisibleState + 'static,
           D: ApplicationData + 'static,
-          OPM: OrderingProtocolMessage + 'static,
-          SOPM: StatefulOrderProtocolMessage + 'static,
-          POP: PersistableOrderProtocol<OPM, SOPM> + 'static,
+          OPM: OrderingProtocolMessage<D> + 'static,
+          SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POP: PersistableOrderProtocol<D, OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static,
 {
     rx: ChannelSyncRx<DivisibleStateMessage<S>>,
@@ -91,9 +91,9 @@ pub struct DivStatePersistentLogWorker<S, D, OPM, SOPM, POP, PSP>
 impl<S, D, OPM, SOPM, POP, PSP> DivStatePersistentLogWorker<S, D, OPM, SOPM, POP, PSP>
     where S: DivisibleState + 'static,
           D: ApplicationData + 'static,
-          OPM: OrderingProtocolMessage + 'static,
-          SOPM: StatefulOrderProtocolMessage + 'static,
-          POP: PersistableOrderProtocol<OPM, SOPM> + 'static,
+          OPM: OrderingProtocolMessage<D> + 'static,
+          SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POP: PersistableOrderProtocol<D, OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static
 {
     pub fn new(request_rx: ChannelSyncRx<DivisibleStateMessage<S>>,

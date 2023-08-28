@@ -37,9 +37,9 @@ pub trait ReconfigurationProtocolMessage: Serializable + Send + Sync {
 }
 
 /// The type that encapsulates all the serializing, so we don't have to constantly use SystemMessage
-pub struct Service<D: ApplicationData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage>(PhantomData<(D, P, S, L)>);
+pub struct Service<D: ApplicationData, P: OrderingProtocolMessage<D>, S: StateTransferMessage, L: LogTransferMessage<D, P>>(PhantomData<(D, P, S, L)>);
 
-pub type ServiceMessage<D: ApplicationData, P: OrderingProtocolMessage, S: StateTransferMessage, L: LogTransferMessage> = <Service<D, P, S, L> as Serializable>::Message;
+pub type ServiceMessage<D: ApplicationData, P: OrderingProtocolMessage<D>, S: StateTransferMessage, L: LogTransferMessage<D, P>> = <Service<D, P, S, L> as Serializable>::Message;
 
 pub type ClientServiceMsg<D: ApplicationData> = Service<D, NoProtocol, NoProtocol, NoProtocol>;
 
@@ -53,7 +53,7 @@ pub trait VerificationWrapper<M, D> where D: ApplicationData {
 }
 
 impl<D, P, S, L> Serializable for Service<D, P, S, L> where
-    D: ApplicationData + 'static, P: OrderingProtocolMessage + 'static, S: StateTransferMessage + 'static, L: LogTransferMessage + 'static {
+    D: ApplicationData + 'static, P: OrderingProtocolMessage<D> + 'static, S: StateTransferMessage + 'static, L: LogTransferMessage<D, P> + 'static {
     type Message = SystemMessage<D, P::ProtocolMessage, S::StateTransferMessage, L::LogTransferMessage>;
 
     fn verify_message_internal<NI, SV>(info_provider: &Arc<NI>, header: &Header, msg: &Self::Message) -> atlas_common::error::Result<bool>
@@ -61,12 +61,12 @@ impl<D, P, S, L> Serializable for Service<D, P, S, L> where
               SV: NetworkMessageSignatureVerifier<Self, NI> {
         match msg {
             SystemMessage::ProtocolMessage(protocol) => {
-                let (result, message) = P::verify_order_protocol_message::<NI, SigVerifier<SV, NI, D, P, S, L>, D>(info_provider, header, protocol.payload().clone())?;
+                let (result, message) = P::verify_order_protocol_message::<NI, SigVerifier<SV, NI, D, P, S, L>>(info_provider, header, protocol.payload().clone())?;
 
                 Ok(result)
             }
             SystemMessage::LogTransferMessage(log_transfer) => {
-                let (result, message) = L::verify_log_message::<NI, SigVerifier<SV, NI, D, P, S, L>, D, P>(info_provider, header, log_transfer.payload().clone())?;
+                let (result, message) = L::verify_log_message::<NI, SigVerifier<SV, NI, D, P, S, L>>(info_provider, header, log_transfer.payload().clone())?;
 
                 Ok(result)
             }
@@ -91,7 +91,7 @@ impl<D, P, S, L> Serializable for Service<D, P, S, L> where
                 let header = fwd_protocol.header();
                 let message = fwd_protocol.message();
 
-                let (result, message) = P::verify_order_protocol_message::<NI, SigVerifier<SV, NI, D, P, S, L>, D>(info_provider, message.header(), message.message().payload().clone())?;
+                let (result, message) = P::verify_order_protocol_message::<NI, SigVerifier<SV, NI, D, P, S, L>>(info_provider, message.header(), message.message().payload().clone())?;
 
                 Ok(result)
             }
@@ -159,7 +159,7 @@ impl NetworkView for NoView {
     }
 }
 
-impl OrderingProtocolMessage for NoProtocol {
+impl<D> OrderingProtocolMessage<D> for NoProtocol {
     type ViewInfo = NoView;
 
     type ProtocolMessage = ();
@@ -170,8 +170,12 @@ impl OrderingProtocolMessage for NoProtocol {
 
     type ProofMetadata = ();
 
-    fn verify_order_protocol_message<NI, OPVH, D>(network_info: &NI, header: &Header, message: Self::ProtocolMessage) -> atlas_common::error::Result<(bool, Self::ProtocolMessage)> where NI: NetworkInformationProvider, OPVH: OrderProtocolSignatureVerificationHelper<D, Self, NI>, D: ApplicationData {
+    fn verify_order_protocol_message<NI, OPVH>(network_info: &Arc<NI>, header: &Header, message: Self::ProtocolMessage) -> atlas_common::error::Result<(bool, Self::ProtocolMessage)> where NI: NetworkInformationProvider, OPVH: OrderProtocolSignatureVerificationHelper<D, Self, NI>, D: ApplicationData {
         Ok((false, message))
+    }
+
+    fn verify_proof<NI, OPVH>(network_info: &Arc<NI>, proof: Self::Proof) -> atlas_common::error::Result<(bool, Self::Proof)> where NI: NetworkInformationProvider, OPVH: OrderProtocolSignatureVerificationHelper<D, Self, NI>, D: ApplicationData, Self: Sized {
+        Ok((false, proof))
     }
 
     #[cfg(feature = "serialize_capnp")]
@@ -213,10 +217,13 @@ impl StateTransferMessage for NoProtocol {
     }
 }
 
-impl LogTransferMessage for NoProtocol {
+impl<D, P> LogTransferMessage<D, P> for NoProtocol {
     type LogTransferMessage = ();
 
-    fn verify_log_message<NI, LVH, D, OP>(network_info: &Arc<NI>, header: &Header, message: Self::LogTransferMessage) -> atlas_common::error::Result<(bool, Self::LogTransferMessage)> where NI: NetworkInformationProvider, LVH: LogTransferVerificationHelper<D, OP, NI>, D: ApplicationData, OP: OrderingProtocolMessage {
+    fn verify_log_message<NI, LVH>(network_info: &Arc<NI>, header: &Header, message: Self::LogTransferMessage) -> atlas_common::error::Result<(bool, Self::LogTransferMessage)>
+        where NI: NetworkInformationProvider,
+              D: ApplicationData, P: OrderingProtocolMessage<D>,
+              LVH: LogTransferVerificationHelper<D, P, NI>, {
         Ok((false, message))
     }
 

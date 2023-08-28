@@ -8,18 +8,51 @@ use atlas_core::log_transfer::networking::signature_ver::LogTransferVerification
 use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_execution::serialize::ApplicationData;
 
-use crate::messages::LTMessage;
+use crate::messages::{LogTransferMessageKind, LTMessage};
 
-pub struct LTMsg<D: ApplicationData, OP:OrderingProtocolMessage, SOP: StatefulOrderProtocolMessage>(PhantomData<(D, OP, SOP)>);
+pub struct LTMsg<D: ApplicationData, OP: OrderingProtocolMessage<D>, SOP: StatefulOrderProtocolMessage<D, OP>>(PhantomData<(D, OP, SOP)>);
 
-impl<D: ApplicationData, OP:OrderingProtocolMessage, SOP: StatefulOrderProtocolMessage> LogTransferMessage for LTMsg<D, OP, SOP> {
-
+impl<D: ApplicationData, OP: OrderingProtocolMessage<D>, SOP: StatefulOrderProtocolMessage<D, OP>> LogTransferMessage<D, OP> for LTMsg<D, OP, SOP> {
     type LogTransferMessage = LTMessage<OP::ViewInfo, OP::Proof, SOP::DecLog>;
 
-    fn verify_log_message<NI, LVH, D2, OP2>(network_info: &Arc<NI>, header: &Header, message: Self::LogTransferMessage) -> atlas_common::error::Result<(bool, Self::LogTransferMessage)>
-        where NI: NetworkInformationProvider, LVH: LogTransferVerificationHelper<D2, OP2, NI>, D2: ApplicationData, OP2: OrderingProtocolMessage {
+    fn verify_log_message<NI, LVH>(network_info: &Arc<NI>, header: &Header, message: Self::LogTransferMessage) -> atlas_common::error::Result<(bool, Self::LogTransferMessage)>
+        where NI: NetworkInformationProvider, LVH: LogTransferVerificationHelper<D, OP, NI>, {
+        match message.kind() {
+            LogTransferMessageKind::RequestLogState => {
+                Ok((true, message))
+            }
+            LogTransferMessageKind::ReplyLogState(view, opt) => {
+                if let Some((first_seq, (last_seq, proof))) = opt {
+                    let (result, proof) = OP::verify_proof::<NI, LVH>(network_info, proof.clone())?;
 
-        Ok((true, message))
+                    Ok((result, message))
+                } else {
+                    Ok((true, message))
+                }
+            }
+            LogTransferMessageKind::RequestProofs(_) => {
+                Ok((true, message))
+            }
+            LogTransferMessageKind::ReplyLogParts(vview, proofs) => {
+                for (seq, proof) in proofs {
+                    let (result, proof) = OP::verify_proof::<NI, LVH>(network_info, proof.clone())?;
+
+                    if !result {
+                        return Ok((false, message));
+                    }
+                }
+
+                Ok((true, message))
+            }
+            LogTransferMessageKind::RequestLog => {
+                Ok((true, message))
+            }
+            LogTransferMessageKind::ReplyLog(view_info, dec_log) => {
+                let (result, dec_log) = SOP::verify_decision_log::<NI, LVH>(network_info, dec_log.clone())?;
+
+                Ok((result, message))
+            }
+        }
     }
 
     #[cfg(feature = "serialize_capnp")]

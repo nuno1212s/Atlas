@@ -14,6 +14,7 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::{LoggableMessage, ProtocolMessage, SerProofMetadata, View};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
+use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 
@@ -81,11 +82,12 @@ pub(super) fn read_seq<R>(r: R) -> Result<SeqNo> where R: Read {
     Ok(SeqNo::from(seq_no.get_seq_no()))
 }
 
-pub(super) fn serialize_view<W, OPM>(w: &mut W, view: &View<OPM>) -> Result<usize>
+pub(super) fn serialize_view<W, D, OPM>(w: &mut W, view: &View<D, OPM>) -> Result<usize>
     where W: Write,
-          OPM: OrderingProtocolMessage {
+          D: ApplicationData,
+          OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::serialize_view::<W, OPM>(w, view);
+        let res = serde::serialize_view::<W, D, OPM>(w, view);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -93,11 +95,11 @@ pub(super) fn serialize_view<W, OPM>(w: &mut W, view: &View<OPM>) -> Result<usiz
     res
 }
 
-pub(super) fn serialize_message<W, OPM>(w: &mut W, msg: &LoggableMessage<OPM>) -> Result<usize>
+pub(super) fn serialize_message<W, D, OPM>(w: &mut W, msg: &LoggableMessage<D, OPM>) -> Result<usize>
     where W: Write,
-          OPM: OrderingProtocolMessage {
+          OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::serialize_message::<W, OPM>(w, msg);
+        let res = serde::serialize_message::<W, D, OPM>(w, msg);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -105,11 +107,11 @@ pub(super) fn serialize_message<W, OPM>(w: &mut W, msg: &LoggableMessage<OPM>) -
     res
 }
 
-pub(super) fn serialize_proof_metadata<W, OPM>(w: &mut W, metadata: &SerProofMetadata<OPM>) -> Result<usize>
+pub(super) fn serialize_proof_metadata<W, D, OPM>(w: &mut W, metadata: &SerProofMetadata<D, OPM>) -> Result<usize>
     where W: Write,
-          OPM: OrderingProtocolMessage {
+          OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::serialize_proof_metadata::<W, OPM>(w, metadata);
+        let res = serde::serialize_proof_metadata::<W, D, OPM>(w, metadata);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -117,11 +119,11 @@ pub(super) fn serialize_proof_metadata<W, OPM>(w: &mut W, metadata: &SerProofMet
     res
 }
 
-pub(super) fn deserialize_view<R, OPM>(r: &mut R) -> Result<View<OPM>>
+pub(super) fn deserialize_view<R, D, OPM>(r: &mut R) -> Result<View<D, OPM>>
     where R: Read,
-          OPM: OrderingProtocolMessage {
+          OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::deserialize_view::<R, OPM>(r);
+        let res = serde::deserialize_view::<R, D, OPM>(r);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -129,10 +131,10 @@ pub(super) fn deserialize_view<R, OPM>(r: &mut R) -> Result<View<OPM>>
     res
 }
 
-pub(super) fn deserialize_message<R, OPM>(r: &mut R) -> Result<LoggableMessage<OPM>>
-    where R: Read, OPM: OrderingProtocolMessage {
+pub(super) fn deserialize_message<R, D, OPM>(r: &mut R) -> Result<LoggableMessage<D, OPM>>
+    where R: Read, OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::deserialize_message::<R, OPM>(r);
+        let res = serde::deserialize_message::<R,D, OPM>(r);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();
@@ -140,10 +142,10 @@ pub(super) fn deserialize_message<R, OPM>(r: &mut R) -> Result<LoggableMessage<O
     res
 }
 
-pub(super) fn deserialize_proof_metadata<R, OPM>(r: &mut R) -> Result<SerProofMetadata<OPM>>
-    where R: Read, OPM: OrderingProtocolMessage {
+pub(super) fn deserialize_proof_metadata<R, D, OPM>(r: &mut R) -> Result<SerProofMetadata<D, OPM>>
+    where R: Read, OPM: OrderingProtocolMessage<D> {
     #[cfg(feature = "serialize_serde")]
-        let res = serde::deserialize_proof_metadata::<R, OPM>(r);
+        let res = serde::deserialize_proof_metadata::<R, D, OPM>(r);
 
     #[cfg(feature = "serialize_capnp")]
         let res = todo!();

@@ -16,7 +16,7 @@ use crate::timeouts::{RqTimeout, Timeouts};
 
 pub mod networking;
 
-pub type LogTM<M: LogTransferMessage> = <M as LogTransferMessage>::LogTransferMessage;
+pub type LogTM<D, OP, M: LogTransferMessage<D, OP>> = <M as LogTransferMessage<D, OP>>::LogTransferMessage;
 
 /// The result of processing a message in the log transfer protocol
 pub enum LTResult<D: ApplicationData> {
@@ -39,7 +39,7 @@ pub enum LTTimeoutResult {
 pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
                                                    OP: StatefulOrderProtocol<D, NT, PL> + 'static {
     /// The type which implements StateTransferMessage, to be implemented by the developer
-    type Serialization: LogTransferMessage + 'static;
+    type Serialization: LogTransferMessage<D, OP::Serialization> + 'static;
 
     /// The configuration type the protocol wants to accept
     type Config;
@@ -50,25 +50,25 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
 
     /// Request the latest state from the rest of replicas
     fn request_latest_log(&mut self, order_protocol: &mut OP) -> Result<()>
-        where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization>;
 
     /// Handle a state transfer protocol message that was received while executing the ordering protocol
     fn handle_off_ctx_message(&mut self, order_protocol: &mut OP,
-                                  message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
-                                  -> Result<()>
-        where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+                              message: StoredMessage<LogTransfer<LogTM<D, OP::Serialization, Self::Serialization>>>)
+                              -> Result<()>
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization>;
 
     /// Process a state transfer protocol message, received from other replicas
     /// We also provide a mutable reference to the stateful ordering protocol, so the
     /// state can be installed (if that's the case)
     fn process_message(&mut self, order_protocol: &mut OP,
-                           message: StoredMessage<LogTransfer<LogTM<Self::Serialization>>>)
-                           -> Result<LTResult<D>>
-        where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+                       message: StoredMessage<LogTransfer<LogTM<D, OP::Serialization, Self::Serialization>>>)
+                       -> Result<LTResult<D>>
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization>;
 
     /// Handle a timeout being received from the timeout layer
     fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<LTTimeoutResult>
-        where PL: StatefulOrderingProtocolLog<OP::Serialization, OP::StateSerialization>;
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization>;
 }
 
 

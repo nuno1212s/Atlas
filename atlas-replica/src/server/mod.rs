@@ -67,7 +67,7 @@ pub(crate) enum ReplicaPhase<R>  {
 }
 
 pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'static,
-                                                       OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + 'static,
+                                                       OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<D, OP::Serialization, OP::StateSerialization> + 'static,
                                                        LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
                                                        ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
                                                        PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static,
@@ -111,7 +111,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
     where
         RP: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
-        OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
+        OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<D, OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
         LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
         ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
         NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization> + 'static,

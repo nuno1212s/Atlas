@@ -14,7 +14,7 @@ use crate::serialize::Service;
 use crate::state_transfer::networking::serialize::StateTransferMessage;
 
 /// This is a helper trait to verify signatures of messages for the ordering protocol
-pub trait OrderProtocolSignatureVerificationHelper<D, OP, NI> where D: ApplicationData, OP: OrderingProtocolMessage, NI: NetworkInformationProvider {
+pub trait OrderProtocolSignatureVerificationHelper<D, OP, NI> where D: ApplicationData, OP: OrderingProtocolMessage<D>, NI: NetworkInformationProvider {
     /// This is a helper to verify internal player requests
     fn verify_request_message(network_info: &Arc<NI>, header: &Header, request: RequestMessage<D::Request>) -> Result<(bool, RequestMessage<D::Request>)>;
 
@@ -27,9 +27,9 @@ pub trait OrderProtocolSignatureVerificationHelper<D, OP, NI> where D: Applicati
 
 impl<SV, NI, D, P, S, L> OrderProtocolSignatureVerificationHelper<D, P, NI> for SigVerifier<SV, NI, D, P, S, L>
     where D: ApplicationData + 'static,
-          P: OrderingProtocolMessage + 'static,
+          P: OrderingProtocolMessage<D> + 'static,
+          L: LogTransferMessage<D, P> + 'static,
           S: StateTransferMessage + 'static,
-          L: LogTransferMessage + 'static,
           NI: NetworkInformationProvider + 'static,
           SV: NetworkMessageSignatureVerifier<Service<D, P, S, L>, NI>
 {

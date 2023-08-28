@@ -19,7 +19,7 @@ use crate::serialize::Service;
 use crate::smr::networking::NodeWrap;
 use crate::state_transfer::networking::serialize::StateTransferMessage;
 
-pub trait OrderProtocolSendNode<D, OPM>: Send + Sync where D: ApplicationData + 'static, OPM: OrderingProtocolMessage {
+pub trait OrderProtocolSendNode<D, OPM>: Send + Sync where D: ApplicationData + 'static, OPM: OrderingProtocolMessage<D> {
     type NetworkInfoProvider: NetworkInformationProvider + 'static;
 
     fn id(&self) -> NodeId;
@@ -67,9 +67,9 @@ pub trait OrderProtocolSendNode<D, OPM>: Send + Sync where D: ApplicationData + 
 
 impl<NT, D, P, S, L, RM, NI> OrderProtocolSendNode<D, P> for NodeWrap<NT, D, P, S, L, NI, RM>
     where D: ApplicationData + 'static,
-          P: OrderingProtocolMessage + 'static,
+          P: OrderingProtocolMessage<D> + 'static,
+          L: LogTransferMessage<D, P> + 'static,
           S: StateTransferMessage + 'static,
-          L: LogTransferMessage + 'static,
           RM: Serializable + 'static,
           NI: NetworkInformationProvider + 'static,
           NT: FullNetworkNode<NI, RM, Service<D, P, S, L>>, {

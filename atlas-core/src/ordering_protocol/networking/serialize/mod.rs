@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use atlas_common::node_id::NodeId;
 use atlas_common::error::*;
@@ -33,7 +34,7 @@ pub trait OrderProtocolProof: Orderable {
 
 /// We do not need a serde module since serde serialization is just done on the network level.
 /// The abstraction for ordering protocol messages.
-pub trait OrderingProtocolMessage: Send + Sync {
+pub trait OrderingProtocolMessage<D>: Send + Sync {
     #[cfg(feature = "serialize_capnp")]
     type ViewInfo: NetworkView + Send + Clone;
 
@@ -73,9 +74,15 @@ pub trait OrderingProtocolMessage: Send + Sync {
     #[cfg(feature = "serialize_capnp")]
     type ProofMetadata: Orderable + Send + Clone;
 
-    fn verify_order_protocol_message<NI, OPVH, D>(network_info: &NI,
-                                                  header: &Header,
-                                                  message: Self::ProtocolMessage) -> Result<(bool, Self::ProtocolMessage)>
+    fn verify_order_protocol_message<NI, OPVH>(network_info: &Arc<NI>,
+                                               header: &Header,
+                                               message: Self::ProtocolMessage) -> Result<(bool, Self::ProtocolMessage)>
+        where NI: NetworkInformationProvider,
+              OPVH: OrderProtocolSignatureVerificationHelper<D, Self, NI>,
+              D: ApplicationData, Self: Sized;
+
+    fn verify_proof<NI, OPVH>(network_info: &Arc<NI>,
+                              proof: Self::Proof) -> Result<(bool, Self::Proof)>
         where NI: NetworkInformationProvider,
               OPVH: OrderProtocolSignatureVerificationHelper<D, Self, NI>,
               D: ApplicationData, Self: Sized;
@@ -92,7 +99,6 @@ pub trait OrderingProtocolMessage: Send + Sync {
     #[cfg(feature = "serialize_capnp")]
     fn deserialize_view_capnp(reader: febft_capnp::cst_messages_capnp::view_info::Reader) -> Result<Self::ViewInfo>;
 
-
     #[cfg(feature = "serialize_capnp")]
     fn serialize_proof_capnp(builder: febft_capnp::cst_messages_capnp::proof::Builder, msg: &Self::Proof) -> Result<()>;
 
@@ -101,7 +107,7 @@ pub trait OrderingProtocolMessage: Send + Sync {
 }
 
 /// The messages for the stateful ordering protocol
-pub trait StatefulOrderProtocolMessage: Send + Sync {
+pub trait StatefulOrderProtocolMessage<D, OPM>: Send + Sync {
     /// A type that defines the log of decisions made since the last garbage collection
     /// (In the case of BFT SMR the log is GCed after a checkpoint of the application)
     #[cfg(feature = "serialize_capnp")]
@@ -109,6 +115,13 @@ pub trait StatefulOrderProtocolMessage: Send + Sync {
 
     #[cfg(feature = "serialize_serde")]
     type DecLog: OrderProtocolLog + for<'a> Deserialize<'a> + Serialize + Send + Clone;
+
+    fn verify_decision_log<NI, OPVH>(network_info: &Arc<NI>, dec_log: Self::DecLog)
+                                            -> Result<(bool, Self::DecLog)>
+        where NI: NetworkInformationProvider,
+              D: ApplicationData,
+              OPM: OrderingProtocolMessage<D>,
+              OPVH: OrderProtocolSignatureVerificationHelper<D, OPM, NI>,;
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_declog_capnp(builder: febft_capnp::cst_messages_capnp::dec_log::Builder, msg: &Self::DecLog) -> Result<()>;

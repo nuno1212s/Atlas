@@ -66,9 +66,9 @@ impl<S> PersistentMonolithicStateHandle<S> where S: MonolithicState {
 pub struct MonStatePersistentLogWorker<S, D, OPM, SOPM, POP, PSP>
     where S: MonolithicState + 'static,
           D: ApplicationData + 'static,
-          OPM: OrderingProtocolMessage + 'static,
-          SOPM: StatefulOrderProtocolMessage + 'static,
-          POP: PersistableOrderProtocol<OPM, SOPM> + 'static,
+          OPM: OrderingProtocolMessage<D> + 'static,
+          SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POP: PersistableOrderProtocol<D, OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static
 {
     request_rx: ChannelSyncRx<MonolithicStateMessage<S>>,
@@ -81,9 +81,9 @@ pub struct MonStatePersistentLogWorker<S, D, OPM, SOPM, POP, PSP>
 impl<S, D, OPM, SOPM, POP, PSP> MonStatePersistentLogWorker<S, D, OPM, SOPM, POP, PSP>
     where S: MonolithicState + 'static,
           D: ApplicationData + 'static,
-          OPM: OrderingProtocolMessage + 'static,
-          SOPM: StatefulOrderProtocolMessage + 'static,
-          POP: PersistableOrderProtocol<OPM, SOPM> + 'static,
+          OPM: OrderingProtocolMessage<D> + 'static,
+          SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POP: PersistableOrderProtocol<D, OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static
 {
     pub fn new(request_rx: ChannelSyncRx<MonolithicStateMessage<S>>,

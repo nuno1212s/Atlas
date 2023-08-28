@@ -1,15 +1,16 @@
 use std::sync::Arc;
 use std::time::Instant;
-use atlas_common::error::*;
+
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::error::*;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_communication::NetworkNode;
 use atlas_core::smr::exec::ReplyNode;
-use atlas_execution::app::{Application, BatchReplies, Reply, Request};
 use atlas_execution::{ExecutionRequest, ExecutorHandle};
+use atlas_execution::app::{Application, BatchReplies, Reply, Request};
 use atlas_execution::state::divisible_state::{AppStateMessage, DivisibleState, DivisibleStateDescriptor, InstallStateMessage};
 use atlas_metrics::metrics::metric_duration;
+
 use crate::executable::ExecutorReplier;
 use crate::metric::{EXECUTION_LATENCY_TIME_ID, EXECUTION_TIME_TAKEN_ID};
 use crate::server::client_replier::ReplyHandle;

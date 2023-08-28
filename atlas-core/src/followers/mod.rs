@@ -7,9 +7,9 @@ use crate::messages::Protocol;
 use crate::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 
 /// The message type of the channel
-pub type FollowerChannelMsg<OP> = FollowerEvent<OP>;
+pub type FollowerChannelMsg<D, OP> = FollowerEvent<D, OP>;
 
-pub enum FollowerEvent<OP: OrderingProtocolMessage> {
+pub enum FollowerEvent<D, OP: OrderingProtocolMessage<D>> {
     ReceivedConsensusMsg(
         OP::ViewInfo,
         Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
@@ -22,18 +22,18 @@ pub enum FollowerEvent<OP: OrderingProtocolMessage> {
 /// Allows us to pass the thread notifications on what is happening so it
 /// can handle the events properly
 #[derive(Clone)]
-pub struct FollowerHandle<OP: OrderingProtocolMessage> {
-    tx: ChannelSyncTx<FollowerChannelMsg<OP>>,
+pub struct FollowerHandle<D, OP: OrderingProtocolMessage<D>> {
+    tx: ChannelSyncTx<FollowerChannelMsg<D, OP>>,
 }
 
-impl<OP: OrderingProtocolMessage> FollowerHandle<OP> {
-    pub fn new(tx: ChannelSyncTx<FollowerChannelMsg<OP>>) -> Self {
+impl<D, OP: OrderingProtocolMessage<D>> FollowerHandle<D, OP> {
+    pub fn new(tx: ChannelSyncTx<FollowerChannelMsg<D, OP>>) -> Self {
         FollowerHandle { tx }
     }
 }
 
-impl<OP: OrderingProtocolMessage> Deref for FollowerHandle<OP> {
-    type Target = ChannelSyncTx<FollowerChannelMsg<OP>>;
+impl<D, OP: OrderingProtocolMessage<D>> Deref for FollowerHandle<D, OP> {
+    type Target = ChannelSyncTx<FollowerChannelMsg<D, OP>>;
 
     fn deref(&self) -> &Self::Target {
         &self.tx

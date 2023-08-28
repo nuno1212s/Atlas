@@ -6,47 +6,47 @@ use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessag
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 
-pub(super) fn deserialize_message<R, OPM>(read: &mut R) -> Result<LoggableMessage<OPM>>
+pub(super) fn deserialize_message<R, D, OPM>(read: &mut R) -> Result<LoggableMessage<D, OPM>>
     where R: Read,
-          OPM: OrderingProtocolMessage {
+          OPM: OrderingProtocolMessage<D> {
     bincode::serde::decode_from_std_read(read, bincode::config::standard()).wrapped_msg(
         ErrorKind::MsgLogPersistentSerialization,
         "Failed to deserialize protocol message")
 }
 
-pub(super) fn deserialize_proof_metadata<R, OPM>(read: &mut R) -> Result<SerProofMetadata<OPM>>
+pub(super) fn deserialize_proof_metadata<R, D, OPM>(read: &mut R) -> Result<SerProofMetadata<D, OPM>>
     where R: Read,
-          OPM: OrderingProtocolMessage {
+          OPM: OrderingProtocolMessage<D> {
     bincode::serde::decode_from_std_read(read, bincode::config::standard()).wrapped_msg(
         ErrorKind::MsgLogPersistentSerialization,
         "Failed to deserialize proof metadata")
 }
 
-pub(super) fn serialize_proof_metadata<W, OPM>(write: &mut W, proof: &SerProofMetadata<OPM>) -> Result<usize>
+pub(super) fn serialize_proof_metadata<W, D, OPM>(write: &mut W, proof: &SerProofMetadata<D, OPM>) -> Result<usize>
     where W: Write,
-          OPM: OrderingProtocolMessage {
+          OPM: OrderingProtocolMessage<D> {
     bincode::serde::encode_into_std_write(proof, write, bincode::config::standard()).wrapped_msg(
         ErrorKind::MsgLogPersistentSerialization,
         "Failed to serialize proof metadata")
 }
 
-pub(super) fn serialize_message<W, OPM>(write: &mut W, message: &LoggableMessage<OPM>) -> Result<usize>
+pub(super) fn serialize_message<W, D, OPM>(write: &mut W, message: &LoggableMessage<D, OPM>) -> Result<usize>
     where W: Write,
-          OPM: OrderingProtocolMessage {
+          OPM: OrderingProtocolMessage<D> {
     bincode::serde::encode_into_std_write(message, write, bincode::config::standard()).wrapped_msg(
         ErrorKind::MsgLogPersistentSerialization,
         "Failed to serialize message")
 }
 
-pub(super) fn serialize_view<W, OPM>(write: &mut W, view: &View<OPM>) -> Result<usize>
-    where W: Write, OPM: OrderingProtocolMessage {
+pub(super) fn serialize_view<W, D, OPM>(write: &mut W, view: &View<D, OPM>) -> Result<usize>
+    where W: Write, OPM: OrderingProtocolMessage<D> {
     bincode::serde::encode_into_std_write(view, write, bincode::config::standard()).wrapped_msg(
         ErrorKind::MsgLogPersistentSerialization,
         "Failed to serialize view")
 }
 
-pub(super) fn deserialize_view<R, OPM>(read: &mut R) -> Result<View<OPM>>
-    where R: Read, OPM: OrderingProtocolMessage {
+pub(super) fn deserialize_view<R, D, OPM>(read: &mut R) -> Result<View<D, OPM>>
+    where R: Read, OPM: OrderingProtocolMessage<D> {
     bincode::serde::decode_from_std_read(read, bincode::config::standard()).wrapped_msg(
         ErrorKind::MsgLogPersistentSerialization,
         "Failed to deserialize view")

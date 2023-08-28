@@ -13,8 +13,8 @@ pub trait StateTransferVerificationHelper {}
 
 impl<SV, NI, D, OP, LT, ST> StateTransferVerificationHelper for SigVerifier<SV, NI, D, OP, ST, LT>
     where D: ApplicationData + 'static,
-          OP: OrderingProtocolMessage + 'static,
+          OP: OrderingProtocolMessage<D> + 'static,
+          LT: LogTransferMessage<D, OP> + 'static,
           ST: StateTransferMessage + 'static,
-          LT: LogTransferMessage + 'static,
           NI: NetworkInformationProvider + 'static,
           SV: NetworkMessageSignatureVerifier<Service<D, OP, ST, LT>, NI> {}

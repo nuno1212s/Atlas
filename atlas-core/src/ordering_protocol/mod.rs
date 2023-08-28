@@ -20,12 +20,12 @@ pub mod reconfigurable_order_protocol;
 pub mod stateful_order_protocol;
 pub mod networking;
 
-pub type View<OP> = <OP as OrderingProtocolMessage>::ViewInfo;
+pub type View<D, OP> = <OP as OrderingProtocolMessage<D>>::ViewInfo;
 
-pub type ProtocolMessage<OP> = <OP as OrderingProtocolMessage>::ProtocolMessage;
-pub type LoggableMessage<OP> = <OP as OrderingProtocolMessage>::LoggableMessage;
-pub type SerProof<OP> = <OP as OrderingProtocolMessage>::Proof;
-pub type SerProofMetadata<OP> = <OP as OrderingProtocolMessage>::ProofMetadata;
+pub type ProtocolMessage<D, OP> = <OP as OrderingProtocolMessage<D>>::ProtocolMessage;
+pub type LoggableMessage<D, OP> = <OP as OrderingProtocolMessage<D>>::LoggableMessage;
+pub type SerProof<D, OP> = <OP as OrderingProtocolMessage<D>>::Proof;
+pub type SerProofMetadata<D, OP> = <OP as OrderingProtocolMessage<D>>::ProofMetadata;
 
 pub struct OrderingProtocolArgs<D, NT, PL>(pub ExecutorHandle<D>, pub Timeouts,
                                            pub RequestPreProcessor<D::Request>,
@@ -39,7 +39,7 @@ pub trait OrderProtocolTolerance {
 /// The trait for an ordering protocol to be implemented in Atlas
 pub trait OrderingProtocol<D, NT, PL>: OrderProtocolTolerance + Orderable where D: ApplicationData + 'static {
     /// The type which implements OrderingProtocolMessage, to be implemented by the developer
-    type Serialization: OrderingProtocolMessage + 'static;
+    type Serialization: OrderingProtocolMessage<D> + 'static;
 
     /// The configuration type the protocol wants to accept
     type Config;
@@ -49,11 +49,11 @@ pub trait OrderingProtocol<D, NT, PL>: OrderProtocolTolerance + Orderable where 
         Self: Sized;
 
     /// Get the current view of the ordering protocol
-    fn view(&self) -> View<Self::Serialization>;
+    fn view(&self) -> View<D, Self::Serialization>;
 
     /// Handle a protocol message that was received while we are executing another protocol
-    fn handle_off_ctx_message(&mut self, message: StoredMessage<Protocol<ProtocolMessage<Self::Serialization>>>)
-        where PL: OrderingProtocolLog<Self::Serialization>;
+    fn handle_off_ctx_message(&mut self, message: StoredMessage<Protocol<ProtocolMessage<D, Self::Serialization>>>)
+        where PL: OrderingProtocolLog<D, Self::Serialization>;
 
     /// Handle the protocol being executed having changed (for example to the state transfer protocol)
     /// This is important for some of the protocols, which need to know when they are being executed or not
@@ -62,30 +62,30 @@ pub trait OrderingProtocol<D, NT, PL>: OrderProtocolTolerance + Orderable where 
     /// Poll from the ordering protocol in order to know what we should do next
     /// We do this to check if there are already messages waiting to be executed that were received ahead of time and stored.
     /// Or whether we should run state transfer or wait for messages from other replicas
-    fn poll(&mut self) -> OrderProtocolPoll<ProtocolMessage<Self::Serialization>, D::Request>
-        where PL: OrderingProtocolLog<Self::Serialization>;
+    fn poll(&mut self) -> OrderProtocolPoll<ProtocolMessage<D, Self::Serialization>, D::Request>
+        where PL: OrderingProtocolLog<D, Self::Serialization>;
 
     /// Process a protocol message that we have received
     /// This can be a message received from the poll() method or a message received from other replicas.
-    fn process_message(&mut self, message: StoredMessage<Protocol<ProtocolMessage<Self::Serialization>>>) -> Result<OrderProtocolExecResult<D::Request>>
-        where PL: OrderingProtocolLog<Self::Serialization>;
+    fn process_message(&mut self, message: StoredMessage<Protocol<ProtocolMessage<D, Self::Serialization>>>) -> Result<OrderProtocolExecResult<D::Request>>
+        where PL: OrderingProtocolLog<D, Self::Serialization>;
 
     /// Get the current sequence number of the protocol, combined with a proof of it so we can send it to other replicas
-    fn sequence_number_with_proof(&self) -> Result<Option<(SeqNo, SerProof<Self::Serialization>)>>
-        where PL: OrderingProtocolLog<Self::Serialization>;
+    fn sequence_number_with_proof(&self) -> Result<Option<(SeqNo, SerProof<D, Self::Serialization>)>>
+        where PL: OrderingProtocolLog<D, Self::Serialization>;
 
     /// Verify the sequence number sent by another replica. This doesn't pass a mutable reference since we don't want to
     /// make any changes to the state of the protocol here (or allow the implementer to do so). Instead, we want to
     /// just verify this sequence number
-    fn verify_sequence_number(&self, seq_no: SeqNo, proof: &SerProof<Self::Serialization>) -> Result<bool>;
+    fn verify_sequence_number(&self, seq_no: SeqNo, proof: &SerProof<D, Self::Serialization>) -> Result<bool>;
 
     /// Install a given sequence number
     fn install_seq_no(&mut self, seq_no: SeqNo) -> Result<()>
-        where PL: OrderingProtocolLog<Self::Serialization>;
+        where PL: OrderingProtocolLog<D, Self::Serialization>;
 
     /// Handle a timeout received from the timeouts layer
     fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<OrderProtocolExecResult<D::Request>>
-        where PL: OrderingProtocolLog<Self::Serialization>;
+        where PL: OrderingProtocolLog<D, Self::Serialization>;
 }
 
 /// result from polling the ordering protocol

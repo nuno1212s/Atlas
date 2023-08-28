@@ -22,22 +22,22 @@ use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
 /// This routing is only relevant to the Preprepare requests, all other requests
 /// Can be broadcast from each replica as they are very small and therefore
 /// don't have any effects on performance
-struct FollowersFollowing<OP: OrderingProtocolMessage, NT> {
+struct FollowersFollowing<D, OP: OrderingProtocolMessage<D>, NT> {
     own_id: NodeId,
     followers: Vec<NodeId>,
     send_node: Arc<NT>,
-    rx: ChannelSyncRx<FollowerChannelMsg<OP>>,
+    rx: ChannelSyncRx<FollowerChannelMsg<D, OP>>,
 }
 
-impl<OP, NT> FollowersFollowing<OP, NT> where
-    OP: OrderingProtocolMessage + 'static,
+impl<D, OP, NT> FollowersFollowing<D, OP, NT> where
+    OP: OrderingProtocolMessage<D> + 'static,
     NT: Send + Sync + 'static {
     /// Starts the follower handling thread and returns a cloneable handle that
     /// can be used to deliver messages to it.
-    pub fn init_follower_handling<D, ST, LP>(id: NodeId, node: &Arc<NT>) -> FollowerHandle<OP>
+    pub fn init_follower_handling<ST, LP>(id: NodeId, node: &Arc<NT>) -> FollowerHandle<D, OP>
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
-              LP: LogTransferMessage + 'static,
+              LP: LogTransferMessage<D, OP> + 'static,
               NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         let (tx, rx) = channel::new_bounded_sync(1024);
 
@@ -48,30 +48,30 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
             rx,
         };
 
-        Self::start_thread::<D, ST, LP>(follower_handling);
+        Self::start_thread::<ST, LP>(follower_handling);
 
         FollowerHandle::new(tx)
     }
 
-    fn start_thread<D, ST, LP>(self) where D: ApplicationData + 'static,
-                                           ST: StateTransferMessage + 'static,
-                                           LP: LogTransferMessage + 'static,
-                                           NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
+    fn start_thread<ST, LP>(self) where D: ApplicationData + 'static,
+                                        ST: StateTransferMessage + 'static,
+                                        LP: LogTransferMessage<D, OP> + 'static,
+                                        NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         std::thread::Builder::new()
             .name(format!(
                 "Follower Handling Thread for node {:?}",
                 self.own_id
             ))
             .spawn(move || {
-                self.run::<D, ST, LP>();
+                self.run::<ST, LP>();
             })
             .expect("Failed to launch follower handling thread!");
     }
 
-    fn run<D, ST, LP>(mut self)
+    fn run<ST, LP>(mut self)
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
-              LP: LogTransferMessage + 'static,
+              LP: LogTransferMessage<D, OP> + 'static,
               NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         loop {
             let message = self.rx.recv().unwrap();
@@ -81,7 +81,7 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
                     todo!()
                 }
                 FollowerEvent::ReceivedViewChangeMsg(view_change_msg) => {
-                    self.handle_sync_msg::<D, ST, LP>(view_change_msg)
+                    self.handle_sync_msg::<ST, LP>(view_change_msg)
                 }
             }
         }
@@ -138,13 +138,13 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     }
 
     /// Handle when we have received a preprepare message
-    fn handle_preprepare_msg_rcvd<D, ST, LP>(
+    fn handle_preprepare_msg_rcvd<ST, LP>(
         &mut self,
         view: &OP::ViewInfo,
         message: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
-            LP: LogTransferMessage + 'static,
+            LP: LogTransferMessage<D, OP> + 'static,
             NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         if view.primary() == self.own_id {
             //Leaders don't send pre_prepares to followers in order to save bandwidth
@@ -168,12 +168,12 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     /// and prepare/commit are handled on sending, this is because we don't want the leader
     /// to have to send the pre prepare to all followers but since these messages are very small,
     /// it's fine for all replicas to broadcast it to followers)
-    fn handle_prepare_msg<D, ST, LP>(
+    fn handle_prepare_msg<ST, LP>(
         &mut self,
         prepare: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
-            LP: LogTransferMessage + 'static,
+            LP: LogTransferMessage<D, OP> + 'static,
             NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         if prepare.header().from() != self.own_id {
             //We only broadcast our own prepare messages, not other peoples
@@ -195,12 +195,12 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     /// and prepare/commit are handled on sending, this is because we don't want the leader
     /// to have to send the pre prepare to all followers but since these messages are very small,
     /// it's fine for all replicas to broadcast it to followers)
-    fn handle_commit_msg<D, ST, LP>(
+    fn handle_commit_msg<ST, LP>(
         &mut self,
         commit: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
-            LP: LogTransferMessage + 'static,
+            LP: LogTransferMessage<D, OP> + 'static,
             NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         if commit.header().from() != self.own_id {
             //Like with prepares, we only broadcast our own commit messages
@@ -217,10 +217,10 @@ impl<OP, NT> FollowersFollowing<OP, NT> where
     }
 
     ///
-    fn handle_sync_msg<D, ST, LP>(&mut self, msg: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>)
+    fn handle_sync_msg<ST, LP>(&mut self, msg: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>)
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
-        LP: LogTransferMessage + 'static,
+              LP: LogTransferMessage<D, OP> + 'static,
               NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         let header = msg.header().clone();
         let message = msg.message().clone();

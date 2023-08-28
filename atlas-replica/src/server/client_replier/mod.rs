@@ -1,16 +1,16 @@
 use std::ops::Deref;
 use std::sync::Arc;
+
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::node_id::NodeId;
-use atlas_communication::message::{NetworkMessageKind, System};
 use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::log_transfer::networking::serialize::LogTransferMessage;
-use atlas_execution::app::{BatchReplies, Reply};
 use atlas_core::messages::{ReplyMessage, SystemMessage};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::serialize::Service;
 use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
+use atlas_execution::app::BatchReplies;
 use atlas_execution::serialize::ApplicationData;
 
 type RepliesType<S> = BatchReplies<S>;
@@ -70,9 +70,9 @@ impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
         handle
     }
 
-    pub fn start<OP, ST, LP>(mut self) where OP: OrderingProtocolMessage + 'static,
+    pub fn start<OP, ST, LP>(mut self) where OP: OrderingProtocolMessage<D> + 'static,
                                              ST: StateTransferMessage + 'static,
-                                             LP: LogTransferMessage + 'static,
+                                             LP: LogTransferMessage<D, OP> + 'static,
                                              NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
         std::thread::Builder::new().name(format!("{:?} // Reply thread", self.node_id))
             .spawn(move || {

@@ -30,9 +30,9 @@ pub trait ReplyNode<D>: Send + Sync where D: ApplicationData {
 
 impl<NT, D, P, S, L, NI, RM> ReplyNode<D> for NodeWrap<NT, D, P, S, L, NI, RM>
     where D: ApplicationData + 'static,
-          P: OrderingProtocolMessage + 'static,
+          P: OrderingProtocolMessage<D> + 'static,
+          L: LogTransferMessage<D, P> + 'static,
           S: StateTransferMessage + 'static,
-          L: LogTransferMessage + 'static,
           NI: NetworkInformationProvider + 'static,
           RM: Serializable + 'static,
           NT: FullNetworkNode<NI, RM, Service<D, P, S, L>> + 'static,
