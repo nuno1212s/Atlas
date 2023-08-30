@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 use bytes::{Bytes, BytesMut};
-use log::error;
+use log::{error, info, warn};
 use atlas_common::channel::{new_oneshot_channel, OneShotRx};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
@@ -136,7 +136,7 @@ pub(crate) fn deserialize_and_push_reconf_message<RM, PM>(header: Header, payloa
             NetworkMessageKind::ReconfigurationMessage(reconf) => {
                 reconf_handle.push_request(StoredMessage::new(header, reconf.into())).unwrap();
             }
-            _ => error!("Received a non-reconfiguration message while we still have no extra information about the node. {:?}, message {:?}", header.from(), message)
+            _ => error!("Received a non-reconfiguration message while we still have no extra information about the node. {:?}, message {:?}. Ignoring.", header.from(), message)
         }
     });
 }
@@ -157,7 +157,7 @@ pub(crate) fn deserialize_and_push_message<RM, PM>(header: Header, payload: Byte
                 reconf_handle.push_request(StoredMessage::new(header, reconf.into())).unwrap();
             }
             NetworkMessageKind::Ping(_) => {
-                todo!("MIO does not currently use this (and the only one that uses this function is MIO so....)")
+                warn!("MIO does not currently use this (and the only one that uses this function is MIO so....)")
             }
             NetworkMessageKind::System(sys_msg) => {
                 connection.push_request(StoredMessage::new(header, sys_msg.into())).unwrap();

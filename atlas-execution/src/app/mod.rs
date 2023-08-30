@@ -12,25 +12,24 @@ pub type Reply<A, S> = <<A as Application<S>>::AppData as ApplicationData>::Repl
 
 /// An application for a state machine replication protocol.
 pub trait Application<S> {
-    
     type AppData: ApplicationData;
-    
+
     /// Returns the initial state of the application.
     fn initial_state() -> Result<S>;
-    
+
     /// Process an unordered client request, and produce a matching reply
     /// Cannot alter the application state
     fn unordered_execution(&self, state: &S, request: Request<Self, S>) -> Reply<Self, S>;
-    
+
     /// Much like [`unordered_execution()`], but processes a batch of requests.
     ///
     /// If [`unordered_batched_execution()`] is defined by the user, then [`unordered_execution()`] may
     /// simply be defined as such:
     ///
     /// ```rust
-    /// fn unordered_execution(&self,
+    /// fn unordered_execution(
     /// state: &S,
-    /// request: Request<Self>) -> Reply<Self> {
+    /// request: Request<Self, S>) -> Reply<Self, S> {
     ///     unimplemented!()
     /// }
     /// ```
@@ -52,7 +51,7 @@ pub trait Application<S> {
 
     /// Process a user request, producing a matching reply,
     /// meanwhile updating the application state.
-    fn update(&mut self, state: &mut S, request: Request<Self, S>) -> Reply<Self, S>;
+    fn update(&self, state: &mut S, request: Request<Self, S>) -> Reply<Self, S>;
 
     /// Much like `update()`, but processes a batch of requests.
     ///
@@ -61,7 +60,6 @@ pub trait Application<S> {
     ///
     /// ```rust
     /// fn update(
-    ///     &mut self,
     ///     state: &mut State<Self>,
     ///     request: Request<Self>,
     /// ) -> Reply<Self> {
@@ -69,7 +67,7 @@ pub trait Application<S> {
     /// }
     /// ```
     fn update_batch(
-        &mut self,
+        &self,
         state: &mut S,
         batch: UpdateBatch<Request<Self, S>>,
     ) -> BatchReplies<Reply<Self, S>> {
@@ -83,7 +81,6 @@ pub trait Application<S> {
 
         reply_batch
     }
-    
 }
 
 /// Represents a single client update request, to be executed.
@@ -115,7 +112,7 @@ pub struct UnorderedBatch<O> {
 pub struct UpdateBatch<O> {
     seq_no: SeqNo,
     inner: Vec<Update<O>>,
-    meta: Option<BatchMeta>
+    meta: Option<BatchMeta>,
 }
 
 /// Storage for a batch of client update replies.
@@ -130,7 +127,7 @@ impl<O> UpdateBatch<O> {
         Self {
             seq_no,
             inner: Vec::new(),
-            meta: None
+            meta: None,
         }
     }
 
@@ -138,7 +135,7 @@ impl<O> UpdateBatch<O> {
         Self {
             seq_no,
             inner: Vec::with_capacity(capacity),
-            meta: None
+            meta: None,
         }
     }
 
