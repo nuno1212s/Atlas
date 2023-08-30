@@ -12,3 +12,7 @@ atlas-core = { path = "../atlas-core" }
 atlas-execution = { path = "../atlas-execution" }
 atlas-metrics = { path = "../atlas-metrics" }
 atlas-common = { path = "../atlas-common" }
+# We use this threadpool instead of rayon since we need to be able to share the
+# immutable reference to the state across threads without having to use Arc or 'static
+# Reference lifetimes
+scoped_threadpool = "0.1.9"
