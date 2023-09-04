@@ -228,6 +228,18 @@ impl<O> Update<O> {
     pub fn operation(&self) -> &O {
         &self.operation
     }
+
+    pub fn from(&self) -> NodeId {
+        self.from
+    }
+
+    pub fn session_id(&self) -> SeqNo {
+        self.session_id
+    }
+
+    pub fn operation_id(&self) -> SeqNo {
+        self.operation_id
+    }
 }
 
 impl<P> BatchReplies<P> {
@@ -255,6 +267,10 @@ impl<P> BatchReplies<P> {
         });
     }
 
+    pub fn push(&mut self, reply: UpdateReply<P>) {
+        self.inner.push(reply);
+    }
+
     pub fn inner(&self) -> &Vec<UpdateReply<P>> {
         &self.inner
     }
@@ -271,6 +287,15 @@ impl<P> BatchReplies<P> {
 }
 
 impl<P> UpdateReply<P> {
+    pub fn init(to: NodeId, session_id: SeqNo, operation_id: SeqNo, payload: P) -> Self {
+        Self {
+            to,
+            session_id,
+            operation_id,
+            payload,
+        }
+    }
+
     pub fn to(&self) -> NodeId {
         self.to
     }

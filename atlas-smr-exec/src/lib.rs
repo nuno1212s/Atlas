@@ -1,18 +1,128 @@
 use std::sync::Arc;
 use std::time::Instant;
+use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::SeqNo;
 use atlas_common::threadpool;
+use atlas_common::error::*;
 use atlas_core::messages::ReplyMessage;
 use atlas_core::smr::exec::{ReplyNode, ReplyType};
-use atlas_execution::app::BatchReplies;
+use atlas_execution::app::{Application, BatchReplies, Request};
+use atlas_execution::{ExecutionRequest, ExecutorHandle};
 use atlas_execution::serialize::ApplicationData;
+use atlas_execution::state as state;
+use atlas_execution::state::divisible_state::{DivisibleState};
+use atlas_execution::state::monolithic_state::{AppStateMessage, InstallStateMessage, MonolithicState};
 use atlas_metrics::metrics::metric_duration;
+use crate::metric::REPLIES_SENT_TIME_ID;
 
 pub mod single_threaded;
 pub mod metric;
-pub mod reply_handle;
 pub mod scalable;
 
+pub struct SingleThreadedMonExecutor;
+
+pub struct MultiThreadedMonExecutor;
+
+pub struct SingleThreadedDivExecutor;
+
+pub struct MultiThreadedDivExecutor;
+
+/// Trait defining the necessary methods for a divisible state executor
+/// (In reality since all communication is done via channels, this ends up just defining the
+/// initialisation method)
+pub trait TDivisibleStateExecutor<A, S, NT> where A: Application<S>, S: DivisibleState {
+    /// Initialize a handle and a channel to receive requests
+    fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>);
+
+    /// Initialization method for the executor
+    fn init(work_receiver: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
+            initial_state: Option<(S, Vec<Request<A, S>>)>,
+            service: A,
+            send_node: Arc<NT>) ->
+            Result<(ChannelSyncTx<state::divisible_state::InstallStateMessage<S>>,
+                    ChannelSyncRx<state::divisible_state::AppStateMessage<S>>)>
+        where NT: ReplyNode<A::AppData> + 'static;
+}
+
+/// Trait defining the necessary methods for a monolithic state executor
+/// (In reality since all communication is done via channels, this ends up just defining the
+/// initialisation method)
+pub trait TMonolithicStateExecutor<A, S, NT> where A: Application<S>, S: MonolithicState {
+    /// Initialize a handle and a channel to receive requests
+    fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>);
+
+    /// Initialization method for the executor
+    fn init(work_receiver: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
+            initial_state: Option<(S, Vec<Request<A, S>>)>,
+            service: A,
+            send_node: Arc<NT>) ->
+            Result<(ChannelSyncTx<state::monolithic_state::InstallStateMessage<S>>,
+                    ChannelSyncRx<state::monolithic_state::AppStateMessage<S>>)>
+        where NT: ReplyNode<A::AppData> + 'static;
+}
+
+impl<A, S, NT> TDivisibleStateExecutor<A, S, NT> for SingleThreadedDivExecutor
+    where A: Application<S> + Send + 'static,
+          S: DivisibleState + Send + 'static {
+    fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>) {
+        single_threaded::divisible_state_exec::DivisibleStateExecutor::init_handle()
+    }
+
+    fn init(work_receiver: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
+            initial_state: Option<(S, Vec<Request<A, S>>)>,
+            service: A,
+            send_node: Arc<NT>) ->
+            Result<(ChannelSyncTx<state::divisible_state::InstallStateMessage<S>>,
+                    ChannelSyncRx<state::divisible_state::AppStateMessage<S>>)>
+        where NT: ReplyNode<A::AppData> + 'static {
+        single_threaded::divisible_state_exec::DivisibleStateExecutor::init::<SingleThreadedDivExecutor>(work_receiver, initial_state, service, send_node)
+    }
+}
+
+impl<A, S, NT> TDivisibleStateExecutor<A, S, NT> for MultiThreadedDivExecutor
+    where A: Application<S> + Send + 'static,
+          S: DivisibleState + Send + 'static {
+    fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>) {
+        scalable::divisible_state_exec::ScalableDivisibleStateExecutor::init_handle()
+    }
+
+    fn init(work_receiver: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
+            initial_state: Option<(S, Vec<Request<A, S>>)>,
+            service: A,
+            send_node: Arc<NT>) ->
+            Result<(ChannelSyncTx<state::divisible_state::InstallStateMessage<S>>,
+                    ChannelSyncRx<state::divisible_state::AppStateMessage<S>>)>
+        where NT: ReplyNode<A::AppData> + 'static {
+        scalable::divisible_state_exec::ScalableDivisibleStateExecutor::init::<MultiThreadedDivExecutor>(work_receiver, initial_state, service, send_node)
+    }
+}
+
+impl<A, S, NT> TMonolithicStateExecutor<A, S, NT> for SingleThreadedMonExecutor
+    where A: Application<S>, S: MonolithicState {
+    fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>) {
+        single_threaded::monolithic_executor::MonolithicExecutor::init_handle()
+    }
+
+    fn init(work_receiver: ChannelSyncRx<ExecutionRequest<Request<A, S>>>, initial_state: Option<(S, Vec<Request<A, S>>)>, service: A, send_node: Arc<NT>)
+            -> Result<(ChannelSyncTx<InstallStateMessage<S>>, ChannelSyncRx<AppStateMessage<S>>)> where NT: ReplyNode<A::AppData> + 'static {
+        single_threaded::monolithic_executor::MonolithicExecutor::init(work_receiver, initial_state, service, send_node)
+    }
+}
+
+impl<A, S, NT> TMonolithicStateExecutor<A, S, NT> for MultiThreadedMonExecutor
+    where A: Application<S>, S: MonolithicState {
+    fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>) {
+        scalable::monolithic_exec::ScalableMonolithicExecutor::init_handle()
+    }
+
+    fn init(work_receiver: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
+            initial_state: Option<(S, Vec<Request<A, S>>)>,
+            service: A,
+            send_node: Arc<NT>)
+            -> Result<(ChannelSyncTx<InstallStateMessage<S>>, ChannelSyncRx<AppStateMessage<S>>)> where NT: ReplyNode<A::AppData> + 'static {
+        scalable::monolithic_exec::ScalableMonolithicExecutor::init(work_receiver, initial_state, service, send_node)
+    }
+}
 
 const EXECUTING_BUFFER: usize = 16384;
 //const REPLY_CONCURRENCY: usize = 4;

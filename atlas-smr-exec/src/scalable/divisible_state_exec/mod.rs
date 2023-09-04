@@ -1,18 +1,21 @@
 use std::sync::Arc;
 use std::time::Instant;
+
 use scoped_threadpool::Pool;
+
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
-use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::error::*;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::smr::exec::ReplyNode;
-use atlas_execution::app::{Application, BatchReplies, Reply, Request, UpdateBatch};
 use atlas_execution::{ExecutionRequest, ExecutorHandle};
+use atlas_execution::app::{Application, BatchReplies, Reply, Request};
 use atlas_execution::state::divisible_state::{AppStateMessage, DivisibleState, DivisibleStateDescriptor, InstallStateMessage};
 use atlas_metrics::metrics::metric_duration;
+
 use crate::ExecutorReplier;
 use crate::metric::{EXECUTION_LATENCY_TIME_ID, EXECUTION_TIME_TAKEN_ID};
-use crate::scalable::{CRUDState, speculative_execution, THREAD_POOL_THREADS};
+use crate::scalable::{CRUDState, scalable_execution, scalable_unordered_execution, THREAD_POOL_THREADS};
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
@@ -112,8 +115,7 @@ impl<S, A, NT> ScalableDivisibleStateExecutor<S, A, NT>
 
                             let start = Instant::now();
 
-                            let reply_batch =
-                                self.application.update_batch(&mut self.state, batch);
+                            let reply_batch = scalable_execution(&mut self.thread_pool, &self.application, &mut self.state, batch);
 
                             metric_duration(EXECUTION_TIME_TAKEN_ID, start.elapsed());
 
@@ -127,25 +129,23 @@ impl<S, A, NT> ScalableDivisibleStateExecutor<S, A, NT>
 
                             let start = Instant::now();
 
-                            let reply_batch =
-                                self.application.update_batch(&mut self.state, batch);
+                            let reply_batch = scalable_execution(&mut self.thread_pool, &self.application, &mut self.state, batch);
 
                             metric_duration(EXECUTION_TIME_TAKEN_ID, start.elapsed());
 
-                            // deliver checkpoint state to the replica
-                            self.deliver_checkpoint_state(seq_no);
-
                             // deliver replies
                             self.execution_finished::<T>(Some(seq_no), reply_batch);
+
+                            // deliver checkpoint state to the replica
+                            self.deliver_checkpoint_state(seq_no);
                         }
                         ExecutionRequest::Read(_peer_id) => {
                             todo!()
                         }
                         ExecutionRequest::ExecuteUnordered(batch) => {
-                            let reply_batch =
-                                self.application.unordered_batched_execution(&self.state, batch);
+                            let reply = scalable_unordered_execution(&mut self.thread_pool, &self.application, &mut self.state, batch);
 
-                            self.execution_finished::<T>(None, reply_batch);
+                            self.execution_finished::<T>(None, reply);
                         }
                     }
                 }

@@ -16,16 +16,14 @@ use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
 use atlas_execution::app::Application;
 use atlas_execution::state::divisible_state::{AppStateMessage, DivisibleState, InstallStateMessage};
 use atlas_metrics::metrics::metric_duration;
+use atlas_smr_exec::TDivisibleStateExecutor;
 
 use crate::config::DivisibleStateReplicaConfig;
-use crate::executable::divisible_state_exec::DivisibleStateExecutor;
-use crate::executable::ReplicaReplier;
 use crate::metric::RUN_LATENCY_TIME_ID;
 use crate::persistent_log::SMRPersistentLog;
-use crate::server::client_replier::Replier;
 use crate::server::Replica;
 
-pub struct DivStReplica<RP, S, A, OP, ST, LT, NT, PL>
+pub struct DivStReplica<RP, SE, S, A, OP, ST, LT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
           S: DivisibleState + 'static,
           A: Application<S> + Send + 'static,
@@ -34,7 +32,7 @@ pub struct DivStReplica<RP, S, A, OP, ST, LT, NT, PL>
           LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + 'static + DivisibleStateLog<S>,
 {
-    p: PhantomData<A>,
+    p: PhantomData<(A, SE)>,
     /// The inner replica object, responsible for the general replica things
     inner_replica: Replica<RP, S, A::AppData, OP, ST, LT, NT, PL>,
 
@@ -44,8 +42,9 @@ pub struct DivStReplica<RP, S, A, OP, ST, LT, NT, PL>
     state_transfer_protocol: ST,
 }
 
-impl<RP, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, S, A, OP, ST, LT, NT, PL> where
+impl<RP, SE, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, SE, S, A, OP, ST, LT, NT, PL> where
     RP: ReconfigurationProtocol + 'static,
+    SE: TDivisibleStateExecutor<A, S, NT> + 'static,
     S: DivisibleState + Send + 'static,
     A: Application<S> + Send + 'static,
     OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<A::AppData, OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
@@ -58,18 +57,14 @@ impl<RP, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, S, A, OP, ST, LT, NT, PL> wh
             service, replica_config, st_config
         } = cfg;
 
-        let (executor_handle, executor_receiver) = DivisibleStateExecutor::<S, A, NT>::init_handle();
+        let (executor_handle, executor_receiver) = SE::<S, A, NT>::init_handle();
 
         let inner_replica = Replica::<RP, S, A::AppData, OP, ST, LT, NT, PL>::bootstrap(replica_config, executor_handle.clone()).await?;
 
         let node = inner_replica.node.clone();
 
-        //CURRENTLY DISABLED, USING THREADPOOL INSTEAD
-        let reply_handle = Replier::new(NetworkNode::id(&*node), node.clone());
-
         let (state_tx, checkpoint_rx) =
-            DivisibleStateExecutor::init::<ReplicaReplier>
-                (reply_handle, executor_receiver, None, service, node.clone())?;
+            SE::init(executor_receiver, None, service, node.clone())?;
 
         let state_transfer_protocol = ST::initialize(st_config, inner_replica.timeouts.clone(),
                                                      node.clone(), inner_replica.persistent_log.clone(),

@@ -13,6 +13,7 @@ use atlas_execution::state::monolithic_state::{AppStateMessage, InstallStateMess
 use atlas_metrics::metrics::metric_duration;
 use crate::ExecutorReplier;
 use crate::metric::{EXECUTION_LATENCY_TIME_ID, EXECUTION_TIME_TAKEN_ID};
+
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
 

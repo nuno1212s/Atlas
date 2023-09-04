@@ -23,17 +23,16 @@ use atlas_execution::app::Application;
 use atlas_execution::state::monolithic_state::{AppStateMessage, digest_state, InstallStateMessage};
 use atlas_execution::state::monolithic_state::MonolithicState;
 use atlas_metrics::metrics::metric_duration;
+use atlas_smr_exec::TMonolithicStateExecutor;
 
 use crate::config::MonolithicStateReplicaConfig;
-use crate::executable::monolithic_executor::MonolithicExecutor;
-use crate::executable::ReplicaReplier;
 use crate::metric::RUN_LATENCY_TIME_ID;
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::client_replier::Replier;
 use crate::server::Replica;
 
 /// Replica type made to handle monolithic states and executors
-pub struct MonReplica<RP, S, A, OP, ST, LT, NT, PL>
+pub struct MonReplica<RP, ME, S, A, OP, ST, LT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + Send + 'static,
@@ -41,7 +40,7 @@ pub struct MonReplica<RP, S, A, OP, ST, LT, NT, PL>
           ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + 'static + MonolithicStateLog<S>, {
-    p: PhantomData<A>,
+    p: PhantomData<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
     inner_replica: Replica<RP, S, A::AppData, OP, ST, LT, NT, PL>,
 
@@ -52,9 +51,10 @@ pub struct MonReplica<RP, S, A, OP, ST, LT, NT, PL>
     state_transfer_protocol: ST,
 }
 
-impl<RP, S, A, OP, ST, LT, NT, PL> MonReplica<RP, S, A, OP, ST, LT, NT, PL>
+impl<RP, ME, S, A, OP, ST, LT, NT, PL> MonReplica<RP, ME, S, A, OP, ST, LT, NT, PL>
     where
         RP: ReconfigurationProtocol + 'static,
+        ME: TMonolithicStateExecutor<A, S, NT> + 'static,
         S: MonolithicState + 'static,
         A: Application<S> + Send + 'static,
         OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<A::AppData, OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
@@ -69,19 +69,14 @@ impl<RP, S, A, OP, ST, LT, NT, PL> MonReplica<RP, S, A, OP, ST, LT, NT, PL>
             st_config
         } = cfg;
 
-        let (executor_handle, executor_receiver) = MonolithicExecutor::<S, A, NT>::init_handle();
+        let (executor_handle, executor_receiver) = ME::init_handle();
 
         let inner_replica = Replica::<RP, S, A::AppData, OP, ST, LT, NT, PL>::bootstrap(replica_config, executor_handle.clone()).await?;
 
         let node = inner_replica.node.clone();
 
-        //CURRENTLY DISABLED, USING THREADPOOL INSTEAD
-        let reply_handle = Replier::new(NetworkNode::id(&*node), node.clone());
-
         let (state_tx, checkpoint_rx) =
-            MonolithicExecutor::init::<ReplicaReplier>
-                (reply_handle, executor_receiver, None, service, node.clone())?;
-
+            ME::init(executor_receiver, None, service, node.clone())?;
 
         let state_transfer_protocol = ST::initialize(st_config, inner_replica.timeouts.clone(),
                                                      node.clone(), inner_replica.persistent_log.clone(),

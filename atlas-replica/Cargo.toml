@@ -27,7 +27,8 @@ atlas-communication = { path = "../atlas-communication" }
 atlas-execution = { path = "../atlas-execution" }
 atlas-common = { path = "../atlas-common" }
 atlas-core = { path = "../atlas-core" }
-atlas-metrics = {path = "../atlas-metrics" }
+atlas-metrics = { path = "../atlas-metrics" }
 atlas-persistent-log = { path = "../atlas-persistent-log" }
-atlas-reconfiguration = {path = "../atlas-reconfiguration"}
+atlas-reconfiguration = { path = "../atlas-reconfiguration" }
+atlas-smr-exec = { path = "../atlas-smr-exec" }
 futures-timer = "3.0.2"
