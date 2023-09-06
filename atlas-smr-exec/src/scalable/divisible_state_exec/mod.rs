@@ -9,20 +9,20 @@ use atlas_common::error::*;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::smr::exec::ReplyNode;
 use atlas_execution::{ExecutionRequest, ExecutorHandle};
-use atlas_execution::app::{Application, BatchReplies, Reply, Request};
+use atlas_execution::app::{AppData, Application, BatchReplies, Reply, Request};
 use atlas_execution::state::divisible_state::{AppStateMessage, DivisibleState, DivisibleStateDescriptor, InstallStateMessage};
 use atlas_metrics::metrics::metric_duration;
 
 use crate::ExecutorReplier;
 use crate::metric::{EXECUTION_LATENCY_TIME_ID, EXECUTION_TIME_TAKEN_ID};
-use crate::scalable::{CRUDState, scalable_execution, scalable_unordered_execution, THREAD_POOL_THREADS};
+use crate::scalable::{CRUDState, ExecutionUnit, scalable_execution, scalable_unordered_execution, ScalableApp, THREAD_POOL_THREADS};
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
 
 pub struct ScalableDivisibleStateExecutor<S, A, NT>
-    where S: DivisibleState + CRUDState + 'static,
-          A: Application<S> + 'static,
+    where S: DivisibleState + CRUDState + 'static + Send + Sync,
+          A: ScalableApp<S> + 'static,
           NT: 'static {
     application: A,
     state: S,
@@ -39,13 +39,14 @@ pub struct ScalableDivisibleStateExecutor<S, A, NT>
 }
 
 impl<S, A, NT> ScalableDivisibleStateExecutor<S, A, NT>
-    where S: DivisibleState + CRUDState + 'static + Send,
-          A: Application<S> + 'static + Send {
-    pub fn init_handle() -> (ExecutorHandle<A::AppData>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>) {
+    where S: DivisibleState + CRUDState + 'static + Send + Sync,
+          A: ScalableApp<S> + 'static + Send {
+    pub fn init_handle() -> (ExecutorHandle<AppData<A, S>>, ChannelSyncRx<ExecutionRequest<Request<A, S>>>) {
         let (tx, rx) = channel::new_bounded_sync(EXECUTING_BUFFER);
 
         (ExecutorHandle::new(tx), rx)
     }
+
     pub fn init<T>(
         handle: ChannelSyncRx<ExecutionRequest<Request<A, S>>>,
         initial_state: Option<(S, Vec<Request<A, S>>)>,
@@ -53,11 +54,11 @@ impl<S, A, NT> ScalableDivisibleStateExecutor<S, A, NT>
         send_node: Arc<NT>)
         -> Result<(ChannelSyncTx<InstallStateMessage<S>>, ChannelSyncRx<AppStateMessage<S>>)>
         where T: ExecutorReplier + 'static,
-              NT: ReplyNode<A::AppData> + 'static {
+              NT: ReplyNode<AppData<A, S>> + 'static {
         let (state, requests) = if let Some(state) = initial_state {
             state
         } else {
-            (A::initial_state()?, vec![])
+            (<A as Application<S>>::initial_state()?, vec![])
         };
 
         let (state_tx, state_rx) = channel::new_bounded_sync(STATE_BUFFER);
@@ -81,12 +82,14 @@ impl<S, A, NT> ScalableDivisibleStateExecutor<S, A, NT>
             executor.application.update(&mut executor.state, request);
         }
 
-        executor.run();
+        executor.run::<T>();
 
         Ok((state_tx, checkpoint_rx))
     }
 
-    fn run<T>(mut self) where T: ExecutorReplier + 'static {
+    fn run<T>(mut self)
+        where T: ExecutorReplier + 'static,
+              NT: ReplyNode<AppData<A, S>> + 'static {
         std::thread::Builder::new()
             .name(format!("Executor thread"))
             .spawn(move || {
@@ -143,7 +146,7 @@ impl<S, A, NT> ScalableDivisibleStateExecutor<S, A, NT>
                             todo!()
                         }
                         ExecutionRequest::ExecuteUnordered(batch) => {
-                            let reply = scalable_unordered_execution(&mut self.thread_pool, &self.application, &mut self.state, batch);
+                            let reply = scalable_unordered_execution(&mut self.thread_pool, &self.application, &self.state, batch);
 
                             self.execution_finished::<T>(None, reply);
                         }
@@ -166,7 +169,7 @@ impl<S, A, NT> ScalableDivisibleStateExecutor<S, A, NT>
     }
 
     fn execution_finished<T>(&self, seq: Option<SeqNo>, batch: BatchReplies<Reply<A, S>>)
-        where NT: ReplyNode<A::AppData> + 'static,
+        where NT: ReplyNode<AppData<A, S>> + 'static,
               T: ExecutorReplier + 'static {
         let send_node = self.send_node.clone();
 
@@ -183,6 +186,6 @@ impl<S, A, NT> ScalableDivisibleStateExecutor<S, A, NT>
             }
         }*/
 
-        T::execution_finished::<A::AppData, NT>(send_node, seq, batch);
+        T::execution_finished::<AppData<A, S>, NT>(send_node, seq, batch);
     }
 }

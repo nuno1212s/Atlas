@@ -10,8 +10,10 @@ pub type Request<A, S> = <<A as Application<S>>::AppData as ApplicationData>::Re
 /// Reply type of the `Service`.
 pub type Reply<A, S> = <<A as Application<S>>::AppData as ApplicationData>::Reply;
 
+pub type AppData<A, S> = <A as Application<S>>::AppData;
+
 /// An application for a state machine replication protocol.
-pub trait Application<S> {
+pub trait Application<S>: Send {
     type AppData: ApplicationData;
 
     /// Returns the initial state of the application.
@@ -212,6 +214,7 @@ impl<O> AsRef<[Update<O>]> for UpdateBatch<O> {
         &self.inner[..]
     }
 }
+
 
 impl<O> Update<O> {
     /// Returns the inner types stored in this `Update`.

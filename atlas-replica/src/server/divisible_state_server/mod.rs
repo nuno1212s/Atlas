@@ -57,7 +57,7 @@ impl<RP, SE, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, SE, S, A, OP, ST, LT, NT
             service, replica_config, st_config
         } = cfg;
 
-        let (executor_handle, executor_receiver) = SE::<S, A, NT>::init_handle();
+        let (executor_handle, executor_receiver) = SE::init_handle();
 
         let inner_replica = Replica::<RP, S, A::AppData, OP, ST, LT, NT, PL>::bootstrap(replica_config, executor_handle.clone()).await?;
 
