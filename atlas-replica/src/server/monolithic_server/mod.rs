@@ -39,7 +39,7 @@ pub struct MonReplica<RP, ME, S, A, OP, ST, LT, NT, PL>
           OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<A::AppData, OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + 'static,
           ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
-          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + 'static + MonolithicStateLog<S>, {
+          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + 'static + MonolithicStateLog<S>, {
     p: PhantomData<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
     inner_replica: Replica<RP, S, A::AppData, OP, ST, LT, NT, PL>,
@@ -60,7 +60,7 @@ impl<RP, ME, S, A, OP, ST, LT, NT, PL> MonReplica<RP, ME, S, A, OP, ST, LT, NT, 
         OP: StatefulOrderProtocol<A::AppData, NT, PL> + PersistableOrderProtocol<A::AppData, OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
         LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
         ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
-        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + MonolithicStateLog<S> + 'static,
+        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + MonolithicStateLog<S> + 'static,
         NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization> + 'static, {
     pub async fn bootstrap(cfg: MonolithicStateReplicaConfig<RP, S, A, OP, ST, LT, NT, PL>) -> Result<Self> {
         let MonolithicStateReplicaConfig {

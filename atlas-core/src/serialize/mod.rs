@@ -160,7 +160,6 @@ impl NetworkView for NoView {
 }
 
 impl<D> OrderingProtocolMessage<D> for NoProtocol {
-    type ViewInfo = NoView;
 
     type ProtocolMessage = ();
 

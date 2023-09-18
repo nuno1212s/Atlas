@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 
 use atlas_common::error::*;
 use atlas_core::ordering_protocol::{LoggableMessage, SerProofMetadata, View};
-use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, PermissionedOrderingProtocolMessage};
 use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 
@@ -38,15 +38,15 @@ pub(super) fn serialize_message<W, D, OPM>(write: &mut W, message: &LoggableMess
         "Failed to serialize message")
 }
 
-pub(super) fn serialize_view<W, D, OPM>(write: &mut W, view: &View<D, OPM>) -> Result<usize>
-    where W: Write, OPM: OrderingProtocolMessage<D> {
+pub(super) fn serialize_view<W, POP>(write: &mut W, view: &View<POP>) -> Result<usize>
+    where W: Write, POP: PermissionedOrderingProtocolMessage {
     bincode::serde::encode_into_std_write(view, write, bincode::config::standard()).wrapped_msg(
         ErrorKind::MsgLogPersistentSerialization,
         "Failed to serialize view")
 }
 
-pub(super) fn deserialize_view<R, D, OPM>(read: &mut R) -> Result<View<D, OPM>>
-    where R: Read, OPM: OrderingProtocolMessage<D> {
+pub(super) fn deserialize_view<R, POP>(read: &mut R) -> Result<View<POP>>
+    where R: Read, POP: PermissionedOrderingProtocolMessage{
     bincode::serde::decode_from_std_read(read, bincode::config::standard()).wrapped_msg(
         ErrorKind::MsgLogPersistentSerialization,
         "Failed to deserialize view")

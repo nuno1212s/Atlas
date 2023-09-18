@@ -11,7 +11,7 @@ use atlas_execution::ExecutorHandle;
 use atlas_execution::serialize::ApplicationData;
 
 use crate::messages::{ClientRqInfo, Protocol};
-use crate::ordering_protocol::networking::serialize::OrderingProtocolMessage;
+use crate::ordering_protocol::networking::serialize::{OrderingProtocolMessage, PermissionedOrderingProtocolMessage};
 use crate::persistent_log::OrderingProtocolLog;
 use crate::request_pre_processing::{BatchOutput, RequestPreProcessor};
 use crate::timeouts::{RqTimeout, Timeouts};
@@ -20,7 +20,7 @@ pub mod reconfigurable_order_protocol;
 pub mod stateful_order_protocol;
 pub mod networking;
 
-pub type View<D, OP> = <OP as OrderingProtocolMessage<D>>::ViewInfo;
+pub type View<POP: PermissionedOrderingProtocolMessage> = <POP as PermissionedOrderingProtocolMessage>::ViewInfo;
 
 pub type ProtocolMessage<D, OP> = <OP as OrderingProtocolMessage<D>>::ProtocolMessage;
 pub type LoggableMessage<D, OP> = <OP as OrderingProtocolMessage<D>>::LoggableMessage;
@@ -47,9 +47,6 @@ pub trait OrderingProtocol<D, NT, PL>: OrderProtocolTolerance + Orderable where 
     /// Initialize this ordering protocol with the given configuration, executor, timeouts and node
     fn initialize(config: Self::Config, args: OrderingProtocolArgs<D, NT, PL>) -> Result<Self> where
         Self: Sized;
-
-    /// Get the current view of the ordering protocol
-    fn view(&self) -> View<D, Self::Serialization>;
 
     /// Handle a protocol message that was received while we are executing another protocol
     fn handle_off_ctx_message(&mut self, message: StoredMessage<Protocol<ProtocolMessage<D, Self::Serialization>>>)
@@ -86,6 +83,20 @@ pub trait OrderingProtocol<D, NT, PL>: OrderProtocolTolerance + Orderable where 
     /// Handle a timeout received from the timeouts layer
     fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<OrderProtocolExecResult<D::Request>>
         where PL: OrderingProtocolLog<D, Self::Serialization>;
+}
+
+
+/// A permissioned ordering protocol, meaning only a select few are actually part of the quorum that decides the
+/// ordering of the operations.
+pub trait PermissionedOrderingProtocol {
+
+    type PermissionedSerialization: PermissionedOrderingProtocolMessage + 'static;
+
+    /// Get the current view of the ordering protocol
+    fn view(&self) -> View<Self::PermissionedSerialization>;
+
+    /// Install a given view into the ordering protocol
+    fn install_view(&mut self, view: View<Self::PermissionedSerialization>);
 }
 
 /// result from polling the ordering protocol

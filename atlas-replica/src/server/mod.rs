@@ -56,7 +56,7 @@ pub type StateTransferDone = Option<SeqNo>;
 pub type LogTransferDone<R> = Option<(SeqNo, SeqNo, Vec<R>)>;
 
 #[derive(Clone)]
-pub(crate) enum ReplicaPhase<R>  {
+pub(crate) enum ReplicaPhase<R> {
     // The replica is currently executing the ordering protocol
     OrderingProtocol,
     // The replica is currently executing the state transfer protocol
@@ -70,7 +70,7 @@ pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'sta
                                                        OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<D, OP::Serialization, OP::StateSerialization> + 'static,
                                                        LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
                                                        ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
-                                                       PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static,
+                                                       PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + 'static,
                                                        RP: ReconfigurationProtocol + 'static {
     replica_phase: ReplicaPhase<D::Request>,
 
@@ -115,7 +115,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
         ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
         NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization> + 'static,
-        PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> + 'static, {
+        PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + 'static, {
     async fn bootstrap(cfg: ReplicaConfig<RP, S, D, OP, ST, LT, NT, PL>, executor: ExecutorHandle<D>) -> Result<Self> {
         let ReplicaConfig {
             id: log_node_id,
@@ -737,11 +737,9 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                 };
             }
             ReplicaPhase::StateTransferProtocol { state_transfer, log_transfer } => {
-
                 warn!("{:?} // Why would we want to run the protocols when we are already running them?", NetworkNode::id(&*self.node));
 
                 return Ok(());
-
             }
         }
 
@@ -848,7 +846,6 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
     }
 
     fn handle_quorum_joined(&mut self, node: NodeId, members: Vec<NodeId>, state_transfer: &mut ST) -> Result<()> {
-
         if node == self.id() {
             info!("{:?} // We have joined the quorum, responding to the reconfiguration protocol", self.id());
 

@@ -11,7 +11,7 @@ use atlas_execution::serialize::ApplicationData;
 use atlas_core::followers::{FollowerChannelMsg, FollowerEvent, FollowerHandle};
 use atlas_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_core::messages::{Protocol, SystemMessage};
-use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
+use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage, PermissionedOrderingProtocolMessage};
 use atlas_core::serialize::Service;
 use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
 
@@ -22,19 +22,20 @@ use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
 /// This routing is only relevant to the Preprepare requests, all other requests
 /// Can be broadcast from each replica as they are very small and therefore
 /// don't have any effects on performance
-struct FollowersFollowing<D, OP: OrderingProtocolMessage<D>, NT> {
+struct FollowersFollowing<D, OP: OrderingProtocolMessage<D>, POP: PermissionedOrderingProtocolMessage, NT> {
     own_id: NodeId,
     followers: Vec<NodeId>,
     send_node: Arc<NT>,
-    rx: ChannelSyncRx<FollowerChannelMsg<D, OP>>,
+    rx: ChannelSyncRx<FollowerChannelMsg<D, OP, POP>>,
 }
 
-impl<D, OP, NT> FollowersFollowing<D, OP, NT> where
+impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
     OP: OrderingProtocolMessage<D> + 'static,
+    POP: PermissionedOrderingProtocolMessage + 'static,
     NT: Send + Sync + 'static {
     /// Starts the follower handling thread and returns a cloneable handle that
     /// can be used to deliver messages to it.
-    pub fn init_follower_handling<ST, LP>(id: NodeId, node: &Arc<NT>) -> FollowerHandle<D, OP>
+    pub fn init_follower_handling<ST, LP>(id: NodeId, node: &Arc<NT>) -> FollowerHandle<D, OP, POP>
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage<D, OP> + 'static,
@@ -92,7 +93,7 @@ impl<D, OP, NT> FollowersFollowing<D, OP, NT> where
     ///
     /// (This is only needed for the preprepare message, all others use
     /// multicast)
-    fn targets(&self, view: &OP::ViewInfo) -> Vec<NodeId> {
+    fn targets(&self, view: &POP::ViewInfo) -> Vec<NodeId> {
         //How many replicas are not the leader?
         let available_replicas = view.n() - 1;
 
@@ -140,7 +141,7 @@ impl<D, OP, NT> FollowersFollowing<D, OP, NT> where
     /// Handle when we have received a preprepare message
     fn handle_preprepare_msg_rcvd<ST, LP>(
         &mut self,
-        view: &OP::ViewInfo,
+        view: &POP::ViewInfo,
         message: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,

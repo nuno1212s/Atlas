@@ -9,7 +9,7 @@ use atlas_execution::state::divisible_state::DivisibleState;
 use atlas_execution::state::monolithic_state::MonolithicState;
 use crate::ordering_protocol::stateful_order_protocol::DecLog;
 use crate::ordering_protocol::{LoggableMessage, SerProof, SerProofMetadata, View};
-use crate::ordering_protocol::networking::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use crate::ordering_protocol::networking::serialize::{OrderingProtocolMessage, PermissionedOrderingProtocolMessage, StatefulOrderProtocolMessage};
 use crate::state_transfer::{Checkpoint};
 
 
@@ -61,9 +61,6 @@ pub trait OrderingProtocolLog<D, OP>: Clone where OP: OrderingProtocolMessage<D>
     /// Write to the persistent log the latest committed sequence number
     fn write_committed_seq_no(&self, write_mode: OperationMode, seq: SeqNo) -> Result<()>;
 
-    /// Write to the persistent log the latest View information
-    fn write_view_info(&self, write_mode: OperationMode, view_seq: View<D, OP>) -> Result<()>;
-
     /// Write a given message to the persistent log
     fn write_message(&self, write_mode: OperationMode, msg: Arc<ReadOnly<StoredMessage<LoggableMessage<D, OP>>>>) -> Result<()>;
 
@@ -79,12 +76,17 @@ pub trait OrderingProtocolLog<D, OP>: Clone where OP: OrderingProtocolMessage<D>
 }
 
 /// Complements the default [`OrderingProtocolLog`] with methods for proofs and decided logs
-pub trait StatefulOrderingProtocolLog<D, OPM, SOPM>: OrderingProtocolLog<D, OPM>
-    where OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM> {
-    fn read_state(&self, write_mode: OperationMode) -> Result<Option<(View<D, OPM>, DecLog<D, OPM, SOPM>)>>;
+pub trait StatefulOrderingProtocolLog<D, OPM, SOPM, POP>: OrderingProtocolLog<D, OPM>
+    where OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>, POP: PermissionedOrderingProtocolMessage {
+
+    /// Write to the persistent log the latest View information
+    fn write_view_info(&self, write_mode: OperationMode, view_seq: View<POP>) -> Result<()>;
+
+    /// Read the state from the persistent log
+    fn read_state(&self, write_mode: OperationMode) -> Result<Option<(View<POP>, DecLog<D, OPM, SOPM>)>>;
 
     /// Write a given decision log to the persistent log
-    fn write_install_state(&self, write_mode: OperationMode, view: View<D, OPM>, dec_log: DecLog<D, OPM, SOPM>) -> Result<()>;
+    fn write_install_state(&self, write_mode: OperationMode, view: View<POP>, dec_log: DecLog<D, OPM, SOPM>) -> Result<()>;
 }
 
 ///

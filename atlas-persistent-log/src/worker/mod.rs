@@ -12,7 +12,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::persistentdb::KVDB;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::ordering_protocol::{LoggableMessage, SerProof, SerProofMetadata, View};
-use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, PermissionedOrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_core::ordering_protocol::stateful_order_protocol::DecLog;
 use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_execution::serialize::ApplicationData;
@@ -43,16 +43,16 @@ pub(super) const COLUMN_FAMILY_STATE: &str = "state";
 /// A handle for all of the persistent workers.
 /// Handles task distribution and load balancing across the
 /// workers
-pub struct PersistentLogWorkerHandle<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>> {
+pub struct PersistentLogWorkerHandle<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>, POP: PermissionedOrderingProtocolMessage> {
     round_robin_counter: AtomicUsize,
-    tx: Vec<PersistentLogWriteStub<D, OPM, SOPM>>,
+    tx: Vec<PersistentLogWriteStub<D, OPM, SOPM, POP>>,
 }
 
 
 ///A stub that is only useful for writing to the persistent log
 #[derive(Clone)]
-pub struct PersistentLogWriteStub<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>> {
-    pub(crate) tx: ChannelSyncTx<ChannelMsg<D, OPM, SOPM>>,
+pub struct PersistentLogWriteStub<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>, POP: PermissionedOrderingProtocolMessage> {
+    pub(crate) tx: ChannelSyncTx<ChannelMsg<D, OPM, SOPM, POP>>,
 }
 
 /// A writing stub for divisible state objects
@@ -61,23 +61,25 @@ pub struct PersistentDivisibleStateStub<S: DivisibleState> {
     pub(crate) tx: ChannelSyncTx<DivisibleStateMessage<S>>,
 }
 
-impl<D, OPM, SOPM> PersistentLogWorkerHandle<D, OPM, SOPM>
+impl<D, OPM, SOPM, POP> PersistentLogWorkerHandle<D, OPM, SOPM, POP>
     where OPM: OrderingProtocolMessage<D> + 'static,
-          SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static {
-    pub fn new(tx: Vec<PersistentLogWriteStub<D, OPM, SOPM>>) -> Self {
+          SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POP: PermissionedOrderingProtocolMessage + 'static {
+    pub fn new(tx: Vec<PersistentLogWriteStub<D, OPM, SOPM, POP>>) -> Self {
         Self { round_robin_counter: AtomicUsize::new(0), tx }
     }
 }
 
 
 ///A worker for the persistent logging
-pub struct PersistentLogWorker<D, OPM, SOPM, POP, PSP>
+pub struct PersistentLogWorker<D, OPM, SOPM, POPM, POP, PSP>
     where D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage<D> + 'static,
           SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POPM: PermissionedOrderingProtocolMessage + 'static,
           POP: PersistableOrderProtocol<D, OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static {
-    request_rx: ChannelSyncRx<ChannelMsg<D, OPM, SOPM>>,
+    request_rx: ChannelSyncRx<ChannelMsg<D, OPM, SOPM, POPM>>,
 
     response_txs: Vec<ChannelSyncTx<ResponseMessage>>,
 
@@ -87,9 +89,9 @@ pub struct PersistentLogWorker<D, OPM, SOPM, POP, PSP>
 }
 
 
-impl<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>> PersistentLogWorkerHandle<D, OPM, SOPM> {
+impl<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>, POP: PermissionedOrderingProtocolMessage> PersistentLogWorkerHandle<D, OPM, SOPM, POP> {
     /// Employ a simple round robin load distribution
-    fn next_worker(&self) -> &PersistentLogWriteStub<D, OPM, SOPM> {
+    fn next_worker(&self) -> &PersistentLogWriteStub<D, OPM, SOPM, POP> {
         let counter = self.round_robin_counter.fetch_add(1, Ordering::Relaxed);
 
         self.tx.get(counter % self.tx.len()).unwrap()
@@ -126,7 +128,7 @@ impl<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, O
         Self::translate_error(self.next_worker().send((PWMessage::ProofMetadata(metadata), callback)))
     }
 
-    pub(super) fn queue_view_number(&self, view: View<D, OPM>, callback: Option<CallbackType>) -> Result<()> {
+    pub(super) fn queue_view_number(&self, view: View<POP>, callback: Option<CallbackType>) -> Result<()> {
         Self::translate_error(self.next_worker().send((PWMessage::View(view), callback)))
     }
 
@@ -135,7 +137,7 @@ impl<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, O
         Self::translate_error(self.next_worker().send((PWMessage::Message(message), callback)))
     }
 
-    pub(super) fn queue_install_state(&self, install_state: InstallState<D, OPM, SOPM>, callback: Option<CallbackType>) -> Result<()> {
+    pub(super) fn queue_install_state(&self, install_state: InstallState<D, OPM, SOPM, POP>, callback: Option<CallbackType>) -> Result<()> {
         Self::translate_error(self.next_worker().send((PWMessage::InstallState(install_state), callback)))
     }
 
@@ -145,13 +147,14 @@ impl<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, O
 }
 
 
-impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
+impl<D, OPM, SOPM, POPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, POPM, PS, PSP>
     where D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage<D> + 'static,
           SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POPM: PermissionedOrderingProtocolMessage + 'static,
           PS: PersistableOrderProtocol<D, OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static {
-    pub fn new(request_rx: ChannelSyncRx<ChannelMsg<D, OPM, SOPM>>,
+    pub fn new(request_rx: ChannelSyncRx<ChannelMsg<D, OPM, SOPM, POPM>>,
                response_txs: Vec<ChannelSyncTx<ResponseMessage>>,
                db: KVDB) -> Self {
         Self { request_rx, response_txs, db, phantom: Default::default() }
@@ -206,10 +209,10 @@ impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
         }
     }
 
-    fn exec_req(&mut self, message: PWMessage<D, OPM, SOPM>) -> Result<ResponseMessage> {
+    fn exec_req(&mut self, message: PWMessage<D, OPM, SOPM, POPM>) -> Result<ResponseMessage> {
         Ok(match message {
             PWMessage::View(view) => {
-                write_latest_view::<D, OPM>(&self.db, &view)?;
+                write_latest_view::<POPM>(&self.db, &view)?;
 
                 ResponseMessage::ViewPersisted(view.sequence_number())
             }
@@ -233,7 +236,7 @@ impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
             PWMessage::InstallState(state) => {
                 let seq_no = state.1.sequence_number();
 
-                write_state::<D, OPM, SOPM, PS>(&self.db, state)?;
+                write_state::<D, OPM, SOPM, POPM, PS>(&self.db, state)?;
 
                 ResponseMessage::InstalledState(seq_no)
             }
@@ -261,8 +264,8 @@ impl<D, OPM, SOPM, PS, PSP> PersistentLogWorker<D, OPM, SOPM, PS, PSP>
 }
 
 /// Read the latest state from the persistent log
-pub(super) fn read_latest_state<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>, PS: PersistableOrderProtocol<D, OPM, SOPM>>(db: &KVDB) -> Result<Option<InstallState<D, OPM, SOPM>>> {
-    let view_seq = read_latest_view_seq::<D, OPM>(db)?;
+pub(super) fn read_latest_state<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>, POPM: PermissionedOrderingProtocolMessage, PS: PersistableOrderProtocol<D, OPM, SOPM>>(db: &KVDB) -> Result<Option<InstallState<D, OPM, SOPM, POPM>>> {
+    let view_seq = read_latest_view_seq::<POPM>(db)?;
 
     if let None = view_seq {
         return Ok(None);
@@ -336,11 +339,11 @@ fn read_messages_for_seq<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrder
     Ok(messages)
 }
 
-fn read_latest_view_seq<D, OPM: OrderingProtocolMessage<D>>(db: &KVDB) -> Result<Option<View<D, OPM>>> {
+fn read_latest_view_seq<POP: PermissionedOrderingProtocolMessage>(db: &KVDB) -> Result<Option<View<POP>>> {
     let mut result = db.get(COLUMN_FAMILY_OTHER, LATEST_VIEW_SEQ)?;
 
     let option = if let Some(mut result) = result {
-        Some(serialize::deserialize_view::<&[u8], D, OPM>(&mut result.as_slice())?)
+        Some(serialize::deserialize_view::<&[u8], POP>(&mut result.as_slice())?)
     } else {
         None
     };
@@ -357,18 +360,19 @@ fn read_latest_view_seq<D, OPM: OrderingProtocolMessage<D>>(db: &KVDB) -> Result
 pub(super) fn write_state<D: ApplicationData,
     OPM: OrderingProtocolMessage<D>,
     SOPM: StatefulOrderProtocolMessage<D, OPM>,
+    POP: PermissionedOrderingProtocolMessage,
     PS: PersistableOrderProtocol<D, OPM, SOPM>>(
-    db: &KVDB, (view, dec_log): InstallState<D, OPM, SOPM>,
+    db: &KVDB, (view, dec_log): InstallState<D, OPM, SOPM, POP>,
 ) -> Result<()> {
-    write_latest_view::<D, OPM>(db, &view)?;
+    write_latest_view::<POP>(db, &view)?;
 
     write_dec_log::<D, OPM, SOPM, PS>(db, &dec_log)
 }
 
-pub(super) fn write_latest_view<D: ApplicationData, OPM: OrderingProtocolMessage<D>>(db: &KVDB, view_seq_no: &View<D, OPM>) -> Result<()> {
+pub(super) fn write_latest_view<POP: PermissionedOrderingProtocolMessage>(db: &KVDB, view_seq_no: &View<POP>) -> Result<()> {
     let mut res = Vec::new();
 
-    let f_seq_no = serialize::serialize_view::<Vec<u8>, D, OPM>(&mut res, view_seq_no)?;
+    let f_seq_no = serialize::serialize_view::<Vec<u8>, POP>(&mut res, view_seq_no)?;
 
     db.set(COLUMN_FAMILY_OTHER, LATEST_VIEW_SEQ, &res[..])
 }
@@ -477,8 +481,8 @@ fn delete_all_proof_metadata_for_seq(db: &KVDB, seq: SeqNo) -> Result<()> {
 }
 
 
-impl<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>> Deref for PersistentLogWriteStub<D, OPM, SOPM> {
-    type Target = ChannelSyncTx<ChannelMsg<D, OPM, SOPM>>;
+impl<D, OPM: OrderingProtocolMessage<D>, SOPM: StatefulOrderProtocolMessage<D, OPM>, POP: PermissionedOrderingProtocolMessage> Deref for PersistentLogWriteStub<D, OPM, SOPM, POP> {
+    type Target = ChannelSyncTx<ChannelMsg<D, OPM, SOPM, POP>>;
 
     fn deref(&self) -> &Self::Target {
         &self.tx

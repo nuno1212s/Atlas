@@ -6,7 +6,7 @@ use atlas_common::error::*;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, SendError, TryRecvError};
 use atlas_common::globals::ReadOnly;
 use atlas_common::persistentdb::KVDB;
-use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, PermissionedOrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_execution::serialize::ApplicationData;
 use atlas_execution::state::divisible_state::{DivisibleState, StatePart};
@@ -75,29 +75,31 @@ impl<S> PersistentDivStateHandle<S> where S: DivisibleState {
     }
 }
 
-pub struct DivStatePersistentLogWorker<S, D, OPM, SOPM, POP, PSP>
+pub struct DivStatePersistentLogWorker<S, D, OPM, SOPM, POPM, POP, PSP>
     where S: DivisibleState + 'static,
           D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage<D> + 'static,
           SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POPM: PermissionedOrderingProtocolMessage + 'static,
           POP: PersistableOrderProtocol<D, OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static,
 {
     rx: ChannelSyncRx<DivisibleStateMessage<S>>,
-    worker: PersistentLogWorker<D, OPM, SOPM, POP, PSP>,
+    worker: PersistentLogWorker<D, OPM, SOPM, POPM, POP, PSP>,
     db: KVDB,
 }
 
-impl<S, D, OPM, SOPM, POP, PSP> DivStatePersistentLogWorker<S, D, OPM, SOPM, POP, PSP>
+impl<S, D, OPM, SOPM, POPM, POP, PSP> DivStatePersistentLogWorker<S, D, OPM, SOPM, POPM, POP, PSP>
     where S: DivisibleState + 'static,
           D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage<D> + 'static,
           SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POPM: PermissionedOrderingProtocolMessage + 'static,
           POP: PersistableOrderProtocol<D, OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static
 {
     pub fn new(request_rx: ChannelSyncRx<DivisibleStateMessage<S>>,
-               inner_worker: PersistentLogWorker<D, OPM, SOPM, POP, PSP>,
+               inner_worker: PersistentLogWorker<D, OPM, SOPM, POPM, POP, PSP>,
                db: KVDB) -> Result<Self> {
         Ok(Self {
             rx: request_rx,

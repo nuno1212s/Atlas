@@ -27,7 +27,7 @@ pub struct MonolithicStateReplicaConfig<RF, S, A, OP, ST, LT, NT, PL>
           ST: MonolithicStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
           LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
           NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>>,
-          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + MonolithicStateLog<S> {
+          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + MonolithicStateLog<S> {
     /// The application logic.
     pub service: A,
 
@@ -46,7 +46,7 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, ST, LT, NT, PL>
         ST: DivisibleStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
         LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
         NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>>,
-        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization> + DivisibleStateLog<S> {
+        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + DivisibleStateLog<S> {
     /// The application logic.
     pub service: A,
 
@@ -64,7 +64,7 @@ pub struct ReplicaConfig<RF, S, D, OP, ST, LT, NT, PL> where
     ST: StateTransferProtocol<S, NT, PL> + 'static,
     LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
     NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<D, OP::Serialization, ST::Serialization, LT::Serialization>>,
-    PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization> {
+    PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> {
     /// ID of the Node in question
     pub id: NodeId,
 

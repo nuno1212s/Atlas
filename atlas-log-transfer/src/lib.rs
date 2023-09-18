@@ -67,13 +67,13 @@ pub type Serialization<LT: LogTransferProtocol<D, OP, NT, PL>, D, OP, NT, PL> = 
 pub struct CollabLogTransfer<D, OP, NT, PL>
     where D: ApplicationData + 'static,
           OP: StatefulOrderProtocol<D, NT, PL> + 'static,
-          NT: LogTransferSendNode<D, OP::Serialization, LTMsg<D, OP::Serialization, OP::StateSerialization>> + 'static {
+          NT: LogTransferSendNode<D, OP::Serialization, LTMsg<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization>> + 'static {
     // The current sequence number of the log transfer protocol
     curr_seq: SeqNo,
     // The default timeout for the log transfer protocol
     default_timeout: Duration,
     /// The current state of the log transfer protocol
-    log_transfer_state: LogTransferState<View<D, OP::Serialization>, SerProof<D, OP::Serialization>, DecLog<D, OP::Serialization, OP::StateSerialization>>,
+    log_transfer_state: LogTransferState<View<OP::PermissionedSerialization>, SerProof<D, OP::Serialization>, DecLog<D, OP::Serialization, OP::StateSerialization>>,
     /// Reference to the timeouts module
     timeouts: Timeouts,
     /// Node reference
@@ -85,7 +85,7 @@ pub struct CollabLogTransfer<D, OP, NT, PL>
 impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
     where D: ApplicationData + 'static,
           OP: StatefulOrderProtocol<D, NT, PL> + 'static,
-          NT: LogTransferSendNode<D, OP::Serialization, LTMsg<D, OP::Serialization, OP::StateSerialization>> + 'static {
+          NT: LogTransferSendNode<D, OP::Serialization, LTMsg<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization>> + 'static {
     fn curr_seq(&self) -> SeqNo {
         self.curr_seq
     }
@@ -96,7 +96,7 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
         self.curr_seq
     }
 
-    fn request_entire_log(&mut self, order_protocol: &OP, fetch_data: FetchSeqNoData<View<D, OP::Serialization>, SerProof<D, OP::Serialization>>) -> Result<()> {
+    fn request_entire_log(&mut self, order_protocol: &OP, fetch_data: FetchSeqNoData<View<OP::PermissionedSerialization>, SerProof<D, OP::Serialization>>) -> Result<()> {
         let next_seq = self.next_seq();
         let message = LTMessage::new(next_seq, LogTransferMessageKind::RequestLog);
 
@@ -109,9 +109,9 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
     fn process_log_state_req(&self, order_protocol: &mut OP,
                              header: Header,
-                             message: LTMessage<View<D, OP::Serialization>, SerProof<D, OP::Serialization>, DecLog<D, OP::Serialization, OP::StateSerialization>>)
+                             message: LTMessage<View<OP::PermissionedSerialization>, SerProof<D, OP::Serialization>, DecLog<D, OP::Serialization, OP::StateSerialization>>)
                              -> Result<()>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization> {
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> {
         let log = order_protocol.current_log()?;
 
         let first_seq = log.first_seq();
@@ -135,9 +135,9 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
     fn process_log_parts_request(&self, order_protocol: &mut OP,
                                  header: Header,
-                                 message: LTMessage<View<D, OP::Serialization>, SerProof<D, OP::Serialization>, DecLog<D, OP::Serialization, OP::StateSerialization>>)
+                                 message: LTMessage<View<OP::PermissionedSerialization>, SerProof<D, OP::Serialization>, DecLog<D, OP::Serialization, OP::StateSerialization>>)
                                  -> Result<()>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization> {
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> {
         match message.kind() {
             LogTransferMessageKind::RequestProofs(log_parts) => {
                 let mut parts = Vec::with_capacity(log_parts.len());
@@ -168,9 +168,9 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 
     fn process_log_request(&self, order_protocol: &mut OP,
                            header: Header,
-                           message: LTMessage<View<D, OP::Serialization>, SerProof<D, OP::Serialization>, DecLog<D, OP::Serialization, OP::StateSerialization>>)
+                           message: LTMessage<View<OP::PermissionedSerialization>, SerProof<D, OP::Serialization>, DecLog<D, OP::Serialization, OP::StateSerialization>>)
                            -> Result<()>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization> {
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> {
         let start = Instant::now();
 
         let (view, decision_log) = order_protocol.snapshot_log()?;
@@ -205,8 +205,8 @@ impl<D, OP, NT, PL> CollabLogTransfer<D, OP, NT, PL>
 impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, OP, NT, PL>
     where D: ApplicationData + 'static,
           OP: StatefulOrderProtocol<D, NT, PL> + 'static,
-          NT: LogTransferSendNode<D, OP::Serialization, LTMsg<D, OP::Serialization, OP::StateSerialization>> + 'static {
-    type Serialization = LTMsg<D, OP::Serialization, OP::StateSerialization>;
+          NT: LogTransferSendNode<D, OP::Serialization, LTMsg<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization>> + 'static {
+    type Serialization = LTMsg<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization>;
     type Config = LogTransferConfig;
 
     fn initialize(config: Self::Config, timeouts: Timeouts, node: Arc<NT>, log: PL) -> Result<Self> where Self: Sized {
@@ -227,7 +227,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
     }
 
     fn request_latest_log(&mut self, order_protocol: &mut OP) -> Result<()>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization> {
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> {
         self.log_transfer_state = LogTransferState::FetchingSeqNo(0, FetchSeqNoData::new());
 
         let lg_seq = self.next_seq();
@@ -246,7 +246,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
     }
 
     fn handle_off_ctx_message(&mut self, order_protocol: &mut OP, message: StoredMessage<LogTransfer<LogTM<D, OP::Serialization, Self::Serialization>>>) -> Result<()>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization> {
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> {
         let (header, message) = message.into_inner();
 
         debug!("{:?} // Off context Log Transfer Message {:?} from {:?} with seq {:?}", self.node.id(),message.payload(), header.from(), message.sequence_number());
@@ -294,7 +294,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
 
     fn process_message(&mut self, order_protocol: &mut OP, message: StoredMessage<LogTransfer<LogTM<D, OP::Serialization, Self::Serialization>>>)
                        -> Result<LTResult<D>>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization> {
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> {
         let (header, message) = message.into_inner();
 
         match message.payload().kind() {
@@ -459,7 +459,7 @@ impl<D, OP, NT, PL> LogTransferProtocol<D, OP, NT, PL> for CollabLogTransfer<D, 
     }
 
     fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<LTTimeoutResult>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization> {
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> {
         for lt_seq in timeout {
             if let TimeoutKind::LogTransfer(lt_seq) = lt_seq.timeout_kind() {
                 if let LTTimeoutResult::RunLTP = self.timed_out(*lt_seq) {

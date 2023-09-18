@@ -9,7 +9,7 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::Orderable;
 use atlas_common::persistentdb::KVDB;
-use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, StatefulOrderProtocolMessage};
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, PermissionedOrderingProtocolMessage, StatefulOrderProtocolMessage};
 use atlas_core::persistent_log::{PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::state_transfer::Checkpoint;
 use atlas_execution::serialize::ApplicationData;
@@ -63,31 +63,32 @@ impl<S> PersistentMonolithicStateHandle<S> where S: MonolithicState {
     }
 }
 
-pub struct MonStatePersistentLogWorker<S, D, OPM, SOPM, POP, PSP>
+pub struct MonStatePersistentLogWorker<S, D, OPM, SOPM, POPM, POP, PSP>
     where S: MonolithicState + 'static,
           D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage<D> + 'static,
           SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POPM: PermissionedOrderingProtocolMessage + 'static,
           POP: PersistableOrderProtocol<D, OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static
 {
     request_rx: ChannelSyncRx<MonolithicStateMessage<S>>,
 
-    inner_worker: PersistentLogWorker<D, OPM, SOPM, POP, PSP>,
-
+    inner_worker: PersistentLogWorker<D, OPM, SOPM, POPM, POP, PSP>,
     db: KVDB,
 }
 
-impl<S, D, OPM, SOPM, POP, PSP> MonStatePersistentLogWorker<S, D, OPM, SOPM, POP, PSP>
+impl<S, D, OPM, SOPM, POPM, POP, PSP> MonStatePersistentLogWorker<S, D, OPM, SOPM, POPM, POP, PSP>
     where S: MonolithicState + 'static,
           D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage<D> + 'static,
           SOPM: StatefulOrderProtocolMessage<D, OPM> + 'static,
+          POPM: PermissionedOrderingProtocolMessage + 'static,
           POP: PersistableOrderProtocol<D, OPM, SOPM> + 'static,
           PSP: PersistableStateTransferProtocol + 'static
 {
     pub fn new(request_rx: ChannelSyncRx<MonolithicStateMessage<S>>,
-               inner_worker: PersistentLogWorker<D, OPM, SOPM, POP, PSP>,
+               inner_worker: PersistentLogWorker<D, OPM, SOPM, POPM, POP, PSP>,
                db: KVDB) -> Self {
         Self {
             request_rx,
@@ -187,7 +188,7 @@ fn read_state<S>(db: &KVDB) -> Result<Option<S>> where S: MonolithicState {
     let option = serialized.map(|serialized| {
         deserialize_mon_state::<&[u8], S>(&mut serialized.as_slice())
     });
-    
+
     if let Some(result) = option {
         Ok(Some(result?))
     } else {

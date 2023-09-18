@@ -38,6 +38,7 @@ pub enum LTTimeoutResult {
 /// The trait which defines the necessary methods for a log transfer protocol
 pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
                                                    OP: StatefulOrderProtocol<D, NT, PL> + 'static {
+    
     /// The type which implements StateTransferMessage, to be implemented by the developer
     type Serialization: LogTransferMessage<D, OP::Serialization> + 'static;
 
@@ -50,13 +51,13 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
 
     /// Request the latest state from the rest of replicas
     fn request_latest_log(&mut self, order_protocol: &mut OP) -> Result<()>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization>;
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization>;
 
     /// Handle a state transfer protocol message that was received while executing the ordering protocol
     fn handle_off_ctx_message(&mut self, order_protocol: &mut OP,
                               message: StoredMessage<LogTransfer<LogTM<D, OP::Serialization, Self::Serialization>>>)
                               -> Result<()>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization>;
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization>;
 
     /// Process a state transfer protocol message, received from other replicas
     /// We also provide a mutable reference to the stateful ordering protocol, so the
@@ -64,11 +65,11 @@ pub trait LogTransferProtocol<D, OP, NT, PL> where D: ApplicationData + 'static,
     fn process_message(&mut self, order_protocol: &mut OP,
                        message: StoredMessage<LogTransfer<LogTM<D, OP::Serialization, Self::Serialization>>>)
                        -> Result<LTResult<D>>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization>;
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization>;
 
     /// Handle a timeout being received from the timeout layer
     fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<LTTimeoutResult>
-        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization>;
+        where PL: StatefulOrderingProtocolLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization>;
 }
 
 

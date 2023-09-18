@@ -32,14 +32,19 @@ pub trait OrderProtocolProof: Orderable {
     // At the moment I only need orderable, but I might need more in the future
 }
 
-/// We do not need a serde module since serde serialization is just done on the network level.
-/// The abstraction for ordering protocol messages.
-pub trait OrderingProtocolMessage<D>: Send + Sync {
+pub trait PermissionedOrderingProtocolMessage: Send + Sync {
+
     #[cfg(feature = "serialize_capnp")]
     type ViewInfo: NetworkView + Send + Clone;
 
     #[cfg(feature = "serialize_serde")]
     type ViewInfo: NetworkView + for<'a> Deserialize<'a> + Serialize + Send + Clone + Debug;
+    
+}
+
+/// We do not need a serde module since serde serialization is just done on the network level.
+/// The abstraction for ordering protocol messages.
+pub trait OrderingProtocolMessage<D>: Send + Sync {
 
     /// The general protocol type for all messages in the ordering protocol
     #[cfg(feature = "serialize_capnp")]
