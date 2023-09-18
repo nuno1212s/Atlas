@@ -2,7 +2,7 @@
 name = "atlas-smr-application"
 version = "0.1.0"
 edition = "2021"
-description = "The Application layer for SMR applications for the Atlas framework"
+description = "The atlas SMR application layer. Defines the necessary traits the application developer should implement in order to utilize this framework for developing BFT SMR applications"
 authors = ["Nuno Neto <up201703898@fc.up.pt>"]
 license = "MIT"
 homepage = "https://github.com/nuno1212s/febft"
