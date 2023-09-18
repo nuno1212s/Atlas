@@ -1,8 +1,8 @@
 [package]
-name = "atlas-execution"
+name = "atlas-smr-application"
 version = "0.1.0"
 edition = "2021"
-description = "The execution layer of the FeBFT SMR BFT"
+description = "The Application layer for SMR applications for the Atlas framework"
 authors = ["Nuno Neto <up201703898@fc.up.pt>"]
 license = "MIT"
 homepage = "https://github.com/nuno1212s/febft"
