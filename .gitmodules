@@ -34,3 +34,6 @@
 [submodule "Atlas-capnp"]
 	path = Atlas-capnp
 	url = https://github.com/nuno1212s/Atlas-capnp.git
+[submodule "Atlas-Decision-Log"]
+	path = Atlas-Decision-Log
+	url = https://github.com/nuno1212s/Atlas-Decision-Log.git

@@ -11,6 +11,7 @@ readme = "README.md"
 members = [
     "Atlas-Common",
     "Atlas-Core",
+    "Atlas-Decision-Log",
     "Atlas-Reconfiguration",
     "Atlas-Metrics",
     "Atlas-capnp",
