@@ -21,7 +21,8 @@ members = [
     "Atlas-SMR-Replica",
     "Atlas-Persistent-Log",
     "Atlas-Log-Transfer",
-    "Atlas-SMR-Application"
+    "Atlas-SMR-Application",
+    "Atlas-View-Transfer"
 ]
 
 # https://doc.rust-lang.org/cargo/reference/profiles.html
