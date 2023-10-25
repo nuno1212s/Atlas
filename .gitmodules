@@ -39,3 +39,4 @@
 	url = https://github.com/nuno1212s/Atlas-Decision-Log.git
 [submodule "Atlas-View-Transfer"]
 	path = Atlas-View-Transfer
+	url = https://github.com/nuno1212s/Atlas-View-Transfer.git
