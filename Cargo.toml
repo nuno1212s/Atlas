@@ -9,17 +9,20 @@ readme = "README.md"
 [workspace]
 
 members = [
-    "atlas-common",
-    "atlas-core",
-    "atlas-reconfiguration",
-    "atlas-metrics",
-    "atlas-capnp",
-    "atlas-communication",
-    "atlas-execution",
-    "atlas-client",
-    "atlas-replica",
-    "atlas-persistent-log",
-    "atlas-log-transfer"
+    "Atlas-Common",
+    "Atlas-Core",
+    "Atlas-Decision-Log",
+    "Atlas-Reconfiguration",
+    "Atlas-Metrics",
+    "Atlas-capnp",
+    "Atlas-Communication",
+    "Atlas-SMR-Execution",
+    "Atlas-Client",
+    "Atlas-SMR-Replica",
+    "Atlas-Persistent-Log",
+    "Atlas-Log-Transfer",
+    "Atlas-SMR-Application",
+    "Atlas-View-Transfer"
 ]
 
 # https://doc.rust-lang.org/cargo/reference/profiles.html
