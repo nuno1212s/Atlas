@@ -43,3 +43,6 @@
 [submodule "Atlas-Examples"]
 	path = Atlas-Examples
 	url = https://github.com/nuno1212s/Atlas-Examples
+[submodule "Atlas-Tools"]
+	path = Atlas-Tools
+	url = https://github.com/nuno1212s/Atlas-Tools.git
