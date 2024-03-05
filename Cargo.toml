@@ -16,6 +16,7 @@ members = [
     "Atlas-Metrics",
     "Atlas-capnp",
     "Atlas-Communication",
+    "Atlas-Comm-MIO",
     "Atlas-SMR-Execution",
     "Atlas-Client",
     "Atlas-SMR-Replica",
