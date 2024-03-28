@@ -23,7 +23,9 @@ members = [
     "Atlas-Persistent-Log",
     "Atlas-Log-Transfer",
     "Atlas-SMR-Application",
-    "Atlas-View-Transfer"
+    "Atlas-View-Transfer",
+    "Atlas-Tools/atlas-default-configs",
+    "Atlas-Tools/keygen"
 ]
 
 # https://doc.rust-lang.org/cargo/reference/profiles.html
