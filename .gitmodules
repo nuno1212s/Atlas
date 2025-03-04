@@ -52,3 +52,6 @@
 [submodule "Atlas-Logging-Core"]
 	path = Atlas-Logging-Core
 	url = git@github.com:nuno1212s/Atlas-Logging-Core.git
+[submodule "Atlas-Examples"]
+	path = Atlas-Examples
+	url = git@github.com:nuno1212s/Atlas-Examples.git
