@@ -25,8 +25,8 @@ members = [
     "Atlas-SMR-Application",
     "Atlas-View-Transfer",
     "Atlas-Tools/atlas-default-configs",
-    "Atlas-Tools/keygen"
-]
+    "Atlas-Tools/keygen",
+    "Atlas-Tools/threshold_crypto_keygen"]
 
 
 # https://doc.rust-lang.org/cargo/reference/profiles.html
