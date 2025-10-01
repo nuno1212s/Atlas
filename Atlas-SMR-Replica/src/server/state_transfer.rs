@@ -254,10 +254,7 @@ where
     }
 
     pub fn try_recv_state_transfer_update(&self) -> Option<StateTransferProgress> {
-        match self.response_rx.try_recv() {
-            Ok(progress) => Some(progress),
-            Err(_) => None,
-        }
+        self.response_rx.try_recv().ok()
     }
 }
 

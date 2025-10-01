@@ -209,6 +209,7 @@ where
 }
 
 /// Persistence helper for the decision log
+#[allow(clippy::type_complexity)]
 pub trait DecisionLogPersistenceHelper<RQ, OPM, POP, LS>: Send
 where
     RQ: SerMsg,

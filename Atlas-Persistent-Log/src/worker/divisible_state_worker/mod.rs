@@ -255,7 +255,7 @@ fn write_state_descriptor<S: DivisibleState>(
 ) -> Result<()> {
     let mut value = Vec::new();
 
-    serialize_state_descriptor::<Vec<u8>, S>(&mut value, &descriptor)?;
+    serialize_state_descriptor::<Vec<u8>, S>(&mut value, descriptor)?;
 
     db.set(COLUMN_FAMILY_STATE, LATEST_STATE_DESCRIPTOR, &value)?;
 

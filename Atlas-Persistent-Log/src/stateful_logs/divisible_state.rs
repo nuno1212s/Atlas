@@ -89,9 +89,8 @@ where
 
         let mut response_txs = vec![];
 
-        match &log_mode {
-            PersistentLogMode::Strict(handle) => response_txs.push(handle.logger_tx().clone()),
-            _ => {}
+        if let PersistentLogMode::Strict(handle) = &log_mode {
+            response_txs.push(handle.logger_tx().clone());
         }
 
         let kvdb = KVDB::new(db_path, prefixes)?;
@@ -118,7 +117,7 @@ where
         match &log_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 std::thread::Builder::new()
-                    .name(format!("Persistent log Worker #1"))
+                    .name("Persistent log Worker #1".to_string())
                     .spawn(move || {
                         worker.work();
                     })

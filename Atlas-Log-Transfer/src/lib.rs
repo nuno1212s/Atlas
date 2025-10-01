@@ -1,3 +1,5 @@
+#![allow(type_alias_bounds)]
+
 use anyhow::anyhow;
 use lazy_static::lazy_static;
 use std::cmp::Ordering;
@@ -72,6 +74,12 @@ enum LogTransferState<P, D> {
 
 pub type Serialization<LT, D, OP, POP> = <LT as LogTransferProtocol<D, OP, POP>>::Serialization;
 
+pub type Proof<D: SerMsg, OP: LoggableOrderProtocol<D>> =
+    PProof<D, OP::Serialization, OP::PersistableTypes>;
+pub type DeclarationLog<D: SerMsg, OP: LoggableOrderProtocol<D>, DL: DecisionLog<D, OP>> =
+    DecLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>;
+
+#[allow(clippy::type_complexity)]
 pub struct CollabLogTransfer<D, OP, DL, NT, PL, EX>
 where
     D: SerMsg + 'static,
@@ -83,10 +91,7 @@ where
     // The default timeout for the log transfer protocol
     default_timeout: Duration,
     /// The current state of the log transfer protocol
-    log_transfer_state: LogTransferState<
-        PProof<D, OP::Serialization, OP::PersistableTypes>,
-        DecLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-    >,
+    log_transfer_state: LogTransferState<Proof<D, OP>, DeclarationLog<D, OP, DL>>,
     /// Reference to the timeouts module
     timeouts: TimeoutModHandle,
     /// Reference to the persistent log
@@ -135,10 +140,7 @@ where
         &self,
         decision_log: &mut DL,
         header: Header,
-        message: LTMessage<
-            PProof<D, OP::Serialization, OP::PersistableTypes>,
-            DecLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-        >,
+        message: LTMessage<Proof<D, OP>, DeclarationLog<D, OP, DL>>,
     ) -> Result<()>
     where
         PL: PersistentDecisionLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
@@ -177,10 +179,7 @@ where
         &self,
         decision_log: &mut DL,
         header: Header,
-        message: LTMessage<
-            PProof<D, OP::Serialization, OP::PersistableTypes>,
-            DecLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-        >,
+        message: LTMessage<Proof<D, OP>, DeclarationLog<D, OP, DL>>,
     ) -> Result<()>
     where
         PL: PersistentDecisionLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
@@ -227,10 +226,7 @@ where
         &self,
         decision_log: &mut DL,
         header: Header,
-        message: LTMessage<
-            PProof<D, OP::Serialization, OP::PersistableTypes>,
-            DecLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-        >,
+        message: LTMessage<Proof<D, OP>, DeclarationLog<D, OP, DL>>,
     ) -> Result<()>
     where
         PL: PersistentDecisionLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
@@ -447,8 +443,7 @@ where
             // should not happen...
             _ => {
                 return Err(anyhow!(format!(
-                    "Invalid state reached while processing log transfer message! {:?}",
-                    status
+                    "Invalid state reached while processing log transfer message! {status:?}"
                 )));
             }
         }

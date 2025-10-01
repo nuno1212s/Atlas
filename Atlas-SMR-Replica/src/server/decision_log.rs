@@ -17,6 +17,7 @@ use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::phantom::FPhantom;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 use atlas_core::executor::DecisionExecutorHandle;
@@ -66,7 +67,7 @@ where
     status_rx: ChannelSyncRx<ReplicaWorkResponses>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, clippy::large_enum_variant)]
 pub enum DecisionLogWorkMessage<RQ, OPM, POT>
 where
     RQ: SerMsg,
@@ -163,7 +164,7 @@ where
     state_transfer_handle: StateTransferThreadHandle<V>,
     executor_handle: WrappedExecHandle<R>,
     pending_decisions_to_execute: Option<MaybeVec<LoggedDecision<SMRRawReq<R>>>>,
-    _ph: PhantomData<fn() -> (V, R, OP, NT, PL)>,
+    _ph: FPhantom<(V, R, OP, NT, PL)>,
 }
 
 impl<V, R, OP, DL, LT, NT, PL> DecisionLogManager<V, R, OP, DL, LT, NT, PL>
@@ -248,7 +249,7 @@ where
                     state_transfer_handle: state_transfer_thread_handle,
                     executor_handle: execution_handle,
                     pending_decisions_to_execute: None,
-                    _ph: PhantomData::default(),
+                    _ph: PhantomData,
                 };
 
                 loop {
@@ -613,11 +614,7 @@ where
     }
 
     pub fn try_to_recv_resp(&self) -> Option<ReplicaWorkResponses> {
-        if let Ok(message) = self.status_rx.try_recv() {
-            Some(message)
-        } else {
-            None
-        }
+        self.status_rx.try_recv().ok()
     }
 }
 
@@ -630,19 +627,19 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             DecisionLogWorkMessage::ClearSequenceNumber(seq) => {
-                write!(f, "Clear sequence number: {:?}", seq)
+                write!(f, "Clear sequence number: {seq:?}")
             }
             DecisionLogWorkMessage::ClearUnfinishedDecisions => {
                 write!(f, "Clear unfinished decisions")
             }
             DecisionLogWorkMessage::DecisionInformation(dec_info) => {
-                write!(f, "Decision information: {:?}", dec_info)
+                write!(f, "Decision information: {dec_info:?}")
             }
             DecisionLogWorkMessage::Proof(proof) => {
                 write!(f, "Proof: {:?}", proof.sequence_number())
             }
             DecisionLogWorkMessage::CheckpointDone(seq) => {
-                write!(f, "Checkpoint done: {:?}", seq)
+                write!(f, "Checkpoint done: {seq:?}")
             }
         }
     }
@@ -663,10 +660,10 @@ where
                 write!(f, "Log transfer message: {:?}", message.header())
             }
             LogTransferWorkMessage::ReceivedTimeout(timeout) => {
-                write!(f, "Received timeout: {:?}", timeout)
+                write!(f, "Received timeout: {timeout:?}")
             }
             LogTransferWorkMessage::TransferDone(start, end) => {
-                write!(f, "Transfer done: {:?} - {:?}", start, end)
+                write!(f, "Transfer done: {start:?} - {end:?}")
             }
         }
     }

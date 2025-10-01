@@ -63,6 +63,7 @@ pub enum LTPollResult<LT, RQ> {
 /// the [DecisionLog], we decided that it makes sense for them to be more tightly coupled.
 ///TODO: Work on Getting partial log installations integrated with this log transfer
 /// trait via [PartiallyWriteableDecLog]
+#[allow(clippy::type_complexity)]
 pub trait LogTransferProtocol<RQ, OP, DL>: TimeoutableMod<LTTimeoutResult> + Send
 where
     RQ: SerMsg,

@@ -122,17 +122,15 @@ where
 
         backlog_thread.start_thread();
 
-        let handle = ConsensusBackLogHandle {
+        ConsensusBackLogHandle {
             rq_tx: batch_tx,
             logger_tx,
-        };
-
-        handle
+        }
     }
 
     fn start_thread(self) {
         std::thread::Builder::new()
-            .name(format!("Consensus Backlog thread"))
+            .name("Consensus Backlog thread".to_string())
             .spawn(move || {
                 self.run();
             })
@@ -163,7 +161,7 @@ where
                 let batch_info = match self.rx.recv() {
                     Ok(rcved) => rcved,
                     Err(err) => {
-                        error!("{:?}", err);
+                        error!("{err:?}");
 
                         break;
                     }
@@ -197,7 +195,7 @@ where
                 if curr_seq == *seq {
                     Self::process_incoming_message(info, notification);
                 } else {
-                    self.process_ahead_message(seq.clone(), notification);
+                    self.process_ahead_message(*seq, notification);
                 }
             }
             _ => {}
@@ -246,8 +244,7 @@ where
             }
             Err(err) => {
                 error!(
-                    "Received message that does not match up with what we were expecting {:?}",
-                    err
+                    "Received message that does not match up with what we were expecting {err:?}",
                 );
             }
         }
@@ -318,9 +315,9 @@ impl<O> AwaitingPersistence<O> {
     }
 }
 
-impl<O> Into<BatchedDecision<O>> for AwaitingPersistence<O> {
-    fn into(self) -> BatchedDecision<O> {
-        self.message.decision
+impl<O> From<AwaitingPersistence<O>> for BatchedDecision<O> {
+    fn from(value: AwaitingPersistence<O>) -> Self {
+        value.message.decision
     }
 }
 

@@ -118,13 +118,13 @@ where
                 Err(error_kind) => match error_kind {
                     TryRecvError::ChannelEmpty => {}
                     TryRecvError::ChannelDc | TryRecvError::Timeout => {
-                        error!("Error receiving message: {:?}", error_kind);
+                        error!("Error receiving message: {error_kind:?}");
                     }
                 },
             }
 
             if let Err(err) = self.inner_worker.work_iteration() {
-                error!("Failed to execute persistent log request because {:?}", err);
+                error!("Failed to execute persistent log request because {err:?}");
 
                 break;
             }

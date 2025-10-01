@@ -7,12 +7,12 @@ const SERVICE_MESSAGES_SRC: &str = "src/schemas/service_messages.capnp";
 
 fn main() {
     // recompile capnp message into rust when the source changes
-    println!("cargo:rerun-if-changed={}", MESSAGE_CAPNP_SRC);
-    println!("cargo:rerun-if-changed={}", OBJECTS_CAPNP_SRC);
-    println!("cargo:rerun-if-changed={}", NETWORK_MESSAGES_SRC);
-    println!("cargo:rerun-if-changed={}", CONSENSUS_MESSAGES_SRC);
-    println!("cargo:rerun-if-changed={}", SERVICE_MESSAGES_SRC);
-    println!("cargo:rerun-if-changed={}", ST_MESSAGES_SRC);
+    println!("cargo:rerun-if-changed={MESSAGE_CAPNP_SRC}",);
+    println!("cargo:rerun-if-changed={OBJECTS_CAPNP_SRC}",);
+    println!("cargo:rerun-if-changed={NETWORK_MESSAGES_SRC}",);
+    println!("cargo:rerun-if-changed={CONSENSUS_MESSAGES_SRC}",);
+    println!("cargo:rerun-if-changed={SERVICE_MESSAGES_SRC}",);
+    println!("cargo:rerun-if-changed={ST_MESSAGES_SRC}",);
 
     capnpc::CompilerCommand::new()
         .src_prefix("src/schemas")

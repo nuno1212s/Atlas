@@ -16,7 +16,6 @@ use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::message::SystemMessage;
 use atlas_smr_core::serialize::Service;
-use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::SMRReq;
 
 /// Store information of the current followers of the quorum
@@ -49,13 +48,12 @@ where
 {
     /// Starts the follower handling thread and returns a cloneable handle that
     /// can be used to deliver messages to it.
-    pub fn init_follower_handling<ST, LP, VT>(
+    pub fn init_follower_handling<LP, VT>(
         id: NodeId,
         node: &Arc<NT>,
     ) -> FollowerHandle<SMRReq<D>, OP, POP>
     where
         D: ApplicationData + 'static,
-        ST: StateTransferMessage + 'static,
         LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
         VT: ViewTransferProtocolMessage + 'static,
         NT: RegularNetworkStub<Service<D, OP, LP, VT>>,
@@ -69,15 +67,14 @@ where
             rx,
         };
 
-        Self::start_thread::<ST, LP, VT>(follower_handling);
+        Self::start_thread::<LP, VT>(follower_handling);
 
         FollowerHandle::new(tx)
     }
 
-    fn start_thread<ST, LP, VT>(self)
+    fn start_thread<LP, VT>(self)
     where
         D: ApplicationData + 'static,
-        ST: StateTransferMessage + 'static,
         LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
         VT: ViewTransferProtocolMessage + 'static,
         NT: RegularNetworkStub<Service<D, OP, LP, VT>>,
@@ -88,15 +85,14 @@ where
                 self.own_id
             ))
             .spawn(move || {
-                self.run::<ST, LP, VT>();
+                self.run::<LP, VT>();
             })
             .expect("Failed to launch follower handling thread!");
     }
 
-    fn run<ST, LP, VT>(mut self)
+    fn run<LP, VT>(mut self)
     where
         D: ApplicationData + 'static,
-        ST: StateTransferMessage + 'static,
         LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
         VT: ViewTransferProtocolMessage + 'static,
         NT: RegularNetworkStub<Service<D, OP, LP, VT>>,
@@ -109,7 +105,7 @@ where
                     todo!()
                 }
                 FollowerEvent::ReceivedViewChangeMsg(view_change_msg) => {
-                    self.handle_sync_msg::<ST, LP, VT>(view_change_msg)
+                    self.handle_sync_msg::<LP, VT>(view_change_msg)
                 }
             }
         }
@@ -166,13 +162,12 @@ where
     }
 
     /// Handle when we have received a preprepare message
-    fn handle_preprepare_msg_rcvd<ST, LP, VT>(
+    fn handle_preprepare_msg_rcvd<LP, VT>(
         &mut self,
         view: &POP::ViewInfo,
         message: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where
         D: ApplicationData + 'static,
-        ST: StateTransferMessage + 'static,
         LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
         VT: ViewTransferProtocolMessage + 'static,
         NT: RegularNetworkStub<Service<D, OP, LP, VT>>,
@@ -184,12 +179,12 @@ where
         }
 
         //Clone the messages here in this thread so we don't slow down the consensus thread at all
-        let header = message.header().clone();
+        let header = message.header();
 
         let pre_prepare = message.message().clone();
 
         let message =
-            SystemMessage::from_fwd_protocol_message(StoredMessage::new(header, pre_prepare));
+            SystemMessage::from_fwd_protocol_message(StoredMessage::new(*header, pre_prepare));
 
         let targets = self.targets(view);
 
@@ -203,12 +198,11 @@ where
     /// and prepare/commit are handled on sending, this is because we don't want the leader
     /// to have to send the pre prepare to all followers but since these messages are very small,
     /// it's fine for all replicas to broadcast it to followers)
-    fn handle_prepare_msg<ST, LP, VT>(
+    fn handle_prepare_msg<LP, VT>(
         &mut self,
         prepare: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where
         D: ApplicationData + 'static,
-        ST: StateTransferMessage + 'static,
         LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
         VT: ViewTransferProtocolMessage + 'static,
         NT: RegularNetworkStub<Service<D, OP, LP, VT>>,
@@ -218,12 +212,13 @@ where
             return;
         }
 
-        let header = prepare.header().clone();
+        let header = prepare.header();
 
         //Clone the messages here in this thread so we don't slow down the consensus thread at all
         let prepare = prepare.message().clone();
 
-        let message = SystemMessage::from_fwd_protocol_message(StoredMessage::new(header, prepare));
+        let message =
+            SystemMessage::from_fwd_protocol_message(StoredMessage::new(*header, prepare));
 
         let _ = self
             .send_node
@@ -235,12 +230,11 @@ where
     /// and prepare/commit are handled on sending, this is because we don't want the leader
     /// to have to send the pre prepare to all followers but since these messages are very small,
     /// it's fine for all replicas to broadcast it to followers)
-    fn handle_commit_msg<ST, LP, VT>(
+    fn handle_commit_msg<LP, VT>(
         &mut self,
         commit: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where
         D: ApplicationData + 'static,
-        ST: StateTransferMessage + 'static,
         LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
         VT: ViewTransferProtocolMessage + 'static,
         NT: RegularNetworkStub<Service<D, OP, LP, VT>>,
@@ -250,10 +244,10 @@ where
             return;
         }
 
-        let header = commit.header().clone();
+        let header = commit.header();
         let commit = commit.message().clone();
 
-        let message = SystemMessage::from_fwd_protocol_message(StoredMessage::new(header, commit));
+        let message = SystemMessage::from_fwd_protocol_message(StoredMessage::new(*header, commit));
 
         let _ = self
             .send_node
@@ -261,22 +255,20 @@ where
             .broadcast(message, self.followers.iter().copied());
     }
 
-    ///
-    fn handle_sync_msg<ST, LP, VT>(
+    fn handle_sync_msg<LP, VT>(
         &mut self,
         msg: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where
         D: ApplicationData + 'static,
-        ST: StateTransferMessage + 'static,
         LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
         VT: ViewTransferProtocolMessage + 'static,
         NT: RegularNetworkStub<Service<D, OP, LP, VT>>,
     {
-        let header = msg.header().clone();
+        let header = msg.header();
         let message = msg.message().clone();
 
         let network_msg =
-            SystemMessage::from_fwd_protocol_message(StoredMessage::new(header, message));
+            SystemMessage::from_fwd_protocol_message(StoredMessage::new(*header, message));
 
         let _ = self
             .send_node

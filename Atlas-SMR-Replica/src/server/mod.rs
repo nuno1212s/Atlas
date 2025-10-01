@@ -1,7 +1,5 @@
 //! Contains the server side core protocol logic of `Atlas`.
-
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,6 +16,7 @@ use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{channel, exhaust_and_consume, unwrap_channel, Err};
+use atlas_common::phantom::FPhantom;
 use atlas_communication::message::StoredMessage;
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkReconfigurationCommunication,
@@ -217,7 +216,7 @@ where
     // The reconfiguration protocol handle
     reconfig_protocol: RP,
 
-    st: PhantomData<fn() -> (S, ST, DL, LT)>,
+    st: FPhantom<(S, ST, DL, LT)>,
 }
 
 /// This is used to keep track of the node that is currently
@@ -226,7 +225,6 @@ pub struct QuorumReconfig {
     node_pending_join: Option<NodeId>,
 }
 
-///
 pub enum IterableProtocolRes {
     ReRun,
     Receive,
@@ -401,7 +399,7 @@ where
 
         let ordering_protocol = Self::initialize_order_protocol(
             op_config,
-            log_node_id.clone(),
+            log_node_id,
             timeouts.clone(),
             ordered.clone(),
             quorum.clone(),
@@ -541,7 +539,7 @@ where
         );
 
         (
-            initialize_timeouts(node_id.clone(), 4, 1024, TimeoutHandler::from(exec_tx)),
+            initialize_timeouts(node_id, 4, 1024, TimeoutHandler::from(exec_tx)),
             exec_rx,
         )
     }
@@ -661,7 +659,7 @@ where
         ST: 'static,
         OP: 'static,
     {
-        PL::init_log::<K, LM, OP, ST, DL>(executor.clone(), db_path.into())
+        PL::init_log::<K, LM, OP, ST, DL>(executor.clone(), db_path)
     }
 
     fn id(&self) -> NodeId {
@@ -915,11 +913,9 @@ where
                 log_transfer,
                 state_transfer,
             } => {
-                match log_transfer {
-                    LogTransferState::Idle => {
-                        unreachable!("Received result of the log transfer while not running it?")
-                    }
-                    _ => {}
+
+                if let LogTransferState::Idle = log_transfer {
+                    unreachable!("Received result of the log transfer while not running it?")
                 }
 
                 TransferPhase::RunningTransferProtocols {
@@ -954,11 +950,9 @@ where
                 log_transfer,
                 state_transfer,
             } => {
-                match state_transfer {
-                    StateTransferState::Idle => {
-                        unreachable!("Received result of the state transfer while not running it?")
-                    }
-                    _ => {}
+
+                if let StateTransferState::Idle = state_transfer {
+                    unreachable!("Received result of the state transfer while not running it?")
                 }
 
                 TransferPhase::RunningTransferProtocols {
@@ -1007,14 +1001,7 @@ where
                         decision
                             .decision_info()
                             .iter()
-                            .position(|info| {
-                                if let DecisionInfo::DecisionDone(_) = info {
-                                    true
-                                } else {
-                                    false
-                                }
-                            })
-                            .is_some()
+                            .any(|info| matches!(info, DecisionInfo::DecisionDone(_)))
                     })
                     .for_each(|dec| {
                         metric_correlation_id_passed(
@@ -1099,7 +1086,7 @@ where
             });
 
             if let Err(err) = self.rq_pre_processor.process_decided_batch(requests) {
-                error!("Error sending decided batch to pre processor: {:?}", err);
+                error!("Error sending decided batch to pre processor: {err:?}");
             }
 
             let last_seq_no_u32 = u32::from(seq);
@@ -1145,11 +1132,11 @@ where
     ) -> Result<()> {
         match network_update {
             NodeConnectionUpdateMessage::NodeConnected(node_id) => {
-                info!("Node connected: {:?}", node_id);
+                info!("Node connected: {node_id:?}");
                 self.rq_pre_processor.reset_client(node_id.node_id())?;
             }
             NodeConnectionUpdateMessage::NodeDisconnected(node_id) => {
-                info!("Node disconnected: {:?}", node_id);
+                info!("Node disconnected: {node_id:?}");
             }
         }
 
@@ -1354,12 +1341,9 @@ where
                 .collect(),
         );
 
-        match self.ordering_protocol.handle_timeout(timed_out)? {
-            OPExecResult::RunCst => {
-                self.run_transfer_protocols()?;
-            }
-            _ => {}
-        };
+        if let OPExecResult::RunCst = self.ordering_protocol.handle_timeout(timed_out)? {
+            self.run_transfer_protocols()?;
+        }
 
         Ok(())
     }
@@ -1383,10 +1367,7 @@ where
     fn is_log_transfer_done(state: &TransferPhase) -> bool {
         match state {
             TransferPhase::NotRunning => false,
-            TransferPhase::RunningTransferProtocols { log_transfer, .. } => match log_transfer {
-                LogTransferState::Done(_, _) => true,
-                _ => false,
-            },
+            TransferPhase::RunningTransferProtocols { log_transfer, .. } =>matches!(log_transfer, LogTransferState::Done(_, _))
         }
     }
 
@@ -1394,12 +1375,7 @@ where
     fn is_state_transfer_done(state: &TransferPhase) -> bool {
         match state {
             TransferPhase::NotRunning => false,
-            TransferPhase::RunningTransferProtocols { state_transfer, .. } => {
-                match state_transfer {
-                    StateTransferState::Done(_) => true,
-                    _ => false,
-                }
-            }
+            TransferPhase::RunningTransferProtocols { state_transfer, .. } => matches!(state_transfer, StateTransferState::Done(_)),
         }
     }
 
@@ -1620,7 +1596,7 @@ where
 impl QuorumReconfig {
     /// Attempt to register the node
     fn append_pending_node_join(&mut self, node: NodeId) -> bool {
-        if let None = self.node_pending_join {
+        if self.node_pending_join.is_none() {
             self.node_pending_join = Some(node);
             true
         } else {
@@ -1629,7 +1605,7 @@ impl QuorumReconfig {
     }
 
     fn pop_pending_node_join(&mut self) -> Option<NodeId> {
-        std::mem::replace(&mut self.node_pending_join, None)
+        self.node_pending_join.take()
     }
 }
 
@@ -1906,7 +1882,7 @@ impl Orderable for MockView {
 
 impl NetworkView for MockView {
     fn primary(&self) -> NodeId {
-        self.0[0].clone()
+        self.0[0]
     }
 
     fn quorum(&self) -> usize {

@@ -283,6 +283,7 @@ where
         }
     }
 
+    #[allow(clippy::redundant_pattern_matching)]
     fn work_iteration(&mut self) -> Result<()> {
         let (request, callback) = self.request_rx.recv()?;
 
@@ -306,7 +307,7 @@ where
     pub(super) fn work(mut self) {
         loop {
             if let Err(err) = self.work_iteration() {
-                error!("Failed to execute persistent log request because {:?}", err);
+                error!("Failed to execute persistent log request because {err:?}");
 
                 break;
             }
@@ -328,7 +329,7 @@ where
 
                 let seq = msg.message().sequence_number();
 
-                ResponseMessage::WroteMessage(seq, msg.header().digest().clone())
+                ResponseMessage::WroteMessage(seq, *msg.header().digest())
             }
             PWMessage::Invalidate(seq) => {
                 invalidate_seq::<RQ, OPM, POPT, PS>(&self.db, seq)?;
@@ -357,7 +358,7 @@ where
             PWMessage::ProofMetadata(metadata) => {
                 let seq = metadata.sequence_number();
 
-                write_proof_metadata::<RQ, OPM, POPT, PS>(&self.db, &metadata)?;
+                write_proof_metadata::<RQ, OPM>(&self.db, &metadata)?;
 
                 ResponseMessage::WroteMetadata(seq)
             }
@@ -398,7 +399,7 @@ pub(super) fn read_latest_state<
 ) -> Result<Option<InstallState<RQ, OPM, POPT, LS>>> {
     let dec_log = read_decision_log::<RQ, OPM, POPT, LS, PS, PLS>(db)?;
 
-    if let None = &dec_log {
+    if dec_log.is_none() {
         return Ok(None);
     }
 
@@ -440,7 +441,7 @@ pub(super) fn read_proof<
 ) -> Result<Option<PProof<RQ, OPM, POPT>>> {
     let metadata = read_proof_metadata::<RQ, OPM>(db, seq)?;
 
-    if let None = &metadata {
+    if metadata.is_none() {
         return Ok(None);
     }
 
@@ -643,7 +644,7 @@ pub(super) fn write_proof<
 ) -> Result<()> {
     let (proof_metadata, additional_data, messages) = PS::decompose_proof(proof);
 
-    write_proof_metadata::<RQ, OPM, POPT, PS>(db, proof_metadata)?;
+    write_proof_metadata::<RQ, OPM>(db, proof_metadata)?;
 
     additional_data
         .into_iter()
@@ -656,6 +657,7 @@ pub(super) fn write_proof<
     Ok(())
 }
 
+#[allow(clippy::extra_unused_type_parameters)]
 pub(super) fn write_additional_data<
     RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
@@ -723,8 +725,6 @@ pub(super) fn write_decision_log_metadata<
 pub(super) fn write_proof_metadata<
     RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
-    POPT: PersistentOrderProtocolTypes<RQ, OPM>,
-    PS: OrderProtocolLogHelper<RQ, OPM, POPT> + 'static,
 >(
     db: &KVDB,
     proof_metadata: &DecisionMetadata<RQ, OPM>,

@@ -5,6 +5,7 @@ use std::time::Instant;
 use tracing::error;
 
 use atlas_common::error::*;
+use atlas_common::phantom::FPhantom;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::ordering_protocol::permissioned::{
@@ -60,7 +61,7 @@ where
             ST::Serialization,
         > + 'static,
 {
-    p: PhantomData<fn() -> (A, ME)>,
+    p: FPhantom<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
     inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>,
 }
@@ -145,7 +146,7 @@ where
                                      inner_replica.view());
 
         let mut replica = Self {
-            p: PhantomData::default(),
+            p: PhantomData,
             inner_replica,
         };
 

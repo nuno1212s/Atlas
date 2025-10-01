@@ -112,7 +112,7 @@ where
     W: Write,
     S: DivisibleState,
 {
-    bincode::serde::encode_into_std_write(&part, write, bincode::config::standard())
+    bincode::serde::encode_into_std_write(part, write, bincode::config::standard())
         .context("Failed to serialize state part descriptor into writer")
 }
 
@@ -130,7 +130,7 @@ where
     W: Write,
     S: DivisibleState,
 {
-    bincode::serde::encode_into_std_write(&part, write, bincode::config::standard())
+    bincode::serde::encode_into_std_write(part, write, bincode::config::standard())
         .context("Failed to serialize state part into writer")
 }
 
@@ -151,7 +151,7 @@ where
     W: Write,
     S: DivisibleState,
 {
-    bincode::serde::encode_into_std_write(&desc, write, bincode::config::standard())
+    bincode::serde::encode_into_std_write(desc, write, bincode::config::standard())
         .context("Failed to serialize state descriptor into Writer")
 }
 
@@ -169,7 +169,7 @@ where
     W: Write,
     S: MonolithicState,
 {
-    bincode::serde::encode_into_std_write(&state, write, bincode::config::standard())
+    bincode::serde::encode_into_std_write(state, write, bincode::config::standard())
         .context("Failed to serialize state into writer")
 }
 

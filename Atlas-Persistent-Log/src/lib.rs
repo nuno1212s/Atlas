@@ -268,9 +268,8 @@ where
 
         let mut response_txs = vec![];
 
-        match &log_mode {
-            PersistentLogMode::Strict(handle) => response_txs.push(handle.logger_tx().clone()),
-            _ => {}
+        if let PersistentLogMode::Strict(handle) = &log_mode {
+            response_txs.push(handle.logger_tx().clone());
         }
 
         let kvdb = KVDB::new(db_path, prefixes)?;

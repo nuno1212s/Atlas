@@ -2,7 +2,6 @@ use atlas_metrics::metrics::MetricKind;
 use atlas_metrics::{MetricLevel, MetricRegistry};
 
 /// Log transfer will take the 7XX metric ID range
-
 pub const LOG_TRANSFER_LOG_CLONE_TIME: &str = "LT_STATE_CLONE_TIME";
 pub const LOG_TRANSFER_LOG_CLONE_TIME_ID: usize = 700;
 
