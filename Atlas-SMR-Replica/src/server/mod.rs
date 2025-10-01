@@ -15,8 +15,8 @@ use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{channel, exhaust_and_consume, unwrap_channel, Err};
 use atlas_common::phantom::FPhantom;
+use atlas_common::{channel, exhaust_and_consume, unwrap_channel, Err};
 use atlas_communication::message::StoredMessage;
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkReconfigurationCommunication,
@@ -152,6 +152,7 @@ pub(crate) enum LogTransferState {
     Done(SeqNo, SeqNo),
 }
 
+#[allow(clippy::type_complexity)]
 pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 where
     NT: SMRReplicaNetworkNode<
@@ -263,6 +264,7 @@ where
     ) -> Result<()>;
 }
 
+#[allow(clippy::type_complexity)]
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 where
     RP: ReconfigurationProtocol + 'static,
@@ -597,6 +599,7 @@ where
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn initialize_decision_log(
         dl_config: DL::Config,
         lt_config: LT::Config,
@@ -913,7 +916,6 @@ where
                 log_transfer,
                 state_transfer,
             } => {
-
                 if let LogTransferState::Idle = log_transfer {
                     unreachable!("Received result of the log transfer while not running it?")
                 }
@@ -950,7 +952,6 @@ where
                 log_transfer,
                 state_transfer,
             } => {
-
                 if let StateTransferState::Idle = state_transfer {
                     unreachable!("Received result of the state transfer while not running it?")
                 }
@@ -1367,7 +1368,9 @@ where
     fn is_log_transfer_done(state: &TransferPhase) -> bool {
         match state {
             TransferPhase::NotRunning => false,
-            TransferPhase::RunningTransferProtocols { log_transfer, .. } =>matches!(log_transfer, LogTransferState::Done(_, _))
+            TransferPhase::RunningTransferProtocols { log_transfer, .. } => {
+                matches!(log_transfer, LogTransferState::Done(_, _))
+            }
         }
     }
 
@@ -1375,7 +1378,9 @@ where
     fn is_state_transfer_done(state: &TransferPhase) -> bool {
         match state {
             TransferPhase::NotRunning => false,
-            TransferPhase::RunningTransferProtocols { state_transfer, .. } => matches!(state_transfer, StateTransferState::Done(_)),
+            TransferPhase::RunningTransferProtocols { state_transfer, .. } => {
+                matches!(state_transfer, StateTransferState::Done(_))
+            }
         }
     }
 

@@ -31,6 +31,11 @@ use crate::server::state_transfer::{
 };
 use crate::server::IterableProtocolRes;
 
+pub struct DigestedStateHandles<S: MonolithicState + 'static>(
+    ChannelSyncTx<Arc<ReadOnly<Checkpoint<S>>>>,
+    ChannelSyncRx<Arc<ReadOnly<Checkpoint<S>>>>,
+);
+
 pub struct MonStateTransfer<V, S, NT, PL, ST>
 where
     V: NetworkView,
@@ -42,10 +47,7 @@ where
     // Receiver of checkpoints from the application
     checkpoint_rx_from_app: ChannelSyncRx<AppStateMessage<S>>,
 
-    digested_state: (
-        ChannelSyncTx<Arc<ReadOnly<Checkpoint<S>>>>,
-        ChannelSyncRx<Arc<ReadOnly<Checkpoint<S>>>>,
-    ),
+    digested_state: DigestedStateHandles<S>,
 
     state_transfer_protocol: ST,
 }
@@ -58,6 +60,7 @@ where
     PL: MonolithicStateLog<S> + 'static,
     NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>>,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn init_state_transfer_thread(
         state_tx: ChannelSyncTx<InstallStateMessage<S>>,
         checkpoint_rx: ChannelSyncRx<AppStateMessage<S>>,
@@ -80,7 +83,7 @@ where
                     StateTransferMngr::initialize_core_state_transfer(node.clone(), handle, view)
                         .expect("Failed to initialize state transfer inner layer");
 
-                let digest_app_state =
+                let (digest_app_state_tx, digest_app_state_rx) =
                     channel::sync::new_bounded_sync(5, Some("Digested App State Channel"));
 
                 let state_transfer_protocol =
@@ -90,7 +93,7 @@ where
                 let mut state_transfer_manager = Self {
                     inner_state: inner_mngr,
                     checkpoint_rx_from_app: checkpoint_rx,
-                    digested_state: digest_app_state,
+                    digested_state: DigestedStateHandles(digest_app_state_tx, digest_app_state_rx),
                     state_transfer_protocol,
                 };
 

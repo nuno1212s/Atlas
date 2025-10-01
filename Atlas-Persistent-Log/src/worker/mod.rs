@@ -722,10 +722,7 @@ pub(super) fn write_decision_log_metadata<
     )
 }
 
-pub(super) fn write_proof_metadata<
-    RQ: SerMsg,
-    OPM: OrderingProtocolMessage<RQ>,
->(
+pub(super) fn write_proof_metadata<RQ: SerMsg, OPM: OrderingProtocolMessage<RQ>>(
     db: &KVDB,
     proof_metadata: &DecisionMetadata<RQ, OPM>,
 ) -> Result<()> {

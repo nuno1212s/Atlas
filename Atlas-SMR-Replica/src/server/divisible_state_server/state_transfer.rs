@@ -47,6 +47,7 @@ where
     PL: DivisibleStateLog<S> + 'static,
     NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>>,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn init_state_transfer_thread(
         state_tx: ChannelSyncTx<InstallStateMessage<S>>,
         checkpoint_rx: ChannelSyncRx<AppStateMessage<S>>,

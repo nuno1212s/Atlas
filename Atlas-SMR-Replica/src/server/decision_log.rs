@@ -67,6 +67,9 @@ where
     status_rx: ChannelSyncRx<ReplicaWorkResponses>,
 }
 
+pub type DecisionShort<RQ, OPM> =
+    Decision<DecisionMetadata<RQ, OPM>, DecisionAD<RQ, OPM>, ProtocolMessage<RQ, OPM>, RQ>;
+
 #[allow(dead_code, clippy::large_enum_variant)]
 pub enum DecisionLogWorkMessage<RQ, OPM, POT>
 where
@@ -76,11 +79,7 @@ where
 {
     ClearSequenceNumber(SeqNo),
     ClearUnfinishedDecisions,
-    DecisionInformation(
-        MaybeVec<
-            Decision<DecisionMetadata<RQ, OPM>, DecisionAD<RQ, OPM>, ProtocolMessage<RQ, OPM>, RQ>,
-        >,
-    ),
+    DecisionInformation(MaybeVec<DecisionShort<RQ, OPM>>),
     Proof(PProof<RQ, OPM, POT>),
     CheckpointDone(SeqNo),
 }
@@ -143,6 +142,22 @@ where
     work_queue: VecDeque<DecisionLogWorkMessage<RQ, OPM, POT>>,
 }
 
+pub type DLWorkMessageShort<
+    V: NetworkView,
+    R: SerMsg,
+    OP: LoggableOrderProtocol<SMRRawReq<R>>,
+    LT: LogTransferProtocol<SMRRawReq<R>, OP, DL>,
+    DL: DecisionLog<SMRRawReq<R>, OP>,
+> = DLWorkMessage<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>;
+
+pub type DecisionLogHandleShort<
+    V: NetworkView,
+    R: SerMsg,
+    OP: LoggableOrderProtocol<SMRRawReq<R>>,
+    LT: LogTransferProtocol<SMRRawReq<R>, OP, DL>,
+    DL: DecisionLog<SMRRawReq<R>, OP>,
+> = DecisionLogHandle<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>;
+
 pub struct DecisionLogManager<V, R, OP, DL, LT, NT, PL>
 where
     V: NetworkView,
@@ -153,9 +168,7 @@ where
 {
     decision_log: DL,
     log_transfer: LT,
-    work_receiver: ChannelSyncRx<
-        DLWorkMessage<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>,
-    >,
+    work_receiver: ChannelSyncRx<DLWorkMessageShort<V, R, OP, LT, DL>>,
     order_protocol_tx: ChannelSyncTx<ReplicaWorkResponses>,
     decision_log_pending_queue:
         DecisionLogWorkQueue<SMRRawReq<R>, OP::Serialization, OP::PersistableTypes>,
@@ -191,15 +204,7 @@ where
         rq_pre_processor: RequestPreProcessor<SMRRawReq<R>>,
         state_transfer_thread_handle: StateTransferThreadHandle<V>,
         execution_handle: WrappedExecHandle<R>,
-    ) -> Result<
-        DecisionLogHandle<
-            V,
-            SMRRawReq<R>,
-            OP::Serialization,
-            OP::PersistableTypes,
-            LT::Serialization,
-        >,
-    >
+    ) -> Result<DecisionLogHandleShort<V, R, OP, LT, DL>>
     where
         NT: LogTransferSendNode<SMRRawReq<R>, OP::Serialization, LT::Serialization> + 'static,
         DL: DecisionLogInitializer<SMRRawReq<R>, OP, PL, WrappedExecHandle<R>>,
