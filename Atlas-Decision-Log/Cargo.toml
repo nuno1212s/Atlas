@@ -1,0 +1,29 @@
+[package]
+name = "atlas-decision-log"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+serialize_serde = ["serde", "bincode", "atlas-core/serialize_serde", "atlas-communication/serialize_serde"]
+serialize_capnp = []
+
+default = ["serialize_serde"]
+
+[dependencies]
+thiserror = "1.0"
+atlas-common = { path = "../Atlas-Common" }
+atlas-metrics = { path = "../Atlas-Metrics" }
+atlas-core = { path = "../Atlas-Core" }
+atlas-communication = { path = "../Atlas-Communication" }
+atlas-logging-core = { path = "../Atlas-Logging-Core" }
+
+either = "*"
+tracing = "*"
+
+rayon = "1"
+
+bincode = { version = "2", features = ["serde"], optional = true }
+
+serde = { version = "1.0", optional = true }
