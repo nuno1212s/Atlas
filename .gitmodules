@@ -1,6 +1,3 @@
-[submodule "Atlas-View-Transfer"]
-	path = Atlas-View-Transfer
-	url = https://github.com/nuno1212s/Atlas-View-Transfer.git
 [submodule "Atlas-Tools"]
 	path = Atlas-Tools
 	url = https://github.com/nuno1212s/Atlas-Tools.git
