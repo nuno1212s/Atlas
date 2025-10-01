@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
+      - name: Install capnproto
+        run: sudo apt-get update && sudo apt-get install -y capnproto
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
@@ -41,6 +43,8 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
+      - name: Install capnproto
+        run: sudo apt-get update && sudo apt-get install -y capnproto
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
