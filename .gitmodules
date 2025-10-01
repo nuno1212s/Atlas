@@ -7,9 +7,6 @@
 [submodule "Atlas-Reconfiguration"]
 	path = Atlas-Reconfiguration
 	url = https://github.com/nuno1212s/Atlas-Reconfiguration.git
-[submodule "Atlas-Persistent-Log"]
-	path = Atlas-Persistent-Log
-	url = https://github.com/nuno1212s/Atlas-Persistent-Log.git
 [submodule "Atlas-SMR-Replica"]
 	path = Atlas-SMR-Replica
 	url = https://github.com/nuno1212s/Atlas-SMR-Replica.git
