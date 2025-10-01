@@ -1,0 +1,143 @@
+[package]
+name = "atlas-common"
+version = "0.1.0"
+description = "Common tools and dependencies for the Atlas project"
+authors = ["Nuno Neto <nuno.martingo@fc.up.pt>"]
+edition = "2021"
+license = "MIT"
+homepage = "https://github.com/nuno1212s/atlas"
+repository = "https://github.com/nuno1212s/atlas"
+documentation = "https://docs.rs/atlas"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+
+default = [
+    "async_runtime_tokio",
+    "threadpool_rayon",
+    "socket_tokio_tcp",
+    "channel_flume_mpmc",
+    "channel_sync_crossbeam",
+    "channel_mixed_flume",
+    "channel_mult_custom_dump",
+    "crypto_signature_ring_ed25519",
+    "crypto_hash_blake3_blake3",
+    "collections_randomstate_fxhash",
+    "persistent_db_sled",
+    "serialize_serde"
+]
+
+#Async socket alternatives, choose one
+socket_tokio_tcp = ["tokio", "tokio-util"]
+socket_async_std_tcp = ["async-std"]
+socket_rio_tcp = ["rio"]
+
+# Async runtime alternatives, choose one
+async_runtime_tokio = ["tokio"]
+async_runtime_async_std = ["async-std"]
+
+#Crypto alternatives, choose one
+crypto_hash_ring_sha2 = ["ring"]
+crypto_hash_blake3_blake3 = ["blake3"]
+
+#Signature alternatives, choose one
+crypto_signature_ring_ed25519 = ["ring"]
+
+#Threadpool alternatives, choose one
+threadpool_crossbeam = ["threadpool-crossbeam-channel"]
+threadpool_rayon = ["rayon"]
+
+#Async channel alternatives, choose one
+channel_futures_mpsc = []
+channel_flume_mpmc = ["flume"]
+channel_async_channel_mpmc = ["async-channel"]
+
+#Sync channel alternatives
+channel_sync_crossbeam = ["crossbeam-channel"]
+channel_sync_flume = ["flume"]
+
+#Mixed channel alternatives
+channel_mixed_flume = ["flume"]
+
+#Mutiple dumping channel alternatives
+channel_mult_custom_dump = ["dsrust"]
+
+#Alternatives for the multiple dumping channel (You can leave these out,
+#defaults to mqueue channel type)
+channel_custom_dump = ["dsrust"]
+channel_custom_dump_lfb = ["dsrust"]
+channel_custom_dump_mqueue = ["dsrust"]
+
+#Choose RandomState functions
+collections_randomstate_std = []
+collections_randomstate_fxhash = ["fxhash"]
+collections_randomstate_twox_hash = ["twox-hash"]
+
+# Alternatives for the persistent db type.
+# If no type of this category is presented, it will default to disabled,
+# But the default features do include sled
+persistent_db_rocksdb = ["rocksdb"]
+#persistent_db_redb = ["redb"]
+persistent_db_sled = ["sled"]
+
+serialize_serde = ["serde", "serde-big-array"]
+# Currently not working due to missing implementations after big refactor
+serialize_capnp = []
+
+[dependencies]
+either = "1"
+tokio-rustls = "0.26"
+rustls = "0.23"
+futures = "0.3.26"
+dashmap = "6"
+thread_local = "1.1.4"
+socket2 = { version = "0.5", features = ["all"] }
+strum = { version = "*", features = ["derive"] }
+linked-hash-map = "0.5"
+
+mio = { version = "*", features = ["os-poll", "net"] }
+async-std = { version = "1", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+tokio-util = { version = "0.7", features = ["compat"], optional = true }
+ring = { version = "0.17", optional = true }
+threadpool-crossbeam-channel = { version = "1.8.0", optional = true }
+#async-semaphore = { version = "1", optional = true }
+
+serde = { version = "*", features = ["derive", "rc"], optional = true }
+serde-big-array = { version = "0.5.0", optional = true }
+bincode = { version = "2", features = ["default", "serde"] }
+tracing = "0"
+
+rayon = { version = "*", optional = true }
+rio = { version = "0.9", optional = true }
+blake3 = { version = "1", optional = true }
+flume = { version = "0", optional = true }
+async-channel = { version = "2", optional = true }
+twox-hash = { version = "2", optional = true }
+fxhash = { version = "0.2", optional = true }
+dsrust = { version = "0.1.9", git = "https://github.com/nuno1212s/DSRust", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+rocksdb = { version = "0", optional = true }
+redb = { version = "*", optional = true }
+sled = { version = "*", optional = true }
+oneshot = "0"
+anyhow = "1"
+thiserror = "2"
+getset = "0"
+num-bigint = "0.4.3"
+num-traits = "0.2.15"
+threshold_crypto = { version = "0.4.0", git = "https://github.com/poanetwork/threshold_crypto" }
+# This is here because of the threshold crypto requirements, which require us to use this version of rand
+rand = "0.7.3"
+frost-ed25519 = { version = "2.0.0", features = ["serde"] }
+frost-core = { version = "2.0.0", features = ["serde"] }
+
+
+[dev-dependencies]
+criterion = "*"
+
+[[bench]]
+name = "threshold_crypto_bench"
+harness = false
