@@ -57,7 +57,8 @@ pub struct DivisibleStatePersistentLog<
 
     inner_log: PersistentLog<SMRReq<D>, OPM, POPT, LS, STM>,
 }
-
+// This will be used by other modules, but not directly here so no dead code warning
+#[allow(dead_code)]
 impl<S, D, OPM, POPT, LS, STM> DivisibleStatePersistentLog<S, D, OPM, POPT, LS, STM>
 where
     S: DivisibleState + 'static,
@@ -182,8 +183,8 @@ where
 
     fn write_decision_additional_data(
         &self,
-        write_mode: OperationMode,
-        additional_data: DecisionAD<SMRReq<D>, OPM>,
+        _write_mode: OperationMode,
+        _additional_data: DecisionAD<SMRReq<D>, OPM>,
     ) -> Result<()> {
         todo!()
     }
@@ -234,8 +235,8 @@ where
 
     fn read_proof(
         &self,
-        mode: OperationMode,
-        seq: SeqNo,
+        _mode: OperationMode,
+        _seq: SeqNo,
     ) -> Result<Option<PProof<SMRReq<D>, OPM, POPT>>> {
         todo!()
     }
@@ -278,7 +279,7 @@ where
     ) -> Result<()> {
         match self.inner_log.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => match write_mode {
-                OperationMode::NonBlockingSync(callback) => {
+                OperationMode::NonBlockingSync(_) => {
                     self.request_tx.queue_descriptor(checkpoint)?;
                 }
                 OperationMode::BlockingSync => {
@@ -294,7 +295,7 @@ where
     fn delete_part(&self, write_mode: OperationMode, part: S::PartDescription) -> Result<()> {
         match self.inner_log.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => match write_mode {
-                OperationMode::NonBlockingSync(callback) => {
+                OperationMode::NonBlockingSync(_) => {
                     self.request_tx.queue_delete_part(part)?;
                 }
                 OperationMode::BlockingSync => {
@@ -314,8 +315,8 @@ where
     ) -> Result<()> {
         match self.inner_log.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => match write_mode {
-                OperationMode::NonBlockingSync(callback) => {
-                    self.request_tx.queue_state_parts(parts).unwrap();
+                OperationMode::NonBlockingSync(_) => {
+                    self.request_tx.queue_state_parts(parts)?;
                 }
                 OperationMode::BlockingSync => {
                     todo!()
@@ -335,7 +336,7 @@ where
     ) -> Result<()> {
         match self.inner_log.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => match write_mode {
-                OperationMode::NonBlockingSync(callback) => {
+                OperationMode::NonBlockingSync(_) => {
                     self.request_tx
                         .queue_descriptor_and_parts(descriptor, parts)
                         .unwrap();

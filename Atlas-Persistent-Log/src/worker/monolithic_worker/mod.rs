@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-
+use anyhow::Context;
 use log::error;
 
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
@@ -11,6 +11,7 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::Orderable;
 use atlas_common::persistentdb::KVDB;
+use atlas_common::quiet_unwrap;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::OrderProtocolLogHelper;
@@ -58,6 +59,7 @@ where
         let state_message = MonolithicStateMessage { checkpoint: state };
 
         self.next_worker().send(state_message)
+            .context("Failed to queue state")
     }
 }
 
@@ -106,7 +108,8 @@ where
         loop {
             match self.request_rx.try_recv() {
                 Ok(message) => {
-                    let result = self.exec_req(message);
+                    //TODO: Handle response
+                    let _ = quiet_unwrap!(self.exec_req(message));
 
                     // Try to receive more messages if possible
                     continue;
@@ -175,6 +178,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 fn write_checkpoint<S>(db: &KVDB, state: Arc<ReadOnly<Checkpoint<S>>>) -> Result<()>
 where
     S: MonolithicState,

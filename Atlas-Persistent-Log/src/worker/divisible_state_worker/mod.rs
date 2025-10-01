@@ -22,6 +22,8 @@ use log::error;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use anyhow::Context;
+use atlas_common::quiet_unwrap;
 
 #[derive(Clone)]
 pub struct PersistentDivStateStub<S: DivisibleState> {
@@ -33,6 +35,7 @@ pub struct PersistentDivStateHandle<S: DivisibleState> {
     tx: Vec<PersistentDivStateStub<S>>,
 }
 
+#[allow(dead_code)]
 impl<S> PersistentDivStateHandle<S>
 where
     S: DivisibleState,
@@ -55,12 +58,14 @@ where
         let state_message = DivisibleStateMessage::Descriptor(descriptor);
 
         self.next_worker().send(state_message)
+            .context("Failed to queue descriptor")
     }
 
     pub fn queue_state_parts(&self, parts: Vec<Arc<ReadOnly<S::StatePart>>>) -> Result<()> {
         let state_message = DivisibleStateMessage::Parts(parts);
 
         self.next_worker().send(state_message)
+            .context("Failed to queue state parts")
     }
 
     pub fn queue_descriptor_and_parts(
@@ -71,15 +76,18 @@ where
         let state_message = DivisibleStateMessage::PartsAndDescriptor(parts, descriptor);
 
         self.next_worker().send(state_message)
+            .context("Failed to send state parts and descriptor message")
     }
 
     pub fn queue_delete_part(&self, part_descriptor: S::PartDescription) -> Result<()> {
         let state_message = DivisibleStateMessage::DeletePart(part_descriptor);
 
         self.next_worker().send(state_message)
+            .context("Failed to send delete part message")
     }
 }
 
+#[allow(dead_code)]
 pub struct DivStatePersistentLogWorker<S, RQ, OPM, POPT, LS, POP, PSP, DLPH>
 where
     S: DivisibleState + 'static,
@@ -96,6 +104,7 @@ where
     db: KVDB,
 }
 
+#[allow(dead_code)]
 impl<S, RQ, OPM, POPT, LS, POP, PSP, DLPH>
     DivStatePersistentLogWorker<S, RQ, OPM, POPT, LS, POP, PSP, DLPH>
 where
@@ -124,7 +133,7 @@ where
         loop {
             match self.rx.try_recv() {
                 Ok(message) => {
-                    let result = self.exec_req(message);
+                    let _result = quiet_unwrap!(self.exec_req(message));
 
                     // Try to receive more messages if possible
                     continue;
@@ -132,13 +141,13 @@ where
                 Err(err) => match err {
                     TryRecvError::ChannelEmpty => {}
                     TryRecvError::ChannelDc | TryRecvError::Timeout => {
-                        error!("Error receiving message: {:?}", err);
+                        error!("Error receiving message: {err:?}");
                     }
                 },
             }
 
             if let Err(err) = self.worker.work_iteration() {
-                error!("Failed to execute persistent log request because {:?}", err);
+                error!("Failed to execute persistent log request because {err:?}");
 
                 break;
             }
@@ -164,7 +173,6 @@ where
             }
             DivisibleStateMessage::DeletePart(_) => {
                 todo!();
-                ResponseMessage::RegisteredCallback
             }
         })
     }

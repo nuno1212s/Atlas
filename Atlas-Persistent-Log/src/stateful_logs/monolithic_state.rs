@@ -252,8 +252,8 @@ where
 
     fn write_decision_additional_data(
         &self,
-        write_mode: OperationMode,
-        additional_data: DecisionAD<SMRReq<D>, OPM>,
+        _write_mode: OperationMode,
+        _additional_data: DecisionAD<SMRReq<D>, OPM>,
     ) -> Result<()> {
         todo!()
     }
@@ -286,6 +286,23 @@ where
         self.inner_log.write_proof(write_mode, proof)
     }
 
+    fn write_decision_log_metadata(
+        &self,
+        mode: OperationMode,
+        log_metadata: DecLogMetadata<SMRReq<D>, OPM, POPT, LS>,
+    ) -> Result<()> {
+        self.inner_log
+            .write_decision_log_metadata(mode, log_metadata)
+    }
+
+    fn write_decision_log(
+        &self,
+        mode: OperationMode,
+        log: DecLog<SMRReq<D>, OPM, POPT, LS>,
+    ) -> Result<()> {
+        self.inner_log.write_decision_log(mode, log)
+    }
+
     fn read_proof(
         &self,
         mode: OperationMode,
@@ -305,14 +322,6 @@ where
         self.inner_log.reset_log(mode)
     }
 
-    fn write_decision_log(
-        &self,
-        mode: OperationMode,
-        log: DecLog<SMRReq<D>, OPM, POPT, LS>,
-    ) -> Result<()> {
-        self.inner_log.write_decision_log(mode, log)
-    }
-
     fn wait_for_full_persistence(
         &self,
         batch: BatchedDecision<SMRReq<D>>,
@@ -320,15 +329,6 @@ where
     ) -> Result<Option<BatchedDecision<SMRReq<D>>>> {
         self.inner_log
             .wait_for_full_persistence(batch, decision_logging)
-    }
-
-    fn write_decision_log_metadata(
-        &self,
-        mode: OperationMode,
-        log_metadata: DecLogMetadata<SMRReq<D>, OPM, POPT, LS>,
-    ) -> Result<()> {
-        self.inner_log
-            .write_decision_log_metadata(mode, log_metadata)
     }
 }
 

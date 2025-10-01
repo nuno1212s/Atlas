@@ -142,6 +142,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     fn receive_from_all_channels_exhaust(&mut self) -> Result<()> {
         exhaust_and_consume!(
             self.inner_state.handle().work_rx(),

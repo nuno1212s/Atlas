@@ -163,7 +163,7 @@ where
             StateTransferWorkMessage::ViewState(view) => {
                 self.handle_view(&view);
             }
-            StateTransferWorkMessage::Timeout(view, timeout) => {
+            StateTransferWorkMessage::Timeout(view, _timeout) => {
                 self.handle_view(&view);
             }
         }

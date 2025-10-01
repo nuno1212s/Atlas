@@ -1,5 +1,6 @@
+#![allow(type_alias_bounds)]
+#![allow(incomplete_features)]
 #![feature(specialization)]
-#![feature(lazy_type_alias)]
 
 pub mod config;
 pub mod metric;

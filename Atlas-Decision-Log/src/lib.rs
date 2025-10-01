@@ -1,5 +1,5 @@
 #![allow(incomplete_features)]
-#![feature(lazy_type_alias)]
+#![allow(type_alias_bounds)]
 use std::time::Instant;
 
 use either::Either;

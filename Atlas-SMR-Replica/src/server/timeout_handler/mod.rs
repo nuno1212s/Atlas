@@ -1,3 +1,4 @@
+use anyhow::Context;
 use atlas_common::channel::sync::ChannelSyncTx;
 use atlas_core::timeouts::{Timeout, TimeoutWorkerResponder};
 
@@ -9,6 +10,7 @@ pub(crate) struct TimeoutHandler {
 impl TimeoutWorkerResponder for TimeoutHandler {
     fn report_timeouts(&self, timeouts: Vec<Timeout>) -> atlas_common::error::Result<()> {
         self.tx.send(timeouts)
+            .context("Failed to send timeout for the SMR server")
     }
 }
 

@@ -11,11 +11,7 @@ jobs:
     timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout workspace
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-          token: ${{ secrets.PAT_TOKEN }}
+      - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
       - uses: actions-rs/toolchain@v1
         with:

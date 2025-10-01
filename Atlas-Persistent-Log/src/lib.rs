@@ -1,3 +1,5 @@
+//TODO: Fix this by re integrating capnproto back into the project
+#![allow(unexpected_cfgs)]
 extern crate core;
 
 use std::marker::PhantomData;
@@ -238,6 +240,7 @@ pub enum ResponseMessage {
 pub(crate) type ChannelMsg<RQ, OPM, POPT, LS> =
     (PWMessage<RQ, OPM, POPT, LS>, Option<CallbackType>);
 
+#[allow(dead_code)]
 impl<RQ, OPM, POPT, LS, STM> PersistentLog<RQ, OPM, POPT, LS, STM>
 where
     RQ: SerMsg + 'static,
@@ -283,7 +286,7 @@ where
         match &log_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
                 std::thread::Builder::new()
-                    .name(format!("Persistent log Worker #1"))
+                    .name("Persistent log Worker #1".to_string())
                     .spawn(move || {
                         worker.work();
                     })
@@ -372,8 +375,8 @@ where
 
     fn write_decision_additional_data(
         &self,
-        write_mode: OperationMode,
-        additional_data: DecisionAD<RQ, OPM>,
+        _write_mode: OperationMode,
+        _additional_data: DecisionAD<RQ, OPM>,
     ) -> Result<()> {
         todo!()
     }

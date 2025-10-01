@@ -66,6 +66,7 @@ where
     status_rx: ChannelSyncRx<ReplicaWorkResponses>,
 }
 
+#[allow(dead_code)]
 pub enum DecisionLogWorkMessage<RQ, OPM, POT>
 where
     RQ: SerMsg,
@@ -126,14 +127,6 @@ where
     message: DLWorkMessageType<RQ, OPM, POT, LTM>,
 }
 
-pub enum DecisionLogResponseMessage<RQ>
-where
-    RQ: SerMsg,
-{
-    InstallSeqNo(SeqNo),
-    TransferProtocolFinished(SeqNo, SeqNo, MaybeVec<LoggedDecision<RQ>>),
-}
-
 pub enum ActivePhase {
     LogTransfer,
     DecisionLog,
@@ -159,7 +152,6 @@ where
 {
     decision_log: DL,
     log_transfer: LT,
-    node: Arc<NT>,
     work_receiver: ChannelSyncRx<
         DLWorkMessage<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>,
     >,
@@ -246,7 +238,6 @@ where
                 let mut decision_log_manager = Self {
                     decision_log: decision,
                     log_transfer,
-                    node,
                     work_receiver: dl_work_rx,
                     order_protocol_tx: rp_work_tx,
                     decision_log_pending_queue: DecisionLogWorkQueue {
@@ -597,6 +588,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 impl<V, RQ, OPM, POT, LTM> DecisionLogHandle<V, RQ, OPM, POT, LTM>
 where
     V: NetworkView,

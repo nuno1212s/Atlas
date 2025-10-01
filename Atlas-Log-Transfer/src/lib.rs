@@ -15,7 +15,6 @@ use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::ordering_protocol::OrderingProtocol;
 
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 use atlas_core::timeouts::TimeoutID;
@@ -53,6 +52,7 @@ struct FetchSeqNo {
 
 ///FIXME: this should copy as it will copy all know proofs everytime
 /// This is fine atm since we aren't using this but we should fix it
+#[allow(dead_code)]
 #[derive(Clone)]
 struct FetchingLogData<P> {
     first_seq: SeqNo,
@@ -60,6 +60,7 @@ struct FetchingLogData<P> {
     log: Vec<Option<P>>,
 }
 
+#[allow(dead_code)]
 enum LogTransferState<P, D> {
     Init,
     /// We are currently fetching the latest sequence number
@@ -89,7 +90,7 @@ where
     /// Reference to the timeouts module
     timeouts: TimeoutModHandle,
     /// Reference to the persistent log
-    persistent_log: PL,
+    _persistent_log: PL,
     node: Arc<NT>,
     _p: PhantomData<fn() -> EX>,
 }
@@ -100,10 +101,6 @@ where
     OP: LoggableOrderProtocol<D>,
     DL: DecisionLog<D, OP>,
 {
-    fn curr_seq(&self) -> SeqNo {
-        self.curr_seq
-    }
-
     fn next_seq(&mut self) -> SeqNo {
         self.curr_seq += SeqNo::ONE;
 
@@ -258,6 +255,8 @@ where
         Ok(())
     }
 
+    ///TODO: Actually finish this when we get timeouts
+    #[allow(dead_code)]
     fn timed_out(&mut self, seq: SeqNo) -> LTTimeoutResult {
         if seq != self.curr_seq {
             return LTTimeoutResult::NotNeeded;
@@ -308,7 +307,7 @@ where
             default_timeout: timeout_duration,
             log_transfer_state: LogTransferState::Init,
             timeouts: timeout,
-            persistent_log: log,
+            _persistent_log: log,
             node,
             _p: Default::default(),
         };
@@ -660,6 +659,7 @@ where
 }
 
 //Constructor and getters for FetchSeqNoData
+#[allow(dead_code)]
 impl<P> FetchSeqNoData<P> {
     fn new() -> Self {
         Self {

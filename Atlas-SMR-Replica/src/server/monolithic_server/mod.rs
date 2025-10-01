@@ -10,7 +10,6 @@ use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer
 use atlas_core::ordering_protocol::permissioned::{
     ViewTransferProtocol, ViewTransferProtocolInitializer,
 };
-use atlas_core::ordering_protocol::PermissionedOrderingProtocol;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_logging_core::decision_log::{DecisionLog, DecisionLogInitializer};

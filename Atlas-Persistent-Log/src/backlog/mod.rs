@@ -327,12 +327,12 @@ impl<O> Into<BatchedDecision<O>> for AwaitingPersistence<O> {
 impl<O> From<BacklogMessage<O>> for AwaitingPersistence<O> {
     fn from(value: BacklogMessage<O>) -> Self {
         let received = match &value.logged_decision {
-            LoggingDecision::Proof(seq) => LoggedMessages::Proof(false),
+            LoggingDecision::Proof(_seq) => LoggedMessages::Proof(false),
             LoggingDecision::PartialDecision(seq, digests) => {
                 let message_digests = digests
                     .clone()
                     .into_iter()
-                    .map(|(node, digest)| digest)
+                    .map(|(_, digest)| digest)
                     .collect();
 
                 LoggedMessages::MessagesReceived(message_digests, Some(*seq))

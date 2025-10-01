@@ -26,6 +26,7 @@ use atlas_smr_core::SMRReq;
 /// This routing is only relevant to the Preprepare requests, all other requests
 /// Can be broadcast from each replica as they are very small and therefore
 /// don't have any effects on performance
+#[allow(dead_code)]
 struct FollowersFollowing<
     D: ApplicationData,
     OP: OrderingProtocolMessage<SMRReq<D>>,
@@ -38,6 +39,7 @@ struct FollowersFollowing<
     rx: ChannelSyncRx<FollowerChannelMsg<SMRReq<D>, OP, POP>>,
 }
 
+#[allow(dead_code)]
 impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT>
 where
     D: ApplicationData + 'static,
@@ -103,7 +105,7 @@ where
             let message = self.rx.recv().unwrap();
 
             match message {
-                FollowerEvent::ReceivedConsensusMsg(view, consensus_msg) => {
+                FollowerEvent::ReceivedConsensusMsg(..) => {
                     todo!()
                 }
                 FollowerEvent::ReceivedViewChangeMsg(view_change_msg) => {

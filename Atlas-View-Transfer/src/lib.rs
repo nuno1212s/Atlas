@@ -61,6 +61,7 @@ where
 
 /// Received
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct ReceivedView<V> {
     node: NodeId,
     digest: Digest,
@@ -307,11 +308,13 @@ where
                 op.install_view(view);
 
                 self.current_state = TransferState::Idle;
+                self.next_seq();
 
                 Ok(VTResult::VTransferFinished)
             }
             ViewTransferResponse::ReRunProtocol => {
                 self.request_latest_view(op)?;
+                self.next_seq();
 
                 Ok(VTResult::VTransferRunning)
             }

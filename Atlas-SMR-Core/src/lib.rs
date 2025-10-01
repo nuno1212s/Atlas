@@ -1,6 +1,6 @@
 #![allow(incomplete_features)]
+#![allow(type_alias_bounds)]
 #![feature(associated_type_defaults)]
-#![feature(lazy_type_alias)]
 #![feature(inherent_associated_types)]
 
 use atlas_core::messages::{ReplyMessage, RequestMessage};
@@ -15,6 +15,6 @@ pub mod request_pre_processing;
 pub mod serialize;
 pub mod state_transfer;
 
-pub type SMRReq<D: ApplicationData> = RequestMessage<<D as ApplicationData>::Request>;
+pub type SMRReq<D: ApplicationData> = RequestMessage<D::Request>;
 pub type SMRRawReq<R> = RequestMessage<R>;
 pub type SMRReply<D: ApplicationData> = ReplyMessage<D::Reply>;

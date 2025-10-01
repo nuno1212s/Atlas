@@ -23,6 +23,7 @@ use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
 use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};
 use crate::server::IterableProtocolRes;
 
+#[allow(dead_code)]
 pub struct DivStateTransfer<V, S, NT, PL, ST>
 where
     V: NetworkView,

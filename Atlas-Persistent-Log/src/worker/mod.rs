@@ -32,6 +32,7 @@ pub(super) mod divisible_state_worker;
 pub(super) mod monolithic_worker;
 
 ///Latest checkpoint made by the execution
+#[allow(dead_code)]
 const LATEST_STATE: &str = "latest_state";
 
 ///First sequence number (committed) since the last checkpoint
@@ -39,6 +40,7 @@ const FIRST_SEQ: &str = "first_seq";
 ///Last sequence number (committed) since the last checkpoint
 const LATEST_SEQ: &str = "latest_seq";
 ///Latest known view sequence number
+#[allow(dead_code)]
 const LATEST_VIEW_SEQ: &str = "latest_view_seq";
 /// Metadata of the decision log
 const DECISION_LOG_METADATA: &str = "dec_log_metadata";
@@ -46,7 +48,7 @@ const DECISION_LOG_METADATA: &str = "dec_log_metadata";
 /// The default column family for the persistent logging
 pub(super) const COLUMN_FAMILY_OTHER: &str = "other";
 pub(super) const COLUMN_FAMILY_PROOFS: &str = "proof_metadata";
-
+#[allow(dead_code)]
 pub(super) const COLUMN_FAMILY_ADDITIONAL_DATA: &str = "additional_data";
 pub(super) const COLUMN_FAMILY_STATE: &str = "state";
 
@@ -76,6 +78,7 @@ where
 }
 
 /// A writing stub for divisible state objects
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct PersistentDivisibleStateStub<S: DivisibleState> {
     pub(crate) tx: ChannelSyncTx<DivisibleStateMessage<S>>,
@@ -130,6 +133,8 @@ where
         self.tx.get(counter % self.tx.len()).unwrap()
     }
 
+    /// TODO: Finish this implementation
+    #[allow(dead_code)]
     pub(super) fn register_callback_receiver(
         &self,
         receiver: ChannelSyncTx<ResponseMessage>,
@@ -283,8 +288,9 @@ where
 
         let response = self.exec_req(request)?;
 
-        if let Some(callback) = callback {
+        if let Some(_) = callback {
             //If we have a callback to call with the response, then call it
+            //TODO: Implement callback handling
             // (callback)(response);
         } else {
             //If not, then deliver it down the response_txs
@@ -417,8 +423,8 @@ fn read_proof_metadata<RQ: SerMsg, OPM: OrderingProtocolMessage<RQ>>(
 }
 
 fn read_proof_additional_data<RQ: SerMsg, OPM: OrderingProtocolMessage<RQ>>(
-    db: &KVDB,
-    seq: SeqNo,
+    _db: &KVDB,
+    _seq: SeqNo,
 ) -> Result<Vec<DecisionAD<RQ, OPM>>> {
     todo!()
 }
@@ -535,7 +541,7 @@ fn read_messages_for_seq<
             Some(start_seq.as_slice()),
             Some(end_seq.as_slice()),
         )? {
-            let (key, value) = result?;
+            let (_key, value) = result?;
 
             let header = Header::deserialize_from(&value.as_ref()[..Header::LENGTH])?;
 
@@ -550,6 +556,7 @@ fn read_messages_for_seq<
     Ok(messages)
 }
 
+#[allow(dead_code)]
 fn read_latest_view_seq<POP: PermissionedOrderingProtocolMessage>(
     db: &KVDB,
 ) -> Result<Option<View<POP>>> {
@@ -579,13 +586,14 @@ pub(super) fn write_state<
     write_dec_log::<RQ, OPM, POPT, PS, LS, PLS>(db, dec_log.0)
 }
 
+#[allow(dead_code)]
 pub(super) fn write_latest_view<POP: PermissionedOrderingProtocolMessage>(
     db: &KVDB,
     view_seq_no: &View<POP>,
 ) -> Result<()> {
     let mut res = Vec::new();
 
-    let f_seq_no = serialize::serialize_view::<Vec<u8>, POP>(&mut res, view_seq_no)?;
+    serialize::serialize_view::<Vec<u8>, POP>(&mut res, view_seq_no)?;
 
     db.set(COLUMN_FAMILY_OTHER, LATEST_VIEW_SEQ, &res[..])
 }
@@ -654,8 +662,8 @@ pub(super) fn write_additional_data<
     POPT: PersistentOrderProtocolTypes<RQ, OPM>,
     PS: OrderProtocolLogHelper<RQ, OPM, POPT> + 'static,
 >(
-    db: &KVDB,
-    additional_data: &DecisionAD<RQ, OPM>,
+    _db: &KVDB,
+    _additional_data: &DecisionAD<RQ, OPM>,
 ) -> Result<()> {
     todo!()
 }
@@ -673,8 +681,7 @@ pub(super) fn write_message<
 
     message
         .header()
-        .serialize_into(&mut buf[..Header::LENGTH])
-        .unwrap();
+        .serialize_into(&mut buf[..Header::LENGTH])?;
 
     serialize::serialize_message::<&mut [u8], RQ, OPM>(
         &mut &mut buf[Header::LENGTH..],
@@ -732,6 +739,8 @@ pub(super) fn write_proof_metadata<
     db.set(COLUMN_FAMILY_PROOFS, seq_no, &proof_vec[..])
 }
 
+#[allow(dead_code)]
+//TODO: Use this function to delete proofs between two sequence numbers
 fn delete_proofs_between<
     RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,

@@ -30,7 +30,7 @@ use atlas_core::metric::RQ_BATCH_TRACKING_ID;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::networking::{
-    NetworkedOrderProtocolInitializer, ViewTransferProtocolSendNode,
+    NetworkedOrderProtocolInitializer,
 };
 use atlas_core::ordering_protocol::permissioned::{
     VTMsg, VTPollResult, VTResult, ViewTransferProtocol, ViewTransferProtocolInitializer,
@@ -139,6 +139,7 @@ pub(crate) enum TransferPhase {
 }
 
 /// The current State Transfer state
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum StateTransferState {
     Idle,
@@ -217,8 +218,6 @@ where
     persistent_log: PL,
     // The reconfiguration protocol handle
     reconfig_protocol: RP,
-    // The current count for the receives
-    current_count: usize,
 
     st: PhantomData<fn() -> (S, ST, DL, LT)>,
 }
@@ -306,12 +305,10 @@ where
         DL: DecisionLogInitializer<SMRReq<D>, OP, PL, Exec<D>>,
     {
         let ReplicaConfig {
-            next_consensus_seq,
             db_path,
             op_config,
             lt_config,
             dl_config,
-            pl_config,
             vt_config,
             node: node_config,
             reconfig_node,
@@ -399,7 +396,8 @@ where
 
         debug!("Reading decision log from persistent log");
 
-        let log = persistent_log.read_decision_log(OperationMode::BlockingSync)?;
+        //TODO: Actually use the log
+        let _log = persistent_log.read_decision_log(OperationMode::BlockingSync)?;
 
         debug!("Initializing ordering protocol.");
 
@@ -462,7 +460,6 @@ where
             persistent_log,
             reconfig_protocol,
             network_update_listener: network_update_rx,
-            current_count: 0,
             st: Default::default(),
         };
 
@@ -508,7 +505,9 @@ where
         reconf_rx: &ChannelSyncRx<QuorumReconfigurationMessage>,
         reconf_response_tx: ChannelSyncTx<QuorumReconfigurationResponse>,
     ) -> Result<Vec<NodeId>> {
-        let message = reconf_rx.recv().unwrap();
+        let message = reconf_rx
+            .recv()
+            .context("Failed to receive quorum reconfig message")?;
 
         let quorum = match message {
             QuorumReconfigurationMessage::ReconfigurationProtocolStable(quorum) => {
@@ -537,8 +536,6 @@ where
 
     fn initialize_timeouts(node_id: NodeId) -> (TimeoutsHandle, ChannelSyncRx<Vec<Timeout>>) {
         debug!("Initializing timeouts");
-
-        let default_timeout = Duration::from_secs(10);
 
         let (exec_tx, exec_rx) = channel::sync::new_bounded_sync(
             REPLICA_MESSAGE_CHANNEL,
@@ -653,7 +650,7 @@ where
         rq_handle: UnorderedRqHandles<SMRReq<D>>,
         executor: Exec<D>,
     ) -> Result<()> {
-        unordered_rq_handler::start_unordered_rq_thread::<D>(rq_handle, executor.clone());
+        unordered_rq_handler::start_unordered_rq_thread::<D>(rq_handle, executor.clone())?;
 
         Ok(())
     }
@@ -848,6 +845,7 @@ where
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn poll_state_transfer_protocol(&mut self) -> Result<()> {
         while let Some(state_result) = self.state_transfer_handle.try_recv_state_transfer_update() {
             self.handle_state_transfer_progress_message(state_result)?;
@@ -1078,6 +1076,8 @@ where
         Ok(())
     }
 
+    /// TODO: Figure out whether we should keep this or not
+    #[allow(dead_code)]
     #[instrument(skip_all, fields(decisions = decisions.len()))]
     fn execute_logged_decisions(
         &mut self,
@@ -1226,6 +1226,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     fn receive_internal_exhaust(&mut self) -> Result<()> {
         exhaust_and_consume!(
             self.node.protocol_node().incoming_stub().as_ref(),
@@ -1509,6 +1510,8 @@ where
         Ok(())
     }
 
+    #[allow(dead_code)]
+    ///TODO: Figure out whether we need this or not
     fn run_log_transfer_protocol(&mut self) -> Result<()> {
         let state = std::mem::replace(&mut self.transfer_states, TransferPhase::NotRunning);
 
@@ -1560,7 +1563,7 @@ where
     }
 
     fn reply_to_attempt_quorum_join(&mut self, failed: bool) -> Result<()> {
-        info!("{:?} // Sending attempt quorum join response to reconfiguration protocol. Has failed: {:?}", self.id(), failed);
+        info!("{:?} // Sending attempt quorum join response to reconfiguration protocol. Has failed: {failed:?}", self.id());
 
         if failed {
             self.reconf_tx
@@ -1905,23 +1908,23 @@ impl Orderable for MockView {
 
 impl NetworkView for MockView {
     fn primary(&self) -> NodeId {
-        todo!()
+        self.0[0].clone()
     }
 
     fn quorum(&self) -> usize {
-        todo!()
+        (self.n() - 1) / 2
     }
 
     fn quorum_members(&self) -> &Vec<NodeId> {
-        todo!()
+        &self.0
     }
 
     fn f(&self) -> usize {
-        todo!()
+        (self.n() - 1) / 3
     }
 
     fn n(&self) -> usize {
-        todo!()
+        self.0.len()
     }
 }
 

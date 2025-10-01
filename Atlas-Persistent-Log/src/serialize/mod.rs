@@ -84,6 +84,7 @@ where
     Ok(SeqNo::from(seq_no.get_seq_no()))
 }
 
+#[allow(dead_code)]
 pub(super) fn serialize_view<W, POP>(w: &mut W, view: &View<POP>) -> Result<usize>
 where
     W: Write,
@@ -152,6 +153,7 @@ where
     res
 }
 
+#[allow(dead_code)]
 pub(super) fn deserialize_view<R, POP>(r: &mut R) -> Result<View<POP>>
 where
     R: Read,
@@ -258,6 +260,7 @@ where
     res
 }
 
+#[allow(dead_code)]
 pub(super) fn deserialize_state_part_descriptor<R, S>(r: &mut R) -> Result<S::PartDescription>
 where
     R: Read,
