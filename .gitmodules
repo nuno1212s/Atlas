@@ -31,9 +31,6 @@
 [submodule "Atlas-Tools"]
 	path = Atlas-Tools
 	url = https://github.com/nuno1212s/Atlas-Tools.git
-[submodule "Atlas-Communication"]
-	path = Atlas-Communication
-	url = git@github.com:nuno1212s/Atlas-Communication.git
 [submodule "Atlas-SMR-Core"]
 	path = Atlas-SMR-Core
 	url = git@github.com:nuno1212s/Atlas-SMR-Core.git
