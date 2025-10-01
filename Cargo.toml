@@ -1,0 +1,27 @@
+[package]
+name = "atlas-view-transfer"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+
+serialize_serde = ["serde", "bincode"]
+serialize_capnp = []
+
+default = ["serialize_serde"]
+
+[dependencies]
+lazy_static = "1"
+anyhow = "1.0"
+thiserror = "1.0"
+atlas-common = { path = "../Atlas-Common" , default-features = true}
+atlas-communication = { path = "../Atlas-Communication" }
+atlas-core = { path = "../Atlas-Core" }
+atlas-metrics = {path = "../Atlas-Metrics"}
+tracing = "*"
+
+bincode = { version = "2", features = ["serde"], optional = true }
+
+serde = { version = "1.0", optional = true }
