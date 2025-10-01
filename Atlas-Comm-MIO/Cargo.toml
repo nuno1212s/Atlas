@@ -1,0 +1,33 @@
+[package]
+name = "atlas-comm-mio"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+
+[dependencies]
+
+atlas-common = { path = "../Atlas-Common" }
+atlas-metrics = { path = "../Atlas-Metrics" }
+atlas-communication = { path = "../Atlas-Communication" }
+
+#
+anyhow = "1.0"
+thiserror = "1.0"
+bytes = "1"
+tracing = "*"
+getset = "*"
+
+mio = { version = "1.0.3", features = ["os-poll", "net"] }
+slab = "0.4.8"
+crossbeam-skiplist = "0.1"
+dashmap = "*"
+bincode = "2"
+
+rustls = "0"
+
+[dev-dependencies]
+rustls-pemfile = "2.0.0"
+tracing-test = "*"
