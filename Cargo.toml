@@ -1,0 +1,32 @@
+[package]
+name = "atlas-persistent-log"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+
+serialize_serde = ["serde", "bincode", "atlas-common/serialize_serde"]
+#serialize_capnp = ["atlas-common/serialize_capnp"]
+
+default = ["serialize_serde"]
+
+[dependencies]
+anyhow = "1.0"
+thiserror = "2"
+atlas-capnp = { path = "../Atlas-capnp" }
+atlas-common = { path = "../Atlas-Common" }
+atlas-core = { path = "../Atlas-Core" }
+atlas-logging-core = { path = "../Atlas-Logging-Core" }
+atlas-smr-core = { path = "../Atlas-SMR-Core" }
+atlas-smr-application = { path = "../Atlas-SMR-Application" }
+atlas-communication = { path = "../Atlas-Communication" }
+atlas-metrics = { path = "../Atlas-Metrics" }
+
+bincode = { version = "2", features = ["serde"], optional = true }
+
+serde = { version = "1.0", optional = true }
+capnp = "*"
+
+log = "0.4.17"
