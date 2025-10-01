@@ -1,0 +1,30 @@
+[package]
+name = "atlas-client"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+
+serialize_serde = ["atlas-core/serialize_serde", "atlas-communication/serialize_serde", "atlas-common/serialize_serde", "atlas-smr-core/serialize_serde"]
+serialize_capnp = ["atlas-core/serialize_capnp", "atlas-communication/serialize_capnp"]
+
+default = ["serialize_serde"]
+
+[dependencies]
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "*"
+intmap = "*"
+dashmap = "*"
+num_cpus = "*"
+itertools = "*"
+lazy_static = "1"
+
+atlas-communication = { path = "../Atlas-Communication" }
+atlas-smr-application = { path = "../Atlas-SMR-Application" }
+atlas-smr-core = { path = "../Atlas-SMR-Core" }
+atlas-common = { path = "../Atlas-Common" }
+atlas-core = { path = "../Atlas-Core" }
+atlas-metrics = { path = "../Atlas-Metrics" }
+atlas-reconfiguration = { path = "../Atlas-Reconfiguration" }
