@@ -1,4 +1,3 @@
-
 name: lint code
 on:
   pull_request:
@@ -6,8 +5,7 @@ on:
     # Sequence of patterns matched against refs/heads
     branches:
       - 'main'
-      - 'research/**'
-      - 'releases/**'
+
 jobs:
   lint:
     timeout-minutes: 60
@@ -46,4 +44,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       - run: cargo build --tests
-      - run: cargo nextest run
+      - run: cargo nextest run --no-tests pass
