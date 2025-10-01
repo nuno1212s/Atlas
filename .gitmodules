@@ -1,6 +1,3 @@
-[submodule "Atlas-SMR-Execution"]
-	path = Atlas-SMR-Execution
-	url = https://github.com/nuno1212s/Atlas-SMR-Execution.git
 [submodule "Atlas-SMR-Replica"]
 	path = Atlas-SMR-Replica
 	url = https://github.com/nuno1212s/Atlas-SMR-Replica.git
