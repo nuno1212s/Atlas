@@ -1,8 +1,8 @@
+use anyhow::Context;
+use log::error;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use anyhow::Context;
-use log::error;
 
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::TryRecvError;
@@ -58,7 +58,8 @@ where
     pub fn queue_state(&self, state: Arc<ReadOnly<Checkpoint<S>>>) -> Result<()> {
         let state_message = MonolithicStateMessage { checkpoint: state };
 
-        self.next_worker().send(state_message)
+        self.next_worker()
+            .send(state_message)
             .context("Failed to queue state")
     }
 }

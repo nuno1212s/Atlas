@@ -29,9 +29,7 @@ use atlas_core::messages::create_rq_correlation_id_from_info;
 use atlas_core::metric::RQ_BATCH_TRACKING_ID;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::ordering_protocol::networking::{
-    NetworkedOrderProtocolInitializer,
-};
+use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::ordering_protocol::permissioned::{
     VTMsg, VTPollResult, VTResult, ViewTransferProtocol, ViewTransferProtocolInitializer,
 };

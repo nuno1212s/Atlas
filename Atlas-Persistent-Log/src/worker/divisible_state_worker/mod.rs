@@ -5,11 +5,13 @@ use crate::serialize::{
 use crate::stateful_logs::divisible_state::DivisibleStateMessage;
 use crate::worker::{PersistentLogWorker, COLUMN_FAMILY_STATE};
 use crate::ResponseMessage;
+use anyhow::Context;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::TryRecvError;
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::persistentdb::KVDB;
+use atlas_common::quiet_unwrap;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::OrderProtocolLogHelper;
@@ -22,8 +24,6 @@ use log::error;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use anyhow::Context;
-use atlas_common::quiet_unwrap;
 
 #[derive(Clone)]
 pub struct PersistentDivStateStub<S: DivisibleState> {
@@ -57,14 +57,16 @@ where
     pub fn queue_descriptor(&self, descriptor: S::StateDescriptor) -> Result<()> {
         let state_message = DivisibleStateMessage::Descriptor(descriptor);
 
-        self.next_worker().send(state_message)
+        self.next_worker()
+            .send(state_message)
             .context("Failed to queue descriptor")
     }
 
     pub fn queue_state_parts(&self, parts: Vec<Arc<ReadOnly<S::StatePart>>>) -> Result<()> {
         let state_message = DivisibleStateMessage::Parts(parts);
 
-        self.next_worker().send(state_message)
+        self.next_worker()
+            .send(state_message)
             .context("Failed to queue state parts")
     }
 
@@ -75,14 +77,16 @@ where
     ) -> Result<()> {
         let state_message = DivisibleStateMessage::PartsAndDescriptor(parts, descriptor);
 
-        self.next_worker().send(state_message)
+        self.next_worker()
+            .send(state_message)
             .context("Failed to send state parts and descriptor message")
     }
 
     pub fn queue_delete_part(&self, part_descriptor: S::PartDescription) -> Result<()> {
         let state_message = DivisibleStateMessage::DeletePart(part_descriptor);
 
-        self.next_worker().send(state_message)
+        self.next_worker()
+            .send(state_message)
             .context("Failed to send delete part message")
     }
 }

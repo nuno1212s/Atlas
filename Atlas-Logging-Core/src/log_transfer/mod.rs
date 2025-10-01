@@ -17,7 +17,8 @@ use atlas_core::timeouts::timeout::{TimeoutModHandle, TimeoutableMod};
 
 pub mod networking;
 
-pub type LogTM<RQ, OP, M: LogTransferMessage<RQ, OP>> = <M as LogTransferMessage<RQ, OP>>::LogTransferMessage;
+pub type LogTM<RQ, OP, M: LogTransferMessage<RQ, OP>> =
+    <M as LogTransferMessage<RQ, OP>>::LogTransferMessage;
 
 /// The result of processing a message in the log transfer protocol
 #[allow(clippy::large_enum_variant)]
