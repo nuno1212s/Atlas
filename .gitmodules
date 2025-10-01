@@ -28,9 +28,6 @@
 [submodule "Atlas-SMR-Replica"]
 	path = Atlas-SMR-Replica
 	url = https://github.com/nuno1212s/Atlas-SMR-Replica.git
-[submodule "Atlas-capnp"]
-	path = Atlas-capnp
-	url = https://github.com/nuno1212s/Atlas-capnp.git
 [submodule "Atlas-Decision-Log"]
 	path = Atlas-Decision-Log
 	url = https://github.com/nuno1212s/Atlas-Decision-Log.git
