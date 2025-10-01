@@ -1,0 +1,21 @@
+[package]
+name = "atlas-smr-execution"
+version = "0.1.0"
+description = "The Atlas SMR execution layer. Responsible for receiving decisions from the ordering protocol and executing them on the application defined by the developer"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+getset = "0"
+tracing = "*"
+atlas-core = { path = "../Atlas-Core" }
+atlas-smr-application = { path = "../Atlas-SMR-Application" }
+atlas-smr-core = { path = "../Atlas-SMR-Core" }
+atlas-metrics = { path = "../Atlas-Metrics" }
+atlas-common = { path = "../Atlas-Common" }
+# We use this threadpool instead of rayon since we need to be able to share the
+# immutable reference to the state across threads without having to use Arc or 'static
+# Reference lifetimes
+rayon = "1.9.0"
+lazy_static = "*"
