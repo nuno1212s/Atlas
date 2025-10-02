@@ -1,57 +1,6 @@
-[submodule "Atlas-Core"]
-	path = Atlas-Core
-	url = https://github.com/nuno1212s/Atlas-Core.git
-[submodule "Atlas-Common"]
-	path = Atlas-Common
-	url = https://github.com/nuno1212s/Atlas-Common.git
-[submodule "Atlas-Metrics"]
-	path = Atlas-Metrics
-	url = https://github.com/nuno1212s/Atlas-Metrics.git
-[submodule "Atlas-SMR-Execution"]
-	path = Atlas-SMR-Execution
-	url = https://github.com/nuno1212s/Atlas-SMR-Execution.git
-[submodule "Atlas-SMR-Application"]
-	path = Atlas-SMR-Application
-	url = https://github.com/nuno1212s/Atlas-SMR-Application.git
-[submodule "Atlas-Log-Transfer"]
-	path = Atlas-Log-Transfer
-	url = https://github.com/nuno1212s/Atlas-Log-Transfer.git
-[submodule "Atlas-Client"]
-	path = Atlas-Client
-	url = https://github.com/nuno1212s/Atlas-Client.git
-[submodule "Atlas-Reconfiguration"]
-	path = Atlas-Reconfiguration
-	url = https://github.com/nuno1212s/Atlas-Reconfiguration.git
-[submodule "Atlas-Persistent-Log"]
-	path = Atlas-Persistent-Log
-	url = https://github.com/nuno1212s/Atlas-Persistent-Log.git
-[submodule "Atlas-SMR-Replica"]
-	path = Atlas-SMR-Replica
-	url = https://github.com/nuno1212s/Atlas-SMR-Replica.git
-[submodule "Atlas-capnp"]
-	path = Atlas-capnp
-	url = https://github.com/nuno1212s/Atlas-capnp.git
-[submodule "Atlas-Decision-Log"]
-	path = Atlas-Decision-Log
-	url = https://github.com/nuno1212s/Atlas-Decision-Log.git
-[submodule "Atlas-View-Transfer"]
-	path = Atlas-View-Transfer
-	url = https://github.com/nuno1212s/Atlas-View-Transfer.git
 [submodule "Atlas-Tools"]
 	path = Atlas-Tools
 	url = https://github.com/nuno1212s/Atlas-Tools.git
-[submodule "Atlas-Communication"]
-	path = Atlas-Communication
-	url = git@github.com:nuno1212s/Atlas-Communication.git
-[submodule "Atlas-Comm-MIO"]
-	path = Atlas-Comm-MIO
-	url = git@github.com:nuno1212s/Atlas-Comm-MIO.git
-[submodule "Atlas-SMR-Core"]
-	path = Atlas-SMR-Core
-	url = git@github.com:nuno1212s/Atlas-SMR-Core.git
-[submodule "Atlas-Logging-Core"]
-	path = Atlas-Logging-Core
-	url = git@github.com:nuno1212s/Atlas-Logging-Core.git
 [submodule "Atlas-Examples"]
 	path = Atlas-Examples
 	url = git@github.com:nuno1212s/Atlas-Examples.git

@@ -1,37 +1,36 @@
-
-name: lint code
+name: Lint code
 on:
   pull_request:
   push:
     # Sequence of patterns matched against refs/heads
     branches:
       - 'main'
-      - 'research/**'
-      - 'releases/**'
+
 jobs:
   lint:
     timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout workspace
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-          token: ${{ secrets.PAT_TOKEN }}
+      - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
+      - name: Install capnproto
+        run: sudo apt-get update && sudo apt-get install -y capnproto
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: nightly
+          toolchain: nightly-2025-06-09
           components: rustfmt, clippy
-      - run: |
+      - name: Check versions
+        run: |
           rustup --version
           rustup show
           cargo --version
           cargo fmt --version
           cargo clippy --version
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- --no-deps
+      - name: Lint formatting
+        run: cargo fmt --all -- --check
+      - name: Lint code
+        run: cargo clippy --all-targets --no-deps -- -D warnings
 
   unit-tests:
     timeout-minutes: 5
@@ -44,6 +43,12 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
+      - name: Install capnproto
+        run: sudo apt-get update && sudo apt-get install -y capnproto
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly-2025-06-09
       - uses: taiki-e/install-action@nextest
       - run: cargo build --tests
-      - run: cargo nextest run
+      - run: cargo nextest run --no-tests pass

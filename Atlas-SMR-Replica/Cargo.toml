@@ -1,0 +1,40 @@
+[package]
+name = "atlas-smr-replica"
+version = "0.1.0"
+description = "The replica of the Atlas SMR project."
+authors = ["Nuno Neto <nuno.martingo@fc.up.pt>"]
+edition = "2021"
+license = "MIT"
+homepage = "https://github.com/nuno1212s/atlas"
+repository = "https://github.com/nuno1212s/atlas"
+documentation = "https://docs.rs/atlas"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+
+serialize_serde = ["atlas-core/serialize_serde", "atlas-communication/serialize_serde",
+    "atlas-common/serialize_serde", "atlas-persistent-log/serialize_serde",
+    "atlas-reconfiguration/serialize_serde", "atlas-smr-core/serialize_serde", "atlas-logging-core/serialize_serde"]
+#serialize_capnp = ["atlas-core/serialize_capnp", "atlas-communication/serialize_capnp", "atlas-persistent-log/serialize_capnp"]
+
+default = ["serialize_serde"]
+
+[dependencies]
+thiserror = "2"
+anyhow = "1.0"
+tracing = "*"
+getset = "0.1.2"
+itertools = "0"
+atlas-communication = { path = "../Atlas-Communication" }
+atlas-smr-application = { path = "../Atlas-SMR-Application" }
+atlas-common = { path = "../Atlas-Common" }
+atlas-core = { path = "../Atlas-Core" }
+atlas-smr-core = { path = "../Atlas-SMR-Core" }
+atlas-logging-core = { path = "../Atlas-Logging-Core" }
+atlas-metrics = { path = "../Atlas-Metrics" }
+atlas-persistent-log = { path = "../Atlas-Persistent-Log" }
+atlas-reconfiguration = { path = "../Atlas-Reconfiguration" }
+atlas-smr-execution = { path = "../Atlas-SMR-Execution" }
+either = "*"
+lazy_static = "*"

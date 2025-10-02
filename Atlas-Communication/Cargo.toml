@@ -1,0 +1,50 @@
+[package]
+name = "atlas-communication"
+version = "0.1.0"
+edition = "2021"
+description = "A communication layer for the Atlas framework"
+authors = ["Nuno Neto <nuno.martingo@fc.up.pt>"]
+license = "MIT"
+homepage = "https://github.com/nuno1212s/febft"
+repository = "https://github.com/nuno1212s/febft"
+documentation = "https://docs.rs/febft"
+readme = "README.md"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+
+serialize_serde = ["serde", "bincode", "serde_bytes", "atlas-common/serialize_serde"]
+serialize_capnp = ["atlas-capnp", "capnp"]
+
+default = ["serialize_serde"]
+
+[dependencies]
+atlas-common = { path = "../Atlas-Common" }
+atlas-capnp = { path = "../Atlas-capnp", optional = true }
+atlas-metrics = { path = "../Atlas-Metrics" }
+
+capnp = { version = "0.16.0", optional = true }
+bytes = "1.4.0"
+serde = { version = "*", features = ["rc"], optional = true }
+serde_bytes = { version = "*", optional = true }
+bincode = { version = "2", optional = true, features = ["serde"] }
+dashmap = "5.4.0"
+either = "1.8.1"
+futures = "0.3.26"
+enum-map = "3.0.0-beta.2"
+intmap = "3.0.0"
+thiserror = "*"
+anyhow = "*"
+getset = "*"
+smallvec = "1"
+fastrand = "2"
+chrono = "0.4.23"
+
+tracing = "*"
+strum = {version = "*", features = ["derive"]}
+
+[dev-dependencies]
+rustls-pemfile = "1.0.2"
+env_logger = "0.10.0"
