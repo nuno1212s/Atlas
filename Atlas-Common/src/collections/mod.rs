@@ -16,14 +16,14 @@ pub type RandomState = ::std::collections::hash_map::RandomState;
 #[cfg(feature = "collections_randomstate_gxhash")]
 pub type RandomState = ::gxhash::GxHasher;
 
-/// A map which, as the name suggests, maintains the order of its `(K, V)` pairs.
-pub type LinkedHashMap<K, V> = ::linked_hash_map::LinkedHashMap<K, V, RandomState>;
-
 /// A `HashMap` with a faster hashing function.
 pub type HashMap<K, V> = ::std::collections::HashMap<K, V, RandomState>;
 
 /// A `HashSet` with a faster hashing function.
 pub type HashSet<T> = ::std::collections::HashSet<T, RandomState>;
+
+/// A map which, as the name suggests, maintains the order of its `(K, V)` pairs.
+pub type LinkedHashMap<K, V> = ::linked_hash_map::LinkedHashMap<K, V, RandomState>;
 
 pub type ConcurrentHashMap<K, V> = DashMap<K, V, RandomState>;
 
