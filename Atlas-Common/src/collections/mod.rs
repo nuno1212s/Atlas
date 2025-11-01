@@ -14,7 +14,7 @@ pub type RandomState = ::twox_hash::RandomXxh3HashBuilder64;
 pub type RandomState = ::std::collections::hash_map::RandomState;
 
 #[cfg(feature = "collections_randomstate_gxhash")]
-pub type RandomState = ::gxhash::GxHasher;
+pub type RandomState = ::gxhash::GxBuildHasher;
 
 /// A `HashMap` with a faster hashing function.
 pub type HashMap<K, V> = ::std::collections::HashMap<K, V, RandomState>;
