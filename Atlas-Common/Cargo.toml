@@ -24,7 +24,7 @@ default = [
     "channel_mult_custom_dump",
     "crypto_signature_ring_ed25519",
     "crypto_hash_blake3_blake3",
-    "collections_randomstate_fxhash",
+    "collections_randomstate_gxhash",
     "persistent_db_sled",
     "serialize_serde"
 ]
@@ -72,8 +72,9 @@ channel_custom_dump_mqueue = ["dsrust"]
 
 #Choose RandomState functions
 collections_randomstate_std = []
-collections_randomstate_fxhash = ["fxhash"]
+collections_randomstate_fxhash = ["rustc-hash"]
 collections_randomstate_twox_hash = ["twox-hash"]
+collections_randomstate_gxhash = ["gxhash"]
 
 # Alternatives for the persistent db type.
 # If no type of this category is presented, it will default to disabled,
@@ -116,7 +117,8 @@ blake3 = { version = "1", optional = true }
 flume = { version = "0", optional = true }
 async-channel = { version = "2", optional = true }
 twox-hash = { version = "2", optional = true }
-fxhash = { version = "0.2", optional = true }
+rustc-hash = { version = "*", optional = true }
+gxhash = { version = "*", optional = true }
 dsrust = { version = "0.1.9", git = "https://github.com/nuno1212s/DSRust", optional = true }
 crossbeam-channel = { version = "0.5", optional = true }
 rocksdb = { version = "0", optional = true }

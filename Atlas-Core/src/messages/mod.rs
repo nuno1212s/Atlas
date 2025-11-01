@@ -146,6 +146,67 @@ impl TimeOutable for ClientRqInfo {
     }
 }
 
+impl Orderable for ClientRqInfo {
+    fn sequence_number(&self) -> SeqNo {
+        self.seq_no
+    }
+}
+
+impl ClientRqInfo {
+    pub fn new(digest: Digest, sender: NodeId, seqno: SeqNo, session: SeqNo) -> Self {
+        Self {
+            digest,
+            sender,
+            seq_no: seqno,
+            session,
+        }
+    }
+
+    pub fn digest(&self) -> Digest {
+        self.digest
+    }
+
+    pub fn sender(&self) -> NodeId {
+        self.sender
+    }
+
+    pub fn session(&self) -> SeqNo {
+        self.session
+    }
+}
+
+impl<O> From<&StoredMessage<O>> for ClientRqInfo
+where
+    O: SessionBased,
+{
+    fn from(message: &StoredMessage<O>) -> Self {
+        let digest = message.header().unique_digest();
+        let sender = message.header().from();
+
+        let session = message.message().session_number();
+        let seq_no = message.message().sequence_number();
+
+        Self {
+            digest,
+            sender,
+            seq_no,
+            session,
+        }
+    }
+}
+
+impl Hash for ClientRqInfo {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.digest.hash(state);
+    }
+}
+
+impl SessionBased for ClientRqInfo {
+    fn session_number(&self) -> SeqNo {
+        self.session
+    }
+}
+
 /// A wrapper for protocol messages
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 #[derive(Clone)]
@@ -172,6 +233,15 @@ impl<P> Deref for Protocol<P> {
 
     fn deref(&self) -> &Self::Target {
         &self.payload
+    }
+}
+
+impl<P> Debug for Protocol<P>
+where
+    P: Debug,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.payload)
     }
 }
 
@@ -261,76 +331,6 @@ impl<P> ForwardedProtocolMessage<P> {
 
     pub fn into_inner(self) -> StoredMessage<Protocol<P>> {
         self.message
-    }
-}
-
-impl Orderable for ClientRqInfo {
-    fn sequence_number(&self) -> SeqNo {
-        self.seq_no
-    }
-}
-
-impl ClientRqInfo {
-    pub fn new(digest: Digest, sender: NodeId, seqno: SeqNo, session: SeqNo) -> Self {
-        Self {
-            digest,
-            sender,
-            seq_no: seqno,
-            session,
-        }
-    }
-
-    pub fn digest(&self) -> Digest {
-        self.digest
-    }
-
-    pub fn sender(&self) -> NodeId {
-        self.sender
-    }
-
-    pub fn session(&self) -> SeqNo {
-        self.session
-    }
-}
-
-impl<O> From<&StoredMessage<O>> for ClientRqInfo
-where
-    O: SessionBased,
-{
-    fn from(message: &StoredMessage<O>) -> Self {
-        let digest = message.header().unique_digest();
-        let sender = message.header().from();
-
-        let session = message.message().session_number();
-        let seq_no = message.message().sequence_number();
-
-        Self {
-            digest,
-            sender,
-            seq_no,
-            session,
-        }
-    }
-}
-
-impl Hash for ClientRqInfo {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.digest.hash(state);
-    }
-}
-
-impl<P> Debug for Protocol<P>
-where
-    P: Debug,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.payload)
-    }
-}
-
-impl SessionBased for ClientRqInfo {
-    fn session_number(&self) -> SeqNo {
-        self.session
     }
 }
 

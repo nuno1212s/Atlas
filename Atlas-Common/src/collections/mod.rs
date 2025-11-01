@@ -5,13 +5,16 @@ use std::default::Default;
 use dashmap::DashMap;
 
 #[cfg(feature = "collections_randomstate_fxhash")]
-pub type RandomState = ::std::hash::BuildHasherDefault<::fxhash::FxHasher>;
+pub type RandomState = ::std::hash::BuildHasherDefault<::rustc_hash::FxHasher>;
 
 #[cfg(feature = "collections_randomstate_twox_hash")]
 pub type RandomState = ::twox_hash::RandomXxh3HashBuilder64;
 
 #[cfg(feature = "collections_randomstate_std")]
 pub type RandomState = ::std::collections::hash_map::RandomState;
+
+#[cfg(feature = "collections_randomstate_gxhash")]
+pub type RandomState = ::gxhash::GxHasher;
 
 /// A map which, as the name suggests, maintains the order of its `(K, V)` pairs.
 pub type LinkedHashMap<K, V> = ::linked_hash_map::LinkedHashMap<K, V, RandomState>;
