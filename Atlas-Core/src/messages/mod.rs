@@ -126,7 +126,6 @@ impl<P> ReplyMessage<P> {
 
 /// The client request information about a given request
 #[derive(Eq, PartialEq, Ord, Clone, PartialOrd, Debug)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct ClientRqInfo {
     //The UNIQUE digest of the request in question
     pub digest: Digest,
@@ -163,8 +162,8 @@ impl ClientRqInfo {
         }
     }
 
-    pub fn digest(&self) -> &Digest {
-        &self.digest
+    pub fn digest(&self) -> Digest {
+        self.digest
     }
 
     pub fn sender(&self) -> NodeId {

@@ -14,13 +14,16 @@ pub type RandomState = ::twox_hash::RandomXxh3HashBuilder64;
 pub type RandomState = ::std::collections::hash_map::RandomState;
 
 #[cfg(feature = "collections_randomstate_gxhash")]
-pub type RandomState = ::gxhash::GxBuildHasher;
+pub type RandomState = ::gxhash::GxHasher;
+
+/// A map which, as the name suggests, maintains the order of its `(K, V)` pairs.
+pub type LinkedHashMap<K, V> = ::linked_hash_map::LinkedHashMap<K, V, RandomState>;
 
 /// A `HashMap` with a faster hashing function.
 pub type HashMap<K, V> = ::std::collections::HashMap<K, V, RandomState>;
 
-/// A map which, as the name suggests, maintains the order of its `(K, V)` pairs.
-pub type LinkedHashMap<K, V> = ::linked_hash_map::LinkedHashMap<K, V, RandomState>;
+/// A `HashSet` with a faster hashing function.
+pub type HashSet<T> = ::std::collections::HashSet<T, RandomState>;
 
 pub type ConcurrentHashMap<K, V> = DashMap<K, V, RandomState>;
 
@@ -34,9 +37,19 @@ pub fn hash_map<K, V>() -> HashMap<K, V> {
     HashMap::with_hasher(Default::default())
 }
 
+/// Creates a new `HashSet`.
+pub fn hash_set<T>() -> HashSet<T> {
+    HashSet::with_hasher(Default::default())
+}
+
 /// Creates a new `HashMap`, with a custom capacity.
 pub fn hash_map_capacity<K, V>(cap: usize) -> HashMap<K, V> {
     HashMap::with_capacity_and_hasher(cap, Default::default())
+}
+
+/// Creates a new `HashSet`, with a custom capacity.
+pub fn hash_set_capacity<T>(cap: usize) -> HashSet<T> {
+    HashSet::with_capacity_and_hasher(cap, Default::default())
 }
 
 pub fn concurrent_hash_map<K, V>() -> ConcurrentHashMap<K, V>
@@ -52,18 +65,3 @@ where
 {
     DashMap::with_capacity_and_hasher(size, Default::default())
 }
-
-/// A `HashSet` with a faster hashing function.
-pub type HashSet<T> = ::std::collections::HashSet<T, RandomState>;
-
-/// Creates a new `HashSet`, with a custom capacity.
-pub fn hash_set_capacity<T>(cap: usize) -> HashSet<T> {
-    HashSet::with_capacity_and_hasher(cap, Default::default())
-}
-
-/// Creates a new `HashSet`.
-pub fn hash_set<T>() -> HashSet<T> {
-    HashSet::with_hasher(Default::default())
-}
-
-pub type LinkedHashSet<T> = ::linked_hash_map::LinkedHashMap<T, (), RandomState>;
