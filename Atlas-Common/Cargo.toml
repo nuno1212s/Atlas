@@ -24,7 +24,7 @@ default = [
     "channel_mult_custom_dump",
     "crypto_signature_ring_ed25519",
     "crypto_hash_blake3_blake3",
-    "collections_randomstate_gxhash",
+    "collections_randomstate_fxhash",
     "persistent_db_sled",
     "serialize_serde"
 ]
@@ -136,6 +136,9 @@ rand = "0.7.3"
 frost-ed25519 = { version = "2.0.0", features = ["serde"] }
 frost-core = { version = "2.0.0", features = ["serde"] }
 
+[build]
+# Option A: optimize for the current CPU
+rustflags = ["-C", "target-cpu=native"]
 
 [dev-dependencies]
 criterion = "*"
