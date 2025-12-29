@@ -9,8 +9,8 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{channel, Err};
-use atlas_core::executor::DecisionExecutorHandle;
-use atlas_core::ordering_protocol::BatchedDecision;
+use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
+use atlas_core::ordering_protocol::decision::BatchedDecision;
 use atlas_logging_core::decision_log::LoggingDecision;
 
 use crate::ResponseMessage;
@@ -24,7 +24,7 @@ pub struct ConsensusBacklog<EX, RQ> {
     //Receives messages from the persistent log
     logger_rx: ChannelSyncRx<ResponseMessage>,
 
-    //The handle to the executor
+    //The handle to the execution
     executor_handle: EX,
 
     //This is the batch that is currently waiting for it's messages to be persisted
@@ -101,7 +101,7 @@ const CHANNEL_SIZE: usize = 1024;
 
 impl<EX, RQ> ConsensusBacklog<EX, RQ>
 where
-    EX: DecisionExecutorHandle<RQ>,
+    EX: TDeterministicDecisionExecutorHandle<RQ>,
     RQ: Send + 'static,
 {
     ///Initialize the consensus backlog
@@ -216,7 +216,7 @@ where
     }
 
     fn dispatch_batch(&self, batch: BatchedDecision<RQ>) {
-        //TODO: Request checkpointing from the executor
+        //TODO: Request checkpointing from the execution
         self.executor_handle
             .queue_update(batch)
             .expect("Failed to queue update");

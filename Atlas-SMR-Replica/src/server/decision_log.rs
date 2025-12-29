@@ -20,12 +20,13 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::phantom::FPhantom;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
-use atlas_core::executor::DecisionExecutorHandle;
+use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
+use atlas_core::ordering_protocol::decision::Decision;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
 use atlas_core::ordering_protocol::{
-    Decision, DecisionAD, DecisionMetadata, ExecutionResult, ProtocolMessage,
+    DecisionAD, DecisionMetadata, ExecutionResult, ProtocolMessage,
 };
 use atlas_core::request_pre_processing::RequestPreProcessing;
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle};
@@ -39,7 +40,7 @@ use atlas_logging_core::log_transfer::{
 };
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
-use atlas_smr_core::exec::WrappedExecHandle;
+use atlas_smr_core::execution::state_management::TDeterministicExecutorStateHandle;
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
 use atlas_smr_core::SMRRawReq;
 
@@ -158,7 +159,7 @@ pub type DecisionLogHandleShort<
     DL: DecisionLog<SMRRawReq<R>, OP>,
 > = DecisionLogHandle<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>;
 
-pub struct DecisionLogManager<V, R, OP, DL, LT, NT, PL>
+pub struct DecisionLogManager<V, R, OP, DL, LT, NT, PL, EX>
 where
     V: NetworkView,
     R: SerMsg,
@@ -175,12 +176,12 @@ where
     active_phase: ActivePhase,
     rq_pre_processor: RequestPreProcessor<SMRRawReq<R>>,
     state_transfer_handle: StateTransferThreadHandle<V>,
-    executor_handle: WrappedExecHandle<R>,
+    executor_handle: EX,
     pending_decisions_to_execute: Option<MaybeVec<LoggedDecision<SMRRawReq<R>>>>,
     _ph: FPhantom<(V, R, OP, NT, PL)>,
 }
 
-impl<V, R, OP, DL, LT, NT, PL> DecisionLogManager<V, R, OP, DL, LT, NT, PL>
+impl<V, R, OP, DL, LT, NT, PL, EX> DecisionLogManager<V, R, OP, DL, LT, NT, PL, EX>
 where
     V: NetworkView + 'static,
     R: SerMsg,
@@ -194,6 +195,7 @@ where
             DL::LogSerialization,
         > + 'static,
     NT: LogTransferSendNode<SMRRawReq<R>, OP::Serialization, LT::Serialization>,
+    EX: TDeterministicDecisionExecutorHandle<SMRRawReq<R>> + TDeterministicExecutorStateHandle<SMRRawReq<R>>,
 {
     /// Initialize the decision log
     pub fn initialize_decision_log_mngt(
@@ -203,12 +205,12 @@ where
         node: Arc<NT>,
         rq_pre_processor: RequestPreProcessor<SMRRawReq<R>>,
         state_transfer_thread_handle: StateTransferThreadHandle<V>,
-        execution_handle: WrappedExecHandle<R>,
+        execution_handle: EX,
     ) -> Result<DecisionLogHandleShort<V, R, OP, LT, DL>>
     where
         NT: LogTransferSendNode<SMRRawReq<R>, OP::Serialization, LT::Serialization> + 'static,
-        DL: DecisionLogInitializer<SMRRawReq<R>, OP, PL, WrappedExecHandle<R>>,
-        LT: LogTransferProtocolInitializer<SMRRawReq<R>, OP, DL, PL, WrappedExecHandle<R>, NT>,
+        DL: DecisionLogInitializer<SMRRawReq<R>, OP, PL, EX>,
+        LT: LogTransferProtocolInitializer<SMRRawReq<R>, OP, DL, PL, EX, NT>,
     {
         let (dl_config, lt_config) = configs;
 
@@ -522,29 +524,7 @@ where
 
             let last_seq_no_u32 = u32::from(seq);
 
-            let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
-                //We check that % == 0 so we don't start multiple checkpoints
-
-                let (e_tx, e_rx) = channel::oneshot::new_oneshot_channel();
-
-                debug!(
-                    "Checking if checkpoint is needed with state transfer protocol {:?}",
-                    seq
-                );
-
-                self.state_transfer_handle
-                    .send_work_message(StateTransferWorkMessage::ShouldRequestAppState(seq, e_tx));
-
-                debug!("Sent work message to state transfer protocol, awaiting response");
-
-                if let Ok(res) = e_rx.recv() {
-                    res
-                } else {
-                    ExecutionResult::Nil
-                }
-            } else {
-                ExecutionResult::Nil
-            };
+            let checkpoint = self.probe_checkpoint_needed(seq, last_seq_no_u32);
 
             debug!("Decided batch to execute: {:?}, queuing update", seq);
 
@@ -553,7 +533,7 @@ where
                     ExecutionResult::Nil => self.executor_handle.queue_update(requests)?,
                     ExecutionResult::BeginCheckpoint => {
                         self.executor_handle.queue_update_and_get_appstate(
-                            WrappedExecHandle::transform_update_batch(requests),
+                            requests
                         )?
                     }
                 },
@@ -564,6 +544,34 @@ where
         }
 
         Ok(())
+    }
+
+    fn probe_checkpoint_needed(&mut self, seq: SeqNo, last_seq_no_u32: u32) -> ExecutionResult {
+        let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
+            //We check that % == 0 so we don't start multiple checkpoints
+
+            let (e_tx, e_rx) = channel::oneshot::new_oneshot_channel();
+
+            debug!(
+                    "Checking if checkpoint is needed with state transfer protocol {:?}",
+                    seq
+                );
+
+            self.state_transfer_handle
+                .send_work_message(StateTransferWorkMessage::ShouldRequestAppState(seq, e_tx));
+
+            debug!("Sent work message to state transfer protocol, awaiting response");
+
+            if let Ok(res) = e_rx.recv() {
+                res
+            } else {
+                ExecutionResult::Nil
+            }
+        } else {
+            ExecutionResult::Nil
+        };
+        
+        checkpoint
     }
 }
 

@@ -14,13 +14,14 @@ use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_common::persistentdb::KVDB;
 use atlas_common::serialization_helper::SerMsg;
-use atlas_core::executor::DecisionExecutorHandle;
+use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{OrderProtocolLogHelper, PProof};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::ordering_protocol::{
-    BatchedDecision, DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
+    DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
 };
+use atlas_core::ordering_protocol::decision::BatchedDecision;
 use atlas_core::persistent_log::{
     OperationMode, OrderingProtocolLog, PersistableStateTransferProtocol,
 };
@@ -89,7 +90,7 @@ pub trait PersistentLogModeTrait: Send {
     fn init_persistent_log<RQ, EX>(executor: EX) -> PersistentLogMode<RQ>
     where
         RQ: Send + 'static,
-        EX: DecisionExecutorHandle<RQ> + 'static;
+        EX: TDeterministicDecisionExecutorHandle<RQ> + 'static;
 }
 
 ///Strict log mode initializer
@@ -99,7 +100,7 @@ impl PersistentLogModeTrait for StrictPersistentLog {
     fn init_persistent_log<RQ, EX>(executor: EX) -> PersistentLogMode<RQ>
     where
         RQ: Send + 'static,
-        EX: DecisionExecutorHandle<RQ> + 'static,
+        EX: TDeterministicDecisionExecutorHandle<RQ> + 'static,
     {
         let handle = ConsensusBacklog::init_backlog(executor);
 
@@ -114,7 +115,7 @@ impl PersistentLogModeTrait for OptimisticPersistentLog {
     fn init_persistent_log<RQ, EX>(_: EX) -> PersistentLogMode<RQ>
     where
         RQ: Send + 'static,
-        EX: DecisionExecutorHandle<RQ> + 'static,
+        EX: TDeterministicDecisionExecutorHandle<RQ> + 'static,
     {
         PersistentLogMode::Optimistic
     }
@@ -126,7 +127,7 @@ impl PersistentLogModeTrait for NoPersistentLog {
     fn init_persistent_log<RQ, EX>(_: EX) -> PersistentLogMode<RQ>
     where
         RQ: Send + 'static,
-        EX: DecisionExecutorHandle<RQ> + 'static,
+        EX: TDeterministicDecisionExecutorHandle<RQ> + 'static,
     {
         PersistentLogMode::None
     }
@@ -256,7 +257,7 @@ where
         POS: OrderProtocolLogHelper<RQ, OPM, POPT>,
         PSP: PersistableStateTransferProtocol + Send + 'static,
         DLPH: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
-        EX: DecisionExecutorHandle<RQ>,
+        EX: TDeterministicDecisionExecutorHandle<RQ>,
     {
         let mut message_types = POS::message_types();
 

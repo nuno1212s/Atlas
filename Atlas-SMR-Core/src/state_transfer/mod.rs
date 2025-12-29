@@ -90,7 +90,7 @@ pub enum STResult {
     StateTransferRunning,
     /// The message was processed successfully and the ST protocol
     /// is running but there is already a partial state ready to
-    /// be received by the executor
+    /// be received by the execution
     StateTransferReady,
     /// The message was processed successfully and the ST protocol
     /// has finished

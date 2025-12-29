@@ -11,12 +11,13 @@ use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_common::Err;
-use atlas_core::executor::DecisionExecutorHandle;
+use atlas_core::execution::TDecisionExecutorHandle;
 use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
 use atlas_core::ordering_protocol::{
-    Decision, DecisionAD, DecisionInfo, DecisionMetadata, ProtocolConsensusDecision,
+    DecisionAD, DecisionMetadata,
     ProtocolMessage,
 };
+use atlas_core::ordering_protocol::decision::{Decision, DecisionInfo, ProtocolConsensusDecision};
 use atlas_core::persistent_log::OperationMode;
 use atlas_logging_core::decision_log::serialize::OrderProtocolLog;
 use atlas_logging_core::decision_log::{
@@ -52,7 +53,7 @@ where
     decision_log: DecisionLog<RQ, OP::Serialization, OP::PersistableTypes>,
     // A reference to the persistent log
     persistent_log: PL,
-    // An executor handle
+    // An execution handle
     _executor_handle: EX,
 }
 
@@ -142,7 +143,7 @@ where
             OP::PersistableTypes,
             Self::LogSerialization,
         >,
-        EX: DecisionExecutorHandle<RQ>,
+        EX: TDecisionExecutorHandle<RQ>,
         Self: Sized,
     {
         let dec_log = persistent_log
@@ -450,7 +451,7 @@ where
         PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>,
     {
         debug!(
-            "Sending {} decisions to be executed by the executor",
+            "Sending {} decisions to be executed by the execution",
             decisions.len()
         );
 

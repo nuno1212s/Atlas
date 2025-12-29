@@ -38,12 +38,12 @@ use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_logging_core::log_transfer::networking::LogTransferSendNode;
 use atlas_smr_application::serialize::ApplicationData;
 
-use crate::exec::{ReplyNode, RequestType};
 use crate::message::{OrderableMessage, SystemMessage};
 use crate::serialize::{SMRSysMessage, SMRSysMsg, Service, ServiceMessage, StateSys};
 use crate::state_transfer::networking::serialize::StateTransferMessage;
 use crate::state_transfer::networking::StateTransferSendNode;
 use crate::{SMRReply, SMRReq};
+use crate::execution::reply::{ReplyNode, RequestType};
 
 pub mod client;
 pub mod signature_ver;

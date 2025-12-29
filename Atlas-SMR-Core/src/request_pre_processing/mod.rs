@@ -23,7 +23,7 @@ use atlas_core::timeouts::TimeoutID;
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
 use atlas_smr_application::serialize::ApplicationData;
 
-use crate::exec::RequestType;
+use crate::execution::reply::RequestType;
 use crate::message::OrderableMessage;
 use crate::metric::{
     RQ_PP_CLIENT_COUNT_ID, RQ_PP_CLIENT_MSG_ID, RQ_PP_CLONE_RQS_ID, RQ_PP_COLLECT_PENDING_ID,

@@ -2,29 +2,27 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 use tracing::instrument;
 
-use crate::{DVStateInstallHandle, ExecutorHandles, ExecutorReplier};
+use crate::{DVStateInstallHandle, ExecutorReplier};
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::SeqNo;
+use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 use atlas_metrics::metrics::metric_duration;
-use atlas_smr_application::app::{
-    Application, BatchReplies, Reply, Request, UnorderedBatch, UpdateBatch,
-};
+use atlas_smr_application::app::{Application, Reply, Request};
 
-use atlas_smr_application::state::divisible_state::{
-    AppState, AppStateMessage, DivisibleState, DivisibleStateDescriptor, InstallStateMessage,
-};
-use atlas_smr_application::{ExecutionRequest, ExecutorHandle};
-use atlas_smr_core::exec::ReplyNode;
-use atlas_smr_core::SMRReply;
-
+use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
 use crate::metric::EXECUTION_LATENCY_TIME_ID;
 use crate::scalable::sc_execute_unordered_op_batch;
 use crate::single_threaded::{
     st_execute_op_batch, st_execute_unordered_op_batch, UnorderedExecutor,
 };
+use atlas_smr_application::state::divisible_state::{
+    AppState, AppStateMessage, DivisibleState, DivisibleStateDescriptor, InstallStateMessage,
+};
+use atlas_smr_core::execution::reply::ReplyNode;
+use atlas_smr_core::SMRReply;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
@@ -35,7 +33,6 @@ pub struct DivisibleStateExecutor<S, A, NT>
 where
     S: DivisibleState + 'static,
     A: Application<S> + 'static,
-    NT: 'static,
 {
     application: A,
     state: S,
@@ -55,11 +52,11 @@ where
     S: DivisibleState + 'static + Send,
     A: Application<S> + 'static + Send,
 {
-    pub fn init_handle() -> ExecutorHandles<A, S> {
+    pub fn init_handle() -> ExecutorHandle<Request<A, S>> {
         let (tx, rx) =
             channel::sync::new_bounded_sync(EXECUTING_BUFFER, Some("Divisible State ST Exec Work"));
 
-        (ExecutorHandle::new(tx), rx)
+        ExecutorHandle::new(tx, rx)
     }
 
     pub fn init<T>(
@@ -104,7 +101,7 @@ where
         std::thread::Builder::new()
             .name("Executor thread".to_string())
             .spawn(move || {})
-            .expect("Failed to start executor thread");
+            .expect("Failed to start execution thread");
 
         Ok((state_tx, checkpoint_rx))
     }
@@ -112,7 +109,7 @@ where
     pub fn worker<T>(&mut self)
     where
         T: ExecutorReplier + 'static,
-        NT: ReplyNode<SMRReply<A::AppData>>,
+        NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     {
         while let Ok(exec_req) = self.work_rx.recv() {
             match exec_req {
@@ -172,7 +169,7 @@ where
     fn execute_op_batch(
         &mut self,
         batch: UpdateBatch<Request<A, S>>,
-    ) -> (SeqNo, BatchReplies<Reply<A, S>>) {
+    ) -> (SeqNo, ReplyBatch<Reply<A, S>>) {
         st_execute_op_batch(&self.application, &mut self.state, batch)
     }
 
@@ -217,7 +214,7 @@ where
     }
 
     #[instrument(skip_all, fields(seq_no = seq.map(SeqNo::into_u32), requests = batch.len()))]
-    fn execution_finished<T>(&self, seq: Option<SeqNo>, batch: BatchReplies<Reply<A, S>>)
+    fn execution_finished<T>(&self, seq: Option<SeqNo>, batch: ReplyBatch<Reply<A, S>>)
     where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
         T: ExecutorReplier + 'static,
@@ -236,8 +233,8 @@ where
 {
     default fn execute_unordered(
         &mut self,
-        batch: UnorderedBatch<Request<A, S>>,
-    ) -> BatchReplies<Reply<A, S>>
+        batch: UnorderedUpdateBatch<Request<A, S>>,
+    ) -> ReplyBatch<Reply<A, S>>
     where
         A: Application<S>,
     {
@@ -253,8 +250,8 @@ where
 {
     fn execute_unordered(
         &mut self,
-        batch: UnorderedBatch<Request<A, S>>,
-    ) -> BatchReplies<Reply<A, S>>
+        batch: UnorderedUpdateBatch<Request<A, S>>,
+    ) -> ReplyBatch<Reply<A, S>>
     where
         A: Application<S>,
     {

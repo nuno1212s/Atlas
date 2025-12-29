@@ -5,7 +5,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 
 /// Messages to be sent from the state transfer module to the
-/// executor module
+/// execution module
 pub enum InstallStateMessage<S>
 where
     S: DivisibleState,
@@ -18,7 +18,7 @@ where
     Done,
 }
 
-/// Messages to be sent by the executor for the state transfer module, notifying of a given
+/// Messages to be sent by the execution for the state transfer module, notifying of a given
 /// checkpoint being made
 pub enum AppState<S>
 where

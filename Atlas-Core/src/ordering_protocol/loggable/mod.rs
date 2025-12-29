@@ -4,11 +4,11 @@ use atlas_common::error::*;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 
+use crate::ordering_protocol::decision::ProtocolConsensusDecision;
 use crate::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use crate::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use crate::ordering_protocol::{
-    DecisionAD, DecisionMetadata, OrderingProtocol, ProtocolConsensusDecision, ProtocolMessage,
-    ShareableConsensusMessage,
+    DecisionAD, DecisionMetadata, OrderingProtocol, ProtocolMessage, ShareableConsensusMessage,
 };
 
 /// The trait to define the necessary methods and data types for this order protocol

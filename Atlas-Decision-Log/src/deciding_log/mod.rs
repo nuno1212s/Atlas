@@ -3,11 +3,12 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::ordering_protocol::{
-    DecisionAD, DecisionMetadata, ProtocolConsensusDecision, ShareableConsensusMessage,
+    DecisionAD, DecisionMetadata, ShareableConsensusMessage,
 };
 use either::Either;
 use std::collections::VecDeque;
 use tracing::warn;
+use atlas_core::ordering_protocol::decision::ProtocolConsensusDecision;
 
 /// The log for decisions which are currently being decided
 pub struct DecidingLog<RQ, OP, PL>

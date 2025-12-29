@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use tracing::{debug, error, info, trace};
 
-use crate::exec::RequestType;
+use crate::execution::reply::RequestType;
 use crate::message::OrderableMessage;
 use atlas_common::channel::mixed::ChannelMixedTx;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};

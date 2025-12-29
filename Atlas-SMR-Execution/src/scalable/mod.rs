@@ -15,10 +15,12 @@ use crate::scalable::execution_unit::{
 };
 use atlas_common::channel;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_core::execution::requests::{IncrementableUpdateBatch, ReplyBatch, UnorderedUpdateBatch, UpdateBatch, UpdateReply};
 use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_smr_application::app::{
-    Application, BatchReplies, Reply, Request, UnorderedBatch, UpdateBatch, UpdateReply,
+    Application, Reply, Request,
 };
+use crate::crud_states::{AccessType, CRUDApplication, CRUDState};
 
 pub mod divisible_state_exec;
 mod execution_unit;
@@ -27,53 +29,6 @@ pub mod monolithic_exec;
 /// How many threads should we use in the execution threadpool
 const THREAD_POOL_THREADS: u32 = 4;
 
-struct Access {
-    column: String,
-    key: Vec<u8>,
-    access_type: AccessType,
-}
-
-/// Types of accesses to data stored in the state
-#[derive(Copy, Clone, Debug, PartialOrd, PartialEq, Eq, Ord)]
-enum AccessType {
-    Read,
-    Write,
-    Delete,
-}
-
-/// A trait defining the CRUD operations required to be implemented for a given state in order
-/// for it to be utilized as a scalable state.
-pub trait CRUDState: Send {
-    /// Read an entry from the state
-    fn read(&self, column: &str, key: &[u8]) -> Option<Vec<u8>>;
-
-    /// Create a new entry in the state
-    fn create(&mut self, column: &str, key: &[u8], value: &[u8]) -> bool;
-
-    /// Update an entry in the state
-    /// Returns the previous value that was stored in the state
-    fn update(&mut self, column: &str, key: &[u8], value: &[u8]) -> Option<Vec<u8>>;
-
-    /// Delete an entry in the state
-    fn delete(&mut self, column: &str, key: &[u8]) -> Option<Vec<u8>>;
-}
-
-/// A trait defining the methods required for an application to be scalable
-pub trait ScalableApp<S>: Application<S> + Sync
-where
-    S: CRUDState,
-{
-    /// This execution method takes a dynamic reference to the state. This is because
-    /// We will pass it an ExecutionUnit which is not S, so it must handle any state that
-    /// implements CRUDState.
-    /// This operation must yield the same result as the ordered execution of the same request
-    /// for this to correctly function.
-    fn speculatively_execute(
-        &self,
-        state: &mut impl CRUDState,
-        request: Request<Self, S>,
-    ) -> Reply<Self, S>;
-}
 
 /// Execute the given batch in a scalable manner, utilizing a thread pool, performing collision analysis
 fn scalable_execution<'a, A, S>(
@@ -81,21 +36,21 @@ fn scalable_execution<'a, A, S>(
     application: &A,
     state: &mut S,
     batch: UpdateBatch<Request<A, S>>,
-) -> BatchReplies<Reply<A, S>>
+) -> ReplyBatch<Reply<A, S>>
 where
-    A: ScalableApp<S>,
+    A: CRUDApplication<S>,
     S: CRUDState + Sync + Send + 'a,
 {
     let seq_no = batch.sequence_number();
 
     let mut execution_results = BTreeMap::new();
 
-    let mut replies = BatchReplies::with_capacity(batch.len());
+    let mut replies = ReplyBatch::new_with_cap(batch.len());
 
     let (tx, rx) = channel::sync::new_bounded_sync(batch.len(), None::<String>);
 
     let updates = batch
-        .into_inner()
+        .into_inner().1
         .into_iter()
         .enumerate()
         .collect::<Vec<_>>();
@@ -119,8 +74,6 @@ where
                     .unwrap()
                     .iter()
                     .for_each(|(pos, request)| {
-                        let request = request.clone();
-
                         let mut exec_unit = ExecutionUnit {
                             seq_no,
                             position_in_batch: *pos,
@@ -135,10 +88,8 @@ where
                         tx.send((
                             *pos,
                             exec_unit.complete(),
-                            UpdateReply::init(
-                                request.from(),
-                                request.session_id(),
-                                request.operation_id(),
+                            UpdateReply::new(
+                                request.info().clone(),
                                 reply,
                             ),
                         ))
@@ -165,9 +116,7 @@ where
         let app_reply = application.update(state, update.operation().clone());
 
         replies.add(
-            update.from(),
-            update.session_id(),
-            update.operation_id(),
+            update.info().clone(),
             app_reply,
         );
     }
@@ -190,26 +139,30 @@ pub(super) fn scalable_unordered_execution<A, S>(
     thread_pool: &mut ThreadPool,
     application: &A,
     state: &S,
-    batch: UnorderedBatch<Request<A, S>>,
-) -> BatchReplies<Reply<A, S>>
+    batch: UnorderedUpdateBatch<Request<A, S>>,
+) -> ReplyBatch<Reply<A, S>>
 where
     A: Application<S>,
     S: Send + Sync,
 {
+    let batch_size = batch.len();
+    
     thread_pool.install(move || {
-        let replies = batch
+        batch
             .into_inner()
             .into_par_iter()
-            .map(|request| {
-                let (from, session, op_id, op) = request.into_inner();
+            .fold(ReplyBatch::default, |mut reply_batch, request| {
+                let (info, op) = request.into_inner();
 
                 let reply = speculatively_execute_unordered(application, state, op);
 
-                UpdateReply::init(from, session, op_id, reply)
+                reply_batch.add(info, reply);
+                
+                reply_batch
+            }).reduce(|| ReplyBatch::new_with_cap(batch_size), |mut acc, rb| {
+                acc.append(&mut rb.into_inner());
+                acc
             })
-            .collect::<Vec<_>>();
-
-        replies.into()
     })
 }
 
@@ -220,21 +173,21 @@ where
 {
     for unit in execution_units {
         unit.alterations().iter().for_each(|alteration| {
-            match alteration.access_type {
+            match alteration.access_type() {
                 AccessType::Read => {
                     // Ignore read accesses as they do not affect the state
                 }
                 AccessType::Write => {
                     //TODO: If this repeats various write accesses to the same key,
                     // Reduce them all into a single access
-                    if let Some(value) = unit.cache().get(&alteration.column) {
-                        if let Some(value) = value.get(&alteration.key) {
-                            state.update(&alteration.column, &alteration.key, value);
+                    if let Some(value) = unit.cache().get(alteration.column()) {
+                        if let Some(value) = value.get(alteration.key()) {
+                            state.update(alteration.column(), alteration.key(), value);
                         }
                     }
                 }
                 AccessType::Delete => {
-                    state.delete(&alteration.column, &alteration.key);
+                    state.delete(alteration.column(), alteration.key());
                 }
             }
         });
@@ -259,8 +212,8 @@ pub(crate) fn sc_execute_unordered_op_batch<A, S>(
     thread_pool: &mut ThreadPool,
     application: &A,
     state: &S,
-    batch: UnorderedBatch<Request<A, S>>,
-) -> BatchReplies<Reply<A, S>>
+    batch: UnorderedUpdateBatch<Request<A, S>>,
+) -> ReplyBatch<Reply<A, S>>
 where
     A: Application<S>,
     S: Send + Sync,
@@ -281,9 +234,9 @@ fn sc_execute_op_batch<A, S>(
     application: &A,
     state: &mut S,
     batch: UpdateBatch<Request<A, S>>,
-) -> (SeqNo, BatchReplies<Reply<A, S>>)
+) -> (SeqNo, ReplyBatch<Reply<A, S>>)
 where
-    A: ScalableApp<S>,
+    A: CRUDApplication<S>,
     S: CRUDState + Send + Sync,
 {
     let seq_no = batch.sequence_number();
@@ -297,26 +250,4 @@ where
     metric_increment(OPERATIONS_EXECUTED_PER_SECOND_ID, Some(operations));
 
     (seq_no, reply_batch)
-}
-
-impl Access {
-    fn init(column: &str, key: Vec<u8>, access_type: AccessType) -> Self {
-        Self {
-            column: column.to_string(),
-            key,
-            access_type,
-        }
-    }
-}
-
-impl AccessType {
-    fn is_collision(&self, access_type: &AccessType) -> bool {
-        match (self, access_type) {
-            // Write - Anything is a collision
-            (AccessType::Write, _) | (_, AccessType::Write) => true,
-            // Delete - Anything is also a collision
-            (AccessType::Delete, _) | (_, AccessType::Delete) => true,
-            (_, _) => false,
-        }
-    }
 }

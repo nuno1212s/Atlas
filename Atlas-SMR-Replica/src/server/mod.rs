@@ -10,6 +10,25 @@ use itertools::Itertools;
 use thiserror::Error;
 use tracing::{debug, error, info, instrument, trace};
 
+use crate::config::ReplicaConfig;
+use crate::metric::{
+    OP_MESSAGES_PROCESSED_ID, ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID,
+    PASSED_TO_DECISION_LOG, RECEIVED_FROM_DECISION_LOG, REPLICA_ORDERED_RQS_PROCESSED_ID,
+    REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID, TIMEOUT_RECEIVED_COUNT_ID,
+};
+use crate::persistent_log::SMRPersistentLog;
+use crate::server::decision_log::{
+    DLWorkMessage, DecisionLogHandle, DecisionLogManager, DecisionLogWorkMessage,
+    LogTransferWorkMessage, ReplicaWorkResponses,
+};
+use crate::server::reconfig::{
+    IterableProtocolRes, PermissionedProtocolHandling, QuorumReconfig,
+    ReconfigurableProtocolHandling,
+};
+use crate::server::state_transfer::{
+    StateTransferProgress, StateTransferThreadHandle, StateTransferWorkMessage,
+};
+use crate::server::timeout_handler::TimeoutHandler;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
@@ -23,11 +42,11 @@ use atlas_communication::reconfiguration::{
     ReconfigurationNetworkCommunication,
 };
 use atlas_communication::stub::RegularNetworkStub;
-use atlas_core::executor::DecisionExecutorHandle;
+use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
 use atlas_core::messages::create_rq_correlation_id_from_info;
 use atlas_core::metric::RQ_BATCH_TRACKING_ID;
+use atlas_core::ordering_protocol::decision::DecisionInfo;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
-use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::ordering_protocol::permissioned::{
     VTMsg, VTPollResult, VTResult, ViewTransferProtocol, ViewTransferProtocolInitializer,
@@ -36,9 +55,8 @@ use atlas_core::ordering_protocol::reconfigurable_order_protocol::{
     ReconfigurableOrderProtocol, ReconfigurationAttemptResult,
 };
 use atlas_core::ordering_protocol::{
-    DecisionInfo, DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OPResult,
-    OrderingProtocol, OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolMessage,
-    ShareableMessage, View,
+    DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OPResult, OrderingProtocol,
+    OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolMessage, ShareableMessage, View,
 };
 use atlas_core::persistent_log::OperationMode;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
@@ -63,7 +81,7 @@ use atlas_metrics::metrics::{
 };
 use atlas_persistent_log::{NoPersistentLog, PersistentLogModeTrait};
 use atlas_smr_application::serialize::ApplicationData;
-use atlas_smr_core::exec::WrappedExecHandle;
+use atlas_smr_core::execution::state_management::TDeterministicExecutorStateHandle;
 use atlas_smr_core::message::SystemMessage;
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::request_pre_processing::{
@@ -72,27 +90,13 @@ use atlas_smr_core::request_pre_processing::{
 use atlas_smr_core::serialize::ServiceMessage;
 use atlas_smr_core::state_transfer::{STResult, StateTransferProtocol};
 use atlas_smr_core::SMRReq;
-
-use crate::config::ReplicaConfig;
-use crate::metric::{
-    OP_MESSAGES_PROCESSED_ID, ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID,
-    PASSED_TO_DECISION_LOG, RECEIVED_FROM_DECISION_LOG, REPLICA_ORDERED_RQS_PROCESSED_ID,
-    REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID, TIMEOUT_RECEIVED_COUNT_ID,
-};
-use crate::persistent_log::SMRPersistentLog;
-use crate::server::decision_log::{
-    DLWorkMessage, DecisionLogHandle, DecisionLogManager, DecisionLogWorkMessage,
-    LogTransferWorkMessage, ReplicaWorkResponses,
-};
-use crate::server::state_transfer::{
-    StateTransferProgress, StateTransferThreadHandle, StateTransferWorkMessage,
-};
-use crate::server::timeout_handler::TimeoutHandler;
+use reconfig::MockView;
 
 mod decision_log;
 pub mod divisible_state_server;
 pub mod follower_handling;
 pub mod monolithic_server;
+mod reconfig;
 pub mod state_transfer;
 mod timeout_handler;
 mod unordered_rq_handler;
@@ -107,8 +111,6 @@ pub const REPLICA_WAIT_TIME: Duration = Duration::from_millis(1000);
 /// and a new log checkpoint is initiated.
 /// TODO: Move this to an env variable as it can be highly dependent on the service implemented on top of it
 pub const CHECKPOINT_PERIOD: u32 = 1000;
-
-pub type Exec<D: ApplicationData> = WrappedExecHandle<D::Request>;
 
 type ViewType<
     D: ApplicationData,
@@ -153,7 +155,7 @@ pub(crate) enum LogTransferState {
 }
 
 #[allow(clippy::type_complexity)]
-pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX>
 where
     NT: SMRReplicaNetworkNode<
             RP::InformationProvider,
@@ -194,7 +196,7 @@ where
     // The pre-processor handle to the decision log
     rq_pre_processor: RequestPreProcessor<SMRReq<D>>,
     timeouts: TimeoutsHandle,
-    executor_handle: WrappedExecHandle<D::Request>,
+    executor_handle: EX,
     // The networking layer for a Node in the network (either Client or Replica)
     node: Arc<NT>,
     // The handle to the execution and timeouts handler
@@ -220,52 +222,8 @@ where
     st: FPhantom<(S, ST, DL, LT)>,
 }
 
-/// This is used to keep track of the node that is currently
-/// attempting to join the server
-pub struct QuorumReconfig {
-    node_pending_join: Option<NodeId>,
-}
-
-pub enum IterableProtocolRes {
-    ReRun,
-    Receive,
-    Continue,
-}
-
-/// The trait with methods specific to reconfigurable protocol handle
-/// This is then combined with specialization in order to maintain
-/// optional support for this type of protocols
-pub trait ReconfigurableProtocolHandling {
-    fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()>;
-
-    fn attempt_to_join_quorum(&mut self) -> Result<()>;
-}
-
-/// Trait with methods specific to reconfigurable protocol handle
-/// This is then combined with specialization in order to provide
-/// optional support for this type of protocols
-pub(crate) trait PermissionedProtocolHandling<D, VT, OP, NT>
-where
-    OP: OrderingProtocol<SMRReq<D>>,
-    VT: ViewTransferProtocol<OP>,
-    D: ApplicationData,
-{
-    type View: NetworkView + 'static;
-
-    fn view(&self) -> Self::View;
-
-    fn run_view_transfer(&mut self) -> Result<()>;
-
-    fn iterate_view_transfer_protocol(&mut self) -> Result<IterableProtocolRes>;
-
-    fn handle_view_transfer_msg(
-        &mut self,
-        msg: StoredMessage<VTMsg<VT::Serialization>>,
-    ) -> Result<()>;
-}
-
 #[allow(clippy::type_complexity)]
-impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX> Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX>
 where
     RP: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
@@ -284,10 +242,11 @@ where
         ST::Serialization,
     >,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
+    EX: TDeterministicDecisionExecutorHandle<SMRReq<D>> + TDeterministicExecutorStateHandle<SMRReq<D>>,
 {
     async fn bootstrap(
         cfg: ReplicaConfig<RP, S, D, OP, DL, ST, LT, VT, NT, PL>,
-        executor: Exec<D>,
+        executor: EX,
         state: StateTransferThreadHandle<
             <Self as PermissionedProtocolHandling<D, VT, OP, NT>>::View,
         >,
@@ -299,8 +258,8 @@ where
             NT::ProtocolNode,
         >,
         VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
-        LT: LogTransferProtocolInitializer<SMRReq<D>, OP, DL, PL, Exec<D>, NT::ProtocolNode>,
-        DL: DecisionLogInitializer<SMRReq<D>, OP, PL, Exec<D>>,
+        LT: LogTransferProtocolInitializer<SMRReq<D>, OP, DL, PL, EX, NT::ProtocolNode>,
+        DL: DecisionLogInitializer<SMRReq<D>, OP, PL, EX>,
     {
         let ReplicaConfig {
             db_path,
@@ -440,9 +399,7 @@ where
         let replica = Self {
             execution_state: ExecutionPhase::ViewTransferProtocol,
             transfer_states: TransferPhase::NotRunning,
-            quorum_reconfig_data: QuorumReconfig {
-                node_pending_join: None,
-            },
+            quorum_reconfig_data: QuorumReconfig::default(),
             ordering_protocol,
             view_transfer_protocol,
             decision_log_handle: decision_handle,
@@ -610,7 +567,7 @@ where
         state_thread_handle: StateTransferThreadHandle<
             <Self as PermissionedProtocolHandling<D, VT, OP, NT>>::View,
         >,
-        executor: Exec<D>,
+        executor: EX,
     ) -> Result<
         DecisionLogHandle<
             ViewType<D, VT, OP, NT, Self>,
@@ -621,8 +578,8 @@ where
         >,
     >
     where
-        LT: LogTransferProtocolInitializer<SMRReq<D>, OP, DL, PL, Exec<D>, NT::ProtocolNode>,
-        DL: DecisionLogInitializer<SMRReq<D>, OP, PL, Exec<D>>,
+        LT: LogTransferProtocolInitializer<SMRReq<D>, OP, DL, PL, EX, NT::ProtocolNode>,
+        DL: DecisionLogInitializer<SMRReq<D>, OP, PL, EX>,
     {
         let (rq, _) = ordered_rq_handles.into();
 
@@ -634,6 +591,7 @@ where
             LT,
             NT::ProtocolNode,
             PL,
+            EX,
         >::initialize_decision_log_mngt(
             (dl_config, lt_config),
             persistent_log,
@@ -647,14 +605,14 @@ where
 
     fn initialize_unordered_rq_bridge(
         rq_handle: UnorderedRqHandles<SMRReq<D>>,
-        executor: Exec<D>,
+        executor: EX,
     ) -> Result<()> {
         unordered_rq_handler::start_unordered_rq_thread::<D>(rq_handle, executor.clone())?;
 
         Ok(())
     }
 
-    fn initialize_persistent_log<LM, K>(executor: Exec<D>, db_path: K) -> Result<PL>
+    fn initialize_persistent_log<LM, K>(executor: EX, db_path: K) -> Result<PL>
     where
         LM: PersistentLogModeTrait,
         K: AsRef<Path>,
@@ -662,7 +620,7 @@ where
         ST: 'static,
         OP: 'static,
     {
-        PL::init_log::<K, LM, OP, ST, DL>(executor.clone(), db_path)
+        PL::init_log::<K, LM, OP, ST, DL, EX>(executor.clone(), db_path)
     }
 
     fn id(&self) -> NodeId {
@@ -1112,11 +1070,9 @@ where
             match to_batch {
                 LoggedDecisionValue::Execute(requests) => match checkpoint {
                     ExecutionResult::Nil => self.executor_handle.queue_update(requests)?,
-                    ExecutionResult::BeginCheckpoint => {
-                        self.executor_handle.queue_update_and_get_appstate(
-                            WrappedExecHandle::transform_update_batch(requests),
-                        )?
-                    }
+                    ExecutionResult::BeginCheckpoint => self
+                        .executor_handle
+                        .queue_update_and_get_appstate(requests)?,
                 },
                 LoggedDecisionValue::ExecutionNotNeeded => {
                     // When the execution is handled
@@ -1415,7 +1371,7 @@ where
 
                             info!("{:?} // State transfer protocol and log transfer protocol are in sync. Received {:?} state and {:?} - {:?} log", self.id(), *state_transfer_seq, * initial_seq, * final_seq);
 
-                            // We now have to report to the decision log that he can send the executions to the executor
+                            // We now have to report to the decision log that he can send the executions to the execution
                             let decision_log_work = DLWorkMessage::init_log_transfer_message(
                                 self.view(),
                                 LogTransferWorkMessage::TransferDone(to_execute_seq, *final_seq),
@@ -1598,24 +1554,8 @@ where
     }
 }
 
-impl QuorumReconfig {
-    /// Attempt to register the node
-    fn append_pending_node_join(&mut self, node: NodeId) -> bool {
-        if self.node_pending_join.is_none() {
-            self.node_pending_join = Some(node);
-            true
-        } else {
-            false
-        }
-    }
-
-    fn pop_pending_node_join(&mut self) -> Option<NodeId> {
-        self.node_pending_join.take()
-    }
-}
-
-impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, VT, OP, NT>
-    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX> PermissionedProtocolHandling<D, VT, OP, NT>
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX>
 where
     D: ApplicationData + 'static,
     OP: LoggableOrderProtocol<SMRReq<D>>,
@@ -1662,8 +1602,8 @@ where
     }
 }
 
-impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, VT, OP, NT>
-    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX> PermissionedProtocolHandling<D, VT, OP, NT>
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX>
 where
     D: ApplicationData + 'static,
     OP: LoggableOrderProtocol<SMRReq<D>> + PermissionedOrderingProtocol + 'static,
@@ -1683,6 +1623,7 @@ where
             VT::Serialization,
             ST::Serialization,
         > + 'static,
+    EX: TDeterministicDecisionExecutorHandle<SMRReq<D>> + TDeterministicExecutorStateHandle<SMRReq<D>>,
 {
     type View = View<OP::PermissionedSerialization>;
 
@@ -1755,8 +1696,8 @@ where
 }
 
 /// Default protocol with no reconfiguration support handling
-impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling
-    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX> ReconfigurableProtocolHandling
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX>
 where
     RP: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
@@ -1776,6 +1717,7 @@ where
         > + 'static,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + 'static,
+    EX: TDeterministicDecisionExecutorHandle<SMRReq<D>> + TDeterministicExecutorStateHandle<SMRReq<D>>,
 {
     default fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
         self.reply_to_quorum_entrance_request(node, Either::Right(AlterationFailReason::Failed))
@@ -1787,8 +1729,8 @@ where
 }
 
 /// Implement reconfigurable order protocol support
-impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling
-    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX> ReconfigurableProtocolHandling
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX>
 where
     RP: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
@@ -1811,6 +1753,7 @@ where
         > + 'static,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + 'static,
+    EX: TDeterministicDecisionExecutorHandle<SMRReq<D>>+ TDeterministicExecutorStateHandle<SMRReq<D>>,
 {
     fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
         match self.execution_state {
@@ -1873,37 +1816,6 @@ where
         };
 
         Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct MockView(Vec<NodeId>);
-
-impl Orderable for MockView {
-    fn sequence_number(&self) -> SeqNo {
-        SeqNo::ZERO
-    }
-}
-
-impl NetworkView for MockView {
-    fn primary(&self) -> NodeId {
-        self.0[0]
-    }
-
-    fn quorum(&self) -> usize {
-        (self.n() - 1) / 2
-    }
-
-    fn quorum_members(&self) -> &Vec<NodeId> {
-        &self.0
-    }
-
-    fn f(&self) -> usize {
-        (self.n() - 1) / 3
-    }
-
-    fn n(&self) -> usize {
-        self.0.len()
     }
 }
 

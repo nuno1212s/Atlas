@@ -2,8 +2,9 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::ordering_protocol::{
-    DecisionAD, DecisionMetadata, ProtocolConsensusDecision, ShareableConsensusMessage,
+    DecisionAD, DecisionMetadata, ShareableConsensusMessage,
 };
+use atlas_core::ordering_protocol::decision::ProtocolConsensusDecision;
 use atlas_logging_core::decision_log::LoggingDecision;
 
 /// A struct to store the ongoing decision known parameters

@@ -6,12 +6,14 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::SeqNo;
 use atlas_common::persistentdb::KVDB;
+use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{OrderProtocolLogHelper, PProof};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::ordering_protocol::{
-    BatchedDecision, DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
+    DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
 };
+use atlas_core::ordering_protocol::decision::BatchedDecision;
 use atlas_core::persistent_log::{
     OperationMode, OrderingProtocolLog, PersistableStateTransferProtocol,
 };
@@ -22,7 +24,6 @@ use atlas_logging_core::decision_log::{
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::divisible_state::DivisibleState;
-use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::persistent_log::DivisibleStateLog;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::SMRReq;
@@ -68,8 +69,8 @@ where
     LS: DecisionLogMessage<SMRReq<D>, OPM, POPT> + 'static,
     STM: StateTransferMessage + 'static,
 {
-    fn init_div_log<K, T, POS, PSP, DLPH>(
-        executor: WrappedExecHandle<D::Request>,
+    fn init_div_log<K, T, POS, PSP, DLPH, EX>(
+        executor: EX,
         db_path: K,
     ) -> Result<Self>
     where
@@ -78,6 +79,7 @@ where
         POS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT>,
         PSP: PersistableStateTransferProtocol + Send + 'static,
         DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
+        EX: TDeterministicDecisionExecutorHandle<SMRReq<D>>
     {
         let mut message_types = POS::message_types();
 

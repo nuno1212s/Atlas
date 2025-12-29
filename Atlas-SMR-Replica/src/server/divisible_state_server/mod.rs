@@ -14,7 +14,8 @@ use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolI
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::Application;
 use atlas_smr_application::state::divisible_state::DivisibleState;
-use atlas_smr_core::exec::WrappedExecHandle;
+use atlas_smr_core::execution::{TExecutor, WrappedExecHandle};
+use atlas_smr_core::execution::executors::divisible_state::TDivisibleStateExecutor;
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::DivisibleStateLog;
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
@@ -22,14 +23,13 @@ use atlas_smr_core::state_transfer::divisible_state::{
     DivisibleStateTransfer, DivisibleStateTransferInitializer,
 };
 use atlas_smr_core::SMRReq;
-use atlas_smr_execution::TDivisibleStateExecutor;
 
 use crate::config::DivisibleStateReplicaConfig;
 use crate::metric::RUN_LATENCY_TIME_ID;
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::divisible_state_server::state_transfer::DivStateTransfer;
 use crate::server::state_transfer::init_state_transfer_handles;
-use crate::server::{Exec, PermissionedProtocolHandling, Replica};
+use crate::server::{PermissionedProtocolHandling, Replica};
 
 mod state_transfer;
 
@@ -37,6 +37,7 @@ pub struct DivStReplica<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL>
 where
     RP: ReconfigurationProtocol + 'static,
     S: DivisibleState + 'static,
+    SE: TExecutor<A, S>,
     A: Application<S> + Send,
     OP: LoggableOrderProtocol<SMRReq<A::AppData>>,
     LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL>,
@@ -58,7 +59,7 @@ where
 {
     p: PhantomData<fn() -> (A, SE)>,
     /// The inner replica object, responsible for the general replica things
-    inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>,
+    inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL, WrappedExecHandle<SE::ExecutionHandle>>,
 }
 
 impl<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL>
@@ -101,11 +102,12 @@ where
             OP,
             DL,
             PL,
-            Exec<A::AppData>,
+            WrappedExecHandle<SE::ExecutionHandle>,
             NT::ProtocolNode,
         >,
-        DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>>,
+        DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, WrappedExecHandle<SE::ExecutionHandle>>,
         ST: DivisibleStateTransferInitializer<S, NT::StateTransferNode, PL>,
+        
     {
         let DivisibleStateReplicaConfig {
             service,
@@ -115,24 +117,20 @@ where
 
         let (handle, inner_handle) = init_state_transfer_handles();
 
-        let (executor_handle, executor_receiver) = SE::init_handle();
+        let executor_handle = SE::init_handle();
 
-        let executor_handle = WrappedExecHandle(executor_handle);
+        let wrapped_executor = WrappedExecHandle(executor_handle.clone());
 
-        let inner_replica = Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>::bootstrap(
-            replica_config,
-            executor_handle.clone(),
-            handle,
-        )
+        let inner_replica = Replica::bootstrap(replica_config, wrapped_executor, handle)
         .await?;
 
         let node = inner_replica.node.clone();
 
         let (state_tx, checkpoint_rx) =
-            SE::init(executor_receiver, None, service, node.app_node().clone())?;
+            SE::init(executor_handle, None, service, node.app_node().clone())?;
 
         DivStateTransfer
-            ::<<Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL> as PermissionedProtocolHandling<A::AppData, VT, OP, NT>>::View,
+            ::<<Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL, WrappedExecHandle<SE::ExecutionHandle>> as PermissionedProtocolHandling<A::AppData, VT, OP, NT>>::View,
             S, NT::StateTransferNode, PL, ST>
         ::init_state_transfer_thread(state_tx, checkpoint_rx, st_config,
                                      node.state_transfer_node().clone(),

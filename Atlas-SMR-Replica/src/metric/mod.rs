@@ -45,7 +45,7 @@ pub(crate) const REPLICA_INTERNAL_PROCESS_TIME_ID: usize = 511;
 pub(crate) const REPLICA_TAKE_FROM_NETWORK: &str = "REPLICA_TAKE_FROM_NETWORK";
 pub(crate) const REPLICA_TAKE_FROM_NETWORK_ID: usize = 512;
 
-/// How many ordered operations are we processing (and pushing) to the executor
+/// How many ordered operations are we processing (and pushing) to the execution
 pub(crate) const REPLICA_ORDERED_RQS_PROCESSED: &str = "REPLICA_ORDERED_RQS_PROCESSED";
 pub(crate) const REPLICA_ORDERED_RQS_PROCESSED_ID: usize = 513;
 
@@ -65,7 +65,7 @@ pub(crate) const DEC_LOG_WORK_QUEUE_SIZE_ID: usize = 506;
 pub(crate) const REPLICA_PROTOCOL_RESP_PROCESS_TIME: &str = "REPLICA_PROTOCOL_RESP_PROCESS_TIME";
 pub(crate) const REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID: usize = 515;
 
-/// How many unordered operations are we pushing to the executor
+/// How many unordered operations are we pushing to the execution
 pub(crate) const UNORDERED_OPS_PER_SECOND: &str = "UNORDERED_OPS_PUSHED";
 pub(crate) const UNORDERED_OPS_PER_SECOND_ID: usize = 516;
 

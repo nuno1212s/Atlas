@@ -5,10 +5,11 @@ use crate::metric::{
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_smr_application::app::{
-    Application, BatchReplies, Reply, Request, UnorderedBatch, UpdateBatch,
+    Application, Reply, Request,
 };
 use std::time::Instant;
 use tracing::instrument;
+use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 
 pub mod divisible_state_exec;
 pub mod monolithic_executor;
@@ -16,8 +17,8 @@ pub mod monolithic_executor;
 trait UnorderedExecutor<A, S> {
     fn execute_unordered(
         &mut self,
-        batch: UnorderedBatch<Request<A, S>>,
-    ) -> BatchReplies<Reply<A, S>>
+        batch: UnorderedUpdateBatch<Request<A, S>>,
+    ) -> ReplyBatch<Reply<A, S>>
     where
         A: Application<S>;
 }
@@ -27,7 +28,7 @@ fn st_execute_op_batch<A, S>(
     application: &A,
     state: &mut S,
     batch: UpdateBatch<Request<A, S>>,
-) -> (SeqNo, BatchReplies<Reply<A, S>>)
+) -> (SeqNo, ReplyBatch<Reply<A, S>>)
 where
     A: Application<S>,
 {
@@ -48,8 +49,8 @@ where
 fn st_execute_unordered_op_batch<A, S>(
     application: &A,
     state: &S,
-    batch: UnorderedBatch<Request<A, S>>,
-) -> BatchReplies<Reply<A, S>>
+    batch: UnorderedUpdateBatch<Request<A, S>>,
+) -> ReplyBatch<Reply<A, S>>
 where
     A: Application<S>,
 {
