@@ -1,27 +1,28 @@
-use crate::MonStateInstallHandle;
 use crate::metric::EXECUTION_LATENCY_TIME_ID;
 use crate::scalable::sc_execute_unordered_op_batch;
 use crate::single_threaded::{
-    UnorderedExecutor, st_execute_op_batch, st_execute_unordered_op_batch,
+    st_execute_op_batch, st_execute_unordered_op_batch, UnorderedExecutor,
 };
+use crate::{ExecutorReplier, MonStateInstallHandle};
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_metrics::metrics::metric_duration;
-use atlas_smr_application::app::{Application, Reply, Request};
+use atlas_smr_application::app::{
+    Application, Reply, Request,
+};
 use atlas_smr_application::state::monolithic_state::{
     AppStateMessage, InstallStateMessage, MonolithicState,
 };
-use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::ReplyNode;
+use atlas_smr_core::SMRReply;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 
-use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
-use crate::repliers::ExecutorReplier;
-use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 use tracing::{info, instrument};
+use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
+use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;

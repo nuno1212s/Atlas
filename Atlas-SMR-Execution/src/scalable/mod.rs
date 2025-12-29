@@ -3,24 +3,24 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use rayon::ThreadPool;
 use rayon::prelude::*;
+use rayon::ThreadPool;
 
-use crate::crud_states::{AccessType, CRUDApplication, CRUDState};
 use crate::metric::{
     EXECUTION_TIME_TAKEN_ID, OPERATIONS_EXECUTED_PER_SECOND_ID, UNORDERED_EXECUTION_TIME_TAKEN_ID,
     UNORDERED_OPS_PER_SECOND_ID,
 };
 use crate::scalable::execution_unit::{
-    CollisionState, ExecutionResult, ExecutionUnit, progress_collision_state,
+    progress_collision_state, CollisionState, ExecutionResult, ExecutionUnit,
 };
 use atlas_common::channel;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_core::execution::requests::{
-    IncrementableUpdateBatch, ReplyBatch, UnorderedUpdateBatch, UpdateBatch, UpdateReply,
-};
+use atlas_core::execution::requests::{IncrementableUpdateBatch, ReplyBatch, UnorderedUpdateBatch, UpdateBatch, UpdateReply};
 use atlas_metrics::metrics::{metric_duration, metric_increment};
-use atlas_smr_application::app::{Application, Reply, Request};
+use atlas_smr_application::app::{
+    Application, Reply, Request,
+};
+use crate::crud_states::{AccessType, CRUDApplication, CRUDState};
 
 pub mod divisible_state_exec;
 mod execution_unit;
@@ -28,6 +28,7 @@ pub mod monolithic_exec;
 
 /// How many threads should we use in the execution threadpool
 const THREAD_POOL_THREADS: u32 = 4;
+
 
 /// Execute the given batch in a scalable manner, utilizing a thread pool, performing collision analysis
 fn scalable_execution<'a, A, S>(
@@ -49,8 +50,7 @@ where
     let (tx, rx) = channel::sync::new_bounded_sync(batch.len(), None::<String>);
 
     let updates = batch
-        .into_inner()
-        .1
+        .into_inner().1
         .into_iter()
         .enumerate()
         .collect::<Vec<_>>();
@@ -88,7 +88,10 @@ where
                         tx.send((
                             *pos,
                             exec_unit.complete(),
-                            UpdateReply::new(request.info().clone(), reply),
+                            UpdateReply::new(
+                                request.info().clone(),
+                                reply,
+                            ),
                         ))
                         .unwrap();
                     });
@@ -112,7 +115,10 @@ where
         // This is guaranteed because the collisions is an ordered set
         let app_reply = application.update(state, update.operation().clone());
 
-        replies.add(update.info().clone(), app_reply);
+        replies.add(
+            update.info().clone(),
+            app_reply,
+        );
     }
 
     let mut to_apply = Vec::with_capacity(execution_results.len());
@@ -153,14 +159,10 @@ where
                 reply_batch.add(info, reply);
 
                 reply_batch
+            }).reduce(|| ReplyBatch::new_with_cap(batch_size), |mut acc, rb| {
+                acc.append(&mut rb.into_inner());
+                acc
             })
-            .reduce(
-                || ReplyBatch::new_with_cap(batch_size),
-                |mut acc, rb| {
-                    acc.append(&mut rb.into_inner());
-                    acc
-                },
-            )
     })
 }
 
@@ -178,10 +180,10 @@ where
                 AccessType::Write => {
                     //TODO: If this repeats various write accesses to the same key,
                     // Reduce them all into a single access
-                    if let Some(value) = unit.cache().get(alteration.column())
-                        && let Some(value) = value.get(alteration.key())
-                    {
-                        state.update(alteration.column(), alteration.key(), value);
+                    if let Some(value) = unit.cache().get(alteration.column()) {
+                        if let Some(value) = value.get(alteration.key()) {
+                            state.update(alteration.column(), alteration.key(), value);
+                        }
                     }
                 }
                 AccessType::Delete => {

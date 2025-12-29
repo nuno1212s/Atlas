@@ -1,6 +1,6 @@
+use std::ops::{Deref, DerefMut};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use std::ops::{Deref, DerefMut};
 
 #[derive(Clone, Debug)]
 pub enum UpdateInfo {
@@ -12,16 +12,20 @@ pub enum UpdateInfo {
 }
 
 impl UpdateInfo {
-    pub fn new_session_based(from: NodeId, session_number: SeqNo, sequence_number: SeqNo) -> Self {
+    pub fn new_session_based(
+        from: NodeId,
+        session_number: SeqNo,
+        sequence_number: SeqNo,
+    ) -> Self {
         UpdateInfo::SessionBased {
             from,
             session_number,
             sequence_number,
         }
     }
+
 }
 
-#[derive(Debug, Clone)]
 pub struct Update<O> {
     info: UpdateInfo,
     operation: O,
@@ -68,7 +72,6 @@ impl<R> UpdateReply<R> {
     }
 }
 
-#[derive(Clone)]
 pub struct UpdateBatch<O> {
     seq_no: SeqNo,
     updates: Vec<Update<O>>,
@@ -126,7 +129,7 @@ pub struct ReplyBatch<R> {
 }
 
 impl<R> ReplyBatch<R> {
-    pub fn new_with_cap(cap: usize) -> Self {
+    pub fn new_with_cap( cap: usize) -> Self {
         Self {
             replies: Vec::with_capacity(cap),
         }
@@ -141,7 +144,7 @@ impl<R> ReplyBatch<R> {
         self.replies.is_empty()
     }
 
-    pub fn into_inner(self) -> Vec<UpdateReply<R>> {
+    pub fn into_inner(self) ->  Vec<UpdateReply<R>> {
         self.replies
     }
 }
@@ -173,12 +176,6 @@ impl<R> Default for ReplyBatch<R> {
         Self {
             replies: Vec::new(),
         }
-    }
-}
-
-impl<R> From<Vec<UpdateReply<R>>> for ReplyBatch<R> {
-    fn from(replies: Vec<UpdateReply<R>>) -> Self {
-        Self { replies }
     }
 }
 
@@ -232,5 +229,7 @@ impl<O> Deref for UnorderedUpdateBatch<O> {
 }
 
 pub trait IncrementableUpdateBatch<O> {
+
     fn add(&mut self, update_info: UpdateInfo, operation: O);
+
 }

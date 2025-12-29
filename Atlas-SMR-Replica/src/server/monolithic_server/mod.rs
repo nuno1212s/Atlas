@@ -1,32 +1,32 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::error;
 
 use atlas_common::error::*;
 use atlas_common::phantom::FPhantom;
-use atlas_core::ordering_protocol::loggable::TLoggableOrderProtocol;
+use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::ordering_protocol::permissioned::{
     ViewTransferProtocol, ViewTransferProtocolInitializer,
 };
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_logging_core::decision_log::{DecisionLogInitializer, TDecisionLog};
+use atlas_logging_core::decision_log::{DecisionLog, DecisionLogInitializer};
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::Application;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
-use atlas_smr_core::SMRReq;
+use atlas_smr_core::execution::{TExecutor, WrappedExecHandle};
 use atlas_smr_core::execution::executors::monolithic_state::TMonolithicStateExecutor;
-use atlas_smr_core::execution::{SMRExecWrapper, TExecutor};
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::MonolithicStateLog;
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
 use atlas_smr_core::state_transfer::monolithic_state::{
     MonolithicStateTransfer, MonolithicStateTransferInitializer,
 };
+use atlas_smr_core::SMRReq;
 
 use crate::config::MonolithicStateReplicaConfig;
 use crate::metric::RUN_LATENCY_TIME_ID;
@@ -44,8 +44,8 @@ where
     S: MonolithicState + 'static,
     A: Application<S> + Send,
     ME: TExecutor<A, S>,
-    OP: TLoggableOrderProtocol<SMRReq<A::AppData>>,
-    DL: TDecisionLog<SMRReq<A::AppData>, OP>,
+    OP: LoggableOrderProtocol<SMRReq<A::AppData>>,
+    DL: DecisionLog<SMRReq<A::AppData>, OP>,
     LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL>,
     VT: ViewTransferProtocol<OP>,
     ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol,
@@ -64,9 +64,19 @@ where
 {
     p: FPhantom<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
-    #[allow(clippy::type_complexity)]
-    inner_replica:
-        Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL, SMRExecWrapper<ME::ExecutionHandle>>,
+    inner_replica: Replica<
+        RP,
+        S,
+        A::AppData,
+        OP,
+        DL,
+        ST,
+        LT,
+        VT,
+        NT,
+        PL,
+        WrappedExecHandle<ME::ExecutionHandle>,
+    >,
 }
 
 impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
@@ -75,8 +85,8 @@ where
     ME: TMonolithicStateExecutor<A, S, NT::ApplicationNode> + 'static,
     S: MonolithicState + 'static,
     A: Application<S> + Send + 'static,
-    OP: TLoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
-    DL: TDecisionLog<SMRReq<A::AppData>, OP> + 'static,
+    OP: LoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
+    DL: DecisionLog<SMRReq<A::AppData>, OP> + 'static,
     LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL> + 'static,
     VT: ViewTransferProtocol<OP> + 'static,
     ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol + Send + 'static,
@@ -98,20 +108,25 @@ where
     ) -> Result<Self>
     where
         OP: NetworkedOrderProtocolInitializer<
-                SMRReq<A::AppData>,
-                RequestPreProcessor<SMRReq<A::AppData>>,
-                NT::ProtocolNode,
-            >,
+            SMRReq<A::AppData>,
+            RequestPreProcessor<SMRReq<A::AppData>>,
+            NT::ProtocolNode,
+        >,
         VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
         LT: LogTransferProtocolInitializer<
-                SMRReq<A::AppData>,
-                OP,
-                DL,
-                PL,
-                SMRExecWrapper<ME::ExecutionHandle>,
-                NT::ProtocolNode,
-            >,
-        DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, SMRExecWrapper<ME::ExecutionHandle>>,
+            SMRReq<A::AppData>,
+            OP,
+            DL,
+            PL,
+            WrappedExecHandle<ME::ExecutionHandle>,
+            NT::ProtocolNode,
+        >,
+        DL: DecisionLogInitializer<
+            SMRReq<A::AppData>,
+            OP,
+            PL,
+            WrappedExecHandle<ME::ExecutionHandle>,
+        >,
         ST: MonolithicStateTransferInitializer<S, NT::StateTransferNode, PL>,
     {
         let MonolithicStateReplicaConfig {
@@ -122,7 +137,7 @@ where
 
         let executor_handle = ME::init_handle();
 
-        let wrapped_handle = SMRExecWrapper(executor_handle.clone());
+        let wrapped_handle = WrappedExecHandle(executor_handle.clone());
 
         let (handle, inner_handle) = init_state_transfer_handles();
 
@@ -137,7 +152,7 @@ where
             VT,
             NT,
             PL,
-            SMRExecWrapper<ME::ExecutionHandle>,
+            WrappedExecHandle<ME::ExecutionHandle>,
         >::bootstrap(replica_config, wrapped_handle.clone(), handle)
         .await?;
 
@@ -158,7 +173,7 @@ where
                 VT,
                 NT,
                 PL,
-                SMRExecWrapper<ME::ExecutionHandle>,
+                WrappedExecHandle<ME::ExecutionHandle>,
             > as PermissionedProtocolHandling<A::AppData, VT, OP, NT>>::View,
             S,
             NT::StateTransferNode,
@@ -204,10 +219,10 @@ where
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
 
-            if let Some(trigger) = trigger.as_ref()
-                && trigger.load(Ordering::Relaxed)
-            {
-                break Ok(()); // Exit the loop
+            if let Some(trigger) = trigger.as_ref() {
+                if trigger.load(Ordering::Relaxed) {
+                    break Ok(()); // Exit the loop
+                }
             }
 
             metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());

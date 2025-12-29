@@ -8,7 +8,6 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::phantom::FPhantom;
-use atlas_communication::NetworkManagement;
 use atlas_communication::byte_stub::incoming::PeerIncomingConnection;
 use atlas_communication::byte_stub::peer_conn_manager::PeerConnectionManager;
 use atlas_communication::byte_stub::{
@@ -26,6 +25,7 @@ use atlas_communication::stub::{
     ApplicationStub, BatchedModuleIncomingStub, BatchedNetworkStub, ModuleOutgoingStub,
     NetworkStub, OperationStub, ReconfigurationStub, RegularNetworkStub, StateProtocolStub,
 };
+use atlas_communication::NetworkManagement;
 use atlas_core::messages::{ForwardedRequestsMessage, RequestMessage};
 use atlas_core::ordering_protocol::networking::serialize::{
     OrderingProtocolMessage, ViewTransferProtocolMessage,
@@ -34,16 +34,16 @@ use atlas_core::ordering_protocol::networking::{
     OrderProtocolSendNode, ViewTransferProtocolSendNode,
 };
 use atlas_core::request_pre_processing::network::RequestPreProcessingHandle;
-use atlas_logging_core::log_transfer::networking::LogTransferSendNode;
 use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
+use atlas_logging_core::log_transfer::networking::LogTransferSendNode;
 use atlas_smr_application::serialize::ApplicationData;
 
-use crate::execution::reply::{ReplyNode, RequestType};
 use crate::message::{OrderableMessage, SystemMessage};
 use crate::serialize::{SMRSysMessage, SMRSysMsg, Service, ServiceMessage, StateSys};
-use crate::state_transfer::networking::StateTransferSendNode;
 use crate::state_transfer::networking::serialize::StateTransferMessage;
+use crate::state_transfer::networking::StateTransferSendNode;
 use crate::{SMRReply, SMRReq};
+use crate::execution::reply::{ReplyNode, RequestType};
 
 pub mod client;
 pub mod signature_ver;
@@ -280,11 +280,11 @@ where
     RM: Serializable + 'static,
     CN: ByteNetworkStub + 'static,
     BN: ByteNetworkControllerInit<
-            NI,
-            PeerCNNMan<NI, CN, RM, D, P, L, VT, S>,
-            CN,
-            PeerInn<RM, D, P, L, VT, S>,
-        >,
+        NI,
+        PeerCNNMan<NI, CN, RM, D, P, L, VT, S>,
+        CN,
+        PeerInn<RM, D, P, L, VT, S>,
+    >,
 {
     type Config = BN::Config;
 

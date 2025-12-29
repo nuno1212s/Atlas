@@ -1,8 +1,6 @@
 use crate::serialize::ApplicationData;
 use atlas_common::error::*;
-use atlas_core::execution::requests::{
-    IncrementableUpdateBatch, ReplyBatch, UnorderedUpdateBatch, UpdateBatch,
-};
+use atlas_core::execution::requests::{IncrementableUpdateBatch, ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 
 /// Request type of the `Service`.
 pub type Request<A, S> = <<A as Application<S>>::AppData as ApplicationData>::Request;
@@ -34,7 +32,7 @@ pub trait Application<S>: Send + Sync {
     /// If [`unordered_batched_execution()`] is defined by the user, then [`unordered_execution()`] may
     /// simply be defined as such:
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// fn unordered_execution(
     /// state: &S,
     /// request: Request<Self, S>) -> Reply<Self, S> {
@@ -66,10 +64,10 @@ pub trait Application<S>: Send + Sync {
     /// If `update_batch()` is defined by the user, then `update()` may
     /// simply be defined as such:
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// fn update(
-    ///     state: &mut S,
-    ///     request: Request<Self, S>,
+    ///     state: &mut State<Self>,
+    ///     request: Request<Self>,
     /// ) -> Reply<Self> {
     ///     unimplemented!()
     /// }

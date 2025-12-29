@@ -2,7 +2,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 use tracing::instrument;
 
-use crate::DVStateInstallHandle;
+use crate::{DVStateInstallHandle, ExecutorReplier};
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
@@ -14,16 +14,15 @@ use atlas_smr_application::app::{Application, Reply, Request};
 
 use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
 use crate::metric::EXECUTION_LATENCY_TIME_ID;
-use crate::repliers::ExecutorReplier;
 use crate::scalable::sc_execute_unordered_op_batch;
 use crate::single_threaded::{
-    UnorderedExecutor, st_execute_op_batch, st_execute_unordered_op_batch,
+    st_execute_op_batch, st_execute_unordered_op_batch, UnorderedExecutor,
 };
 use atlas_smr_application::state::divisible_state::{
     AppState, AppStateMessage, DivisibleState, DivisibleStateDescriptor, InstallStateMessage,
 };
-use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::ReplyNode;
+use atlas_smr_core::SMRReply;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;

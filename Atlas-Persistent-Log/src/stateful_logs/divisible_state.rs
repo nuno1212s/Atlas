@@ -6,36 +6,36 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::SeqNo;
 use atlas_common::persistentdb::KVDB;
-use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
+use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{OrderProtocolLogHelper, PProof};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::ordering_protocol::{
     DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
 };
+use atlas_core::ordering_protocol::decision::BatchedDecision;
 use atlas_core::persistent_log::{
     OperationMode, OrderingProtocolLog, PersistableStateTransferProtocol,
 };
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::{
-    DecLog, DecLogMetadata, DecisionSummaryForPersistence, TDecisionLogPersistenceHelper,
+    DecLog, DecLogMetadata, DecisionLogPersistenceHelper, LoggingDecision,
 };
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::divisible_state::DivisibleState;
-use atlas_smr_core::SMRReq;
 use atlas_smr_core::persistent_log::DivisibleStateLog;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
+use atlas_smr_core::SMRReq;
 
-use crate::execution_handle::TLoggedDecisionsHandle;
 use crate::worker::divisible_state_worker::{
     DivStatePersistentLogWorker, PersistentDivStateHandle, PersistentDivStateStub,
 };
 use crate::worker::{
-    COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, PersistentLogWorker, PersistentLogWorkerHandle,
-    PersistentLogWriteStub,
+    PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, COLUMN_FAMILY_OTHER,
+    COLUMN_FAMILY_PROOFS,
 };
-use crate::{PersistentLog, PersistentLogMode, PersistentLogModeTrait, worker};
+use crate::{worker, PersistentLog, PersistentLogMode, PersistentLogModeTrait};
 
 /// The message containing the information necessary to persist the most recently received
 /// State parts
@@ -69,14 +69,17 @@ where
     LS: DecisionLogMessage<SMRReq<D>, OPM, POPT> + 'static,
     STM: StateTransferMessage + 'static,
 {
-    fn init_div_log<K, T, POS, PSP, DLPH, EX>(executor: EX, db_path: K) -> Result<Self>
+    fn init_div_log<K, T, POS, PSP, DLPH, EX>(
+        executor: EX,
+        db_path: K,
+    ) -> Result<Self>
     where
         K: AsRef<Path>,
         T: PersistentLogModeTrait,
         POS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT>,
         PSP: PersistableStateTransferProtocol + Send + 'static,
-        DLPH: TDecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
-        EX: TLoggedDecisionsHandle<SMRReq<D>>,
+        DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
+        EX: TDeterministicDecisionExecutorHandle<SMRReq<D>>
     {
         let mut message_types = POS::message_types();
 
@@ -252,9 +255,9 @@ where
 
     fn wait_for_full_persistence(
         &self,
-        batch: DecisionRequestBatch<SMRReq<D>>,
-        decision_logging: DecisionSummaryForPersistence,
-    ) -> Result<Option<DecisionRequestBatch<SMRReq<D>>>> {
+        batch: BatchedDecision<SMRReq<D>>,
+        decision_logging: LoggingDecision,
+    ) -> Result<Option<BatchedDecision<SMRReq<D>>>> {
         self.inner_log
             .wait_for_full_persistence(batch, decision_logging)
     }

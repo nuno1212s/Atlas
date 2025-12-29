@@ -3,8 +3,8 @@ use crate::ordering_protocol::ShareableMessage;
 use anyhow::anyhow;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::error;
-use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::maybe_vec::ordered::{MaybeOrderedVec, MaybeOrderedVecBuilder};
+use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
 use atlas_metrics::benchmarks::BatchMeta;
@@ -24,62 +24,39 @@ pub struct Decision<MD, DAD, PM, RQ> {
     // The same decision
     // This has to be in an ordered state as it is very important that the decision done
     // Enum always needs to be the last one delivered in order to even make sense
-    decision_parts: MaybeOrderedVec<DecisionPart<MD, DAD, PM, RQ>>,
+    decision_info: MaybeOrderedVec<DecisionInfo<MD, DAD, PM, RQ>>,
 }
 
-impl<MD, DAD, P, O> Decision<MD, DAD, P, O>
-where
-    DAD: PartialEq,
-{
+impl<MD, DAD, P, O> Decision<MD, DAD, P, O> {
     /// Create a decision information object from a stored message
-    #[must_use]
-    pub fn decision_from_message(seq: SeqNo, decision: ShareableMessage<P>) -> Self {
+    pub fn decision_info_from_message(seq: SeqNo, decision: ShareableMessage<P>) -> Self {
         Decision {
             seq,
-            decision_parts: MaybeOrderedVec::One(DecisionPart::PartialDecisionInformation(
+            decision_info: MaybeOrderedVec::One(DecisionInfo::PartialDecisionInformation(
                 decision.into(),
             )),
         }
     }
 
     /// Create a decision information object from a metadata object
-    #[must_use]
-    pub fn decision_from_metadata(seq: SeqNo, metadata: MD) -> Self {
+    pub fn decision_info_from_metadata(seq: SeqNo, metadata: MD) -> Self {
         Decision {
             seq,
-            decision_parts: MaybeOrderedVec::One(DecisionPart::DecisionMetadata(metadata)),
+            decision_info: MaybeOrderedVec::One(DecisionInfo::DecisionMetadata(metadata)),
         }
     }
 
     /// Create a decision information object from a group of messages
-    #[must_use]
-    pub fn decision_from_messages(seq: SeqNo, messages: Vec<ShareableMessage<P>>) -> Self {
+    pub fn decision_info_from_messages(seq: SeqNo, messages: Vec<ShareableMessage<P>>) -> Self {
         Decision {
             seq,
-            decision_parts: MaybeOrderedVec::One(DecisionPart::PartialDecisionInformation(
+            decision_info: MaybeOrderedVec::One(DecisionInfo::PartialDecisionInformation(
                 messages.into(),
             )),
         }
     }
 
-    #[must_use]
-    pub fn decision_from_requests(seq: SeqNo, requests: DecisionRequests<O>) -> Self {
-        Decision {
-            seq,
-            decision_parts: MaybeOrderedVec::One(DecisionPart::DecisionRequests(requests)),
-        }
-    }
-
-    #[must_use]
-    pub fn decision_done(seq: SeqNo) -> Self {
-        Decision {
-            seq,
-            decision_parts: MaybeOrderedVec::One(DecisionPart::DecisionDone),
-        }
-    }
-
     /// Partial decision information creation
-    #[must_use]
     pub fn partial_decision_info(
         seq: SeqNo,
         additional_data: MaybeVec<DAD>,
@@ -87,14 +64,13 @@ where
     ) -> Self {
         Decision {
             seq,
-            decision_parts: MaybeOrderedVec::One(DecisionPart::PartialDecisionInformation(
+            decision_info: MaybeOrderedVec::One(DecisionInfo::PartialDecisionInformation(
                 PartialDecisionInformation::new(additional_data, messages),
             )),
         }
     }
 
     /// Create a decision info from metadata and messages
-    #[must_use]
     pub fn decision_info_from_metadata_and_messages(
         seq: SeqNo,
         metadata: MD,
@@ -106,86 +82,52 @@ where
     {
         let mut decision_info = BTreeSet::new();
 
-        decision_info.insert(DecisionPart::DecisionMetadata(metadata));
-        decision_info.insert(DecisionPart::PartialDecisionInformation(
+        decision_info.insert(DecisionInfo::DecisionMetadata(metadata));
+        decision_info.insert(DecisionInfo::PartialDecisionInformation(
             PartialDecisionInformation::new(additional_data, messages),
         ));
 
         Decision {
             seq,
-            decision_parts: MaybeOrderedVec::Mult(decision_info),
-        }
-    }
-
-    #[must_use]
-    pub fn decision_from_metadata_and_requests(
-        seq: SeqNo,
-        metadata: MD,
-        additional_data: MaybeVec<DAD>,
-        messages: MaybeVec<ShareableMessage<P>>,
-        requests: DecisionRequests<O>,
-    ) -> Self
-    where
-        DAD: PartialEq,
-    {
-        let mut decision_info = BTreeSet::new();
-
-        decision_info.insert(DecisionPart::DecisionMetadata(metadata));
-        decision_info.insert(DecisionPart::DecisionRequests(requests));
-        decision_info.insert(DecisionPart::PartialDecisionInformation(
-            PartialDecisionInformation::new(additional_data, messages),
-        ));
-
-        Decision {
-            seq,
-            decision_parts: MaybeOrderedVec::from_set(decision_info),
+            decision_info: MaybeOrderedVec::Mult(decision_info),
         }
     }
 
     /// Create a decision done object
-    #[must_use]
-    pub fn completed_decision_with_requests(seq: SeqNo, update: DecisionRequests<O>) -> Self {
+    pub fn completed_decision(seq: SeqNo, update: ProtocolConsensusDecision<O>) -> Self {
         Decision {
             seq,
-            decision_parts: MaybeOrderedVec::from_many(vec![
-                DecisionPart::DecisionRequests(update),
-                DecisionPart::DecisionDone,
-            ]),
+            decision_info: MaybeOrderedVec::One(DecisionInfo::DecisionDone(update)),
         }
     }
 
     /// Create a full decision info, from all of the components
-    #[must_use]
     pub fn full_decision_info(
         seq: SeqNo,
         metadata: MD,
         additional_metric_data: MaybeVec<DAD>,
         messages: MaybeVec<ShareableMessage<P>>,
-        requests: DecisionRequests<O>,
+        requests: ProtocolConsensusDecision<O>,
     ) -> Self
     where
         DAD: PartialEq,
     {
         let mut decision_info = BTreeSet::new();
 
-        decision_info.insert(DecisionPart::DecisionMetadata(metadata));
-        decision_info.insert(DecisionPart::PartialDecisionInformation(
+        decision_info.insert(DecisionInfo::DecisionMetadata(metadata));
+        decision_info.insert(DecisionInfo::PartialDecisionInformation(
             PartialDecisionInformation::new(additional_metric_data, messages),
         ));
-        decision_info.insert(DecisionPart::DecisionRequests(requests));
-        decision_info.insert(DecisionPart::DecisionDone);
+        decision_info.insert(DecisionInfo::DecisionDone(requests));
 
         Decision {
             seq,
-            decision_parts: MaybeOrderedVec::from_set(decision_info),
+            decision_info: MaybeOrderedVec::from_set(decision_info),
         }
     }
 
     /// Merge two decisions by appending one to the other
     /// Returns an error when the sequence number of the decisions does not match
-    ///
-    /// # Errors
-    /// Returns an error if the sequence numbers of the decisions do not match
     pub fn merge_decisions(&mut self, other: Self) -> error::Result<()>
     where
         DAD: PartialEq,
@@ -196,12 +138,12 @@ where
             ));
         }
 
-        let mut ordered_vec_builder = MaybeOrderedVecBuilder::from_existing(other.decision_parts);
+        let mut ordered_vec_builder = MaybeOrderedVecBuilder::from_existing(other.decision_info);
 
-        self.decision_parts = {
-            let decisions = std::mem::replace(&mut self.decision_parts, MaybeOrderedVec::None);
+        self.decision_info = {
+            let decisions = std::mem::replace(&mut self.decision_info, MaybeOrderedVec::None);
 
-            for dec_info in decisions {
+            for dec_info in decisions.into_iter() {
                 ordered_vec_builder.push(dec_info);
             }
 
@@ -211,12 +153,12 @@ where
         Ok(())
     }
 
-    pub fn append_decision_info(&mut self, decision_info: DecisionPart<MD, DAD, P, O>)
+    pub fn append_decision_info(&mut self, decision_info: DecisionInfo<MD, DAD, P, O>)
     where
         DAD: PartialEq,
     {
-        self.decision_parts = {
-            let decisions = std::mem::replace(&mut self.decision_parts, MaybeOrderedVec::None);
+        self.decision_info = {
+            let decisions = std::mem::replace(&mut self.decision_info, MaybeOrderedVec::None);
 
             let mut decisions = MaybeOrderedVecBuilder::from_existing(decisions);
 
@@ -226,12 +168,12 @@ where
         };
     }
 
-    pub fn decision_info(&self) -> &MaybeOrderedVec<DecisionPart<MD, DAD, P, O>> {
-        &self.decision_parts
+    pub fn decision_info(&self) -> &MaybeOrderedVec<DecisionInfo<MD, DAD, P, O>> {
+        &self.decision_info
     }
 
-    pub fn into_decision_info(self) -> MaybeOrderedVec<DecisionPart<MD, DAD, P, O>> {
-        self.decision_parts
+    pub fn into_decision_info(self) -> MaybeOrderedVec<DecisionInfo<MD, DAD, P, O>> {
+        self.decision_info
     }
 }
 
@@ -243,19 +185,15 @@ impl<MD, DAD, P, O> Orderable for Decision<MD, DAD, P, O> {
 
 impl<MD, DAD, P, O> Debug for Decision<MD, DAD, P, O> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Decision {:?}. Infos {:?}",
-            self.seq, self.decision_parts
-        )
+        write!(f, "Decision {:?}. Infos {:?}", self.seq, self.decision_info)
     }
 }
 
 /// Partial information about the decision that is being progressed
 #[derive(Getters)]
-pub struct PartialDecisionInformation<DAD, PM> {
+pub struct PartialDecisionInformation<DP, PM> {
     #[get = "pub"]
-    message_partial_info: MaybeVec<DAD>,
+    message_partial_info: MaybeVec<DP>,
     #[get = "pub"]
     messages: MaybeVec<ShareableMessage<PM>>,
 }
@@ -291,18 +229,15 @@ impl<DAD, PM> From<ShareableMessage<PM>> for PartialDecisionInformation<DAD, PM>
 }
 
 /// Information about a given decision
-pub enum DecisionPart<MD, DAD, PM, RQ> {
+pub enum DecisionInfo<MD, DAD, PM, RQ> {
     // The decision metadata, does not indicate that the decision is made
     DecisionMetadata(MD),
     // Partial information about the decision (composing messages)
     PartialDecisionInformation(PartialDecisionInformation<DAD, PM>),
-    // Requests contained within the decision of the protocol
-    DecisionRequests(DecisionRequests<RQ>),
     // The decision has been completed
-    DecisionDone,
+    DecisionDone(ProtocolConsensusDecision<RQ>),
 }
-
-impl<MD, DAD, P, O> DecisionPart<MD, DAD, P, O> {
+impl<MD, DAD, P, O> DecisionInfo<MD, DAD, P, O> {
     pub fn decision_info_from_message(message: MaybeVec<ShareableMessage<P>>) -> MaybeVec<Self> {
         MaybeVec::from_one(Self::PartialDecisionInformation(
             PartialDecisionInformation::new(MaybeVec::None, message),
@@ -321,28 +256,19 @@ impl<MD, DAD, P, O> DecisionPart<MD, DAD, P, O> {
 
         MaybeVec::Mult(vec![partial, metadata])
     }
-
-    fn rank(d: &DecisionPart<MD, DAD, P, O>) -> u8 {
-        match d {
-            DecisionPart::DecisionMetadata(_) => 0,
-            DecisionPart::PartialDecisionInformation(_) => 1,
-            DecisionPart::DecisionRequests(_) => 2,
-            DecisionPart::DecisionDone => 3,
-        }
-    }
 }
 
-impl<MD, DAD, P, O> PartialEq<Self> for DecisionPart<MD, DAD, P, O>
+impl<MD, DAD, P, O> PartialEq<Self> for DecisionInfo<MD, DAD, P, O>
 where
     DAD: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (DecisionPart::DecisionMetadata(_md), DecisionPart::DecisionMetadata(_md2)) => true,
-            (DecisionPart::DecisionDone, DecisionPart::DecisionDone) => true,
+            (DecisionInfo::DecisionMetadata(_md), DecisionInfo::DecisionMetadata(_md2)) => true,
+            (DecisionInfo::DecisionDone(_prot), DecisionInfo::DecisionDone(_prot2)) => true,
             (
-                DecisionPart::PartialDecisionInformation(info),
-                DecisionPart::PartialDecisionInformation(info2),
+                DecisionInfo::PartialDecisionInformation(info),
+                DecisionInfo::PartialDecisionInformation(info2),
             ) => {
                 if info.messages().len() != info2.messages().len()
                     || info.message_partial_info().len() != info2.message_partial_info().len()
@@ -375,73 +301,84 @@ where
     }
 }
 
-impl<MD, DAD, P, O> PartialOrd for DecisionPart<MD, DAD, P, O>
+impl<MD, DAD, P, O> PartialOrd for DecisionInfo<MD, DAD, P, O>
 where
     DAD: PartialEq,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(Self::rank(self).cmp(&Self::rank(other)))
-    }
-}
-
-impl<MD, DAD, P, O> Eq for DecisionPart<MD, DAD, P, O> where DAD: PartialEq {}
-
-impl<MD, DAD, P, O> Ord for DecisionPart<MD, DAD, P, O>
-where
-    DAD: PartialEq,
-{
-    fn cmp(&self, other: &Self) -> Ordering {
-        Self::rank(self).cmp(&Self::rank(other))
-    }
-}
-
-impl<MD, DAD, D, P> Debug for DecisionPart<MD, DAD, D, P> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DecisionPart::DecisionMetadata(_) => {
-                write!(f, "Decision metadata ")
+        match (self, other) {
+            (DecisionInfo::DecisionDone(_), _) => Some(Ordering::Greater),
+            (DecisionInfo::DecisionMetadata(_), DecisionInfo::DecisionDone(_)) => {
+                Some(Ordering::Less)
             }
-            DecisionPart::PartialDecisionInformation(_) => {
-                write!(f, "Partial decision")
+            (DecisionInfo::DecisionMetadata(_), DecisionInfo::DecisionMetadata(_)) => {
+                Some(Ordering::Equal)
             }
-            DecisionPart::DecisionDone => {
-                write!(f, "Decision Done")
-            }
-            &DecisionPart::DecisionRequests(_) => write!(f, "Decision Requests"),
+            (DecisionInfo::DecisionMetadata(_), _) => Some(Ordering::Greater),
+            (DecisionInfo::PartialDecisionInformation(_), _) => Some(Ordering::Less),
         }
     }
 }
 
-/// Struct which stores information about the client requests
-/// belonging to a given decision the order protocol is currently
-/// deciding about
-#[derive(Clone)]
-pub struct DecisionRequests<O> {
+impl<MD, DAD, P, O> Eq for DecisionInfo<MD, DAD, P, O> where DAD: PartialEq {}
+
+impl<MD, DAD, P, O> Ord for DecisionInfo<MD, DAD, P, O>
+where
+    DAD: PartialEq,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl<MD, DAD, D, P> Debug for DecisionInfo<MD, DAD, D, P> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecisionInfo::DecisionMetadata(_) => {
+                write!(f, "Decision metadata ")
+            }
+            DecisionInfo::PartialDecisionInformation(_) => {
+                write!(f, "Partial dec")
+            }
+            DecisionInfo::DecisionDone(_) => {
+                write!(f, "Decision Done")
+            }
+        }
+    }
+}
+
+/// The struct representing a consensus decision
+///
+/// Executable Batch: All of the requests that should be executed, in the correct order
+/// Execution Result: Whether we need to ask the execution for a checkpoint in order to reset the current message log
+/// Batch info: The information collected by the [DecidingLog], if applicable. (We can receive a batch
+/// via a complete proof which means this will be [None] or we can process a batch normally, which means
+/// this will be [Some(CompletedBatch<D>)])
+pub struct ProtocolConsensusDecision<O> {
     seq: SeqNo,
     // The digest of the batch
     batch_digest: Digest,
     // The client requests information contained in the batch.
     contained_requests: Vec<ClientRqInfo>,
     // The batch of client requests to execute as a result of this protocol
-    executable_batch: DecisionRequestBatch<O>,
+    executable_batch: BatchedDecision<O>,
 }
 
-impl<O> Orderable for DecisionRequests<O> {
+impl<O> Orderable for ProtocolConsensusDecision<O> {
     fn sequence_number(&self) -> SeqNo {
         self.seq
     }
 }
 
 /// Constructor for the ProtocolConsensusDecision struct
-impl<O> DecisionRequests<O> {
-    #[must_use]
+impl<O> ProtocolConsensusDecision<O> {
     pub fn new(
         seq: SeqNo,
-        executable_batch: DecisionRequestBatch<O>,
+        executable_batch: BatchedDecision<O>,
         client_rqs: Vec<ClientRqInfo>,
         batch_digest: Digest,
     ) -> Self {
-        DecisionRequests {
+        ProtocolConsensusDecision {
             seq,
             batch_digest,
             contained_requests: client_rqs,
@@ -449,8 +386,7 @@ impl<O> DecisionRequests<O> {
         }
     }
 
-    #[must_use]
-    pub fn into(self) -> (SeqNo, DecisionRequestBatch<O>, Vec<ClientRqInfo>, Digest) {
+    pub fn into(self) -> (SeqNo, BatchedDecision<O>, Vec<ClientRqInfo>, Digest) {
         (
             self.seq,
             self.executable_batch,
@@ -459,12 +395,12 @@ impl<O> DecisionRequests<O> {
         )
     }
 
-    pub fn update_batch(&self) -> &DecisionRequestBatch<O> {
+    pub fn update_batch(&self) -> &BatchedDecision<O> {
         &self.executable_batch
     }
 }
 
-impl<O> Debug for DecisionRequests<O> {
+impl<O> Debug for ProtocolConsensusDecision<O> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -476,23 +412,22 @@ impl<O> Debug for DecisionRequests<O> {
     }
 }
 
-/// Containment of a batch of client request messages
+/// Containment of a batch of messages
 #[derive(Clone)]
-pub struct DecisionRequestBatch<RQ> {
+pub struct BatchedDecision<RQ> {
     seq: SeqNo,
     inner: Vec<StoredMessage<RQ>>,
     meta: Option<BatchMeta>,
 }
 
-impl<RQ> Orderable for DecisionRequestBatch<RQ> {
+impl<RQ> Orderable for BatchedDecision<RQ> {
     fn sequence_number(&self) -> SeqNo {
         self.seq
     }
 }
-
-impl<RQ> DecisionRequestBatch<RQ> {
+impl<RQ> BatchedDecision<RQ> {
     pub fn new(seq: SeqNo, batch: Vec<StoredMessage<RQ>>, meta: Option<BatchMeta>) -> Self {
-        DecisionRequestBatch {
+        BatchedDecision {
             seq,
             inner: batch,
             meta,
@@ -500,7 +435,7 @@ impl<RQ> DecisionRequestBatch<RQ> {
     }
 
     pub fn new_with_cap(seq: SeqNo, capacity: usize) -> Self {
-        DecisionRequestBatch {
+        BatchedDecision {
             seq,
             inner: Vec::with_capacity(capacity),
             meta: None,
@@ -508,7 +443,7 @@ impl<RQ> DecisionRequestBatch<RQ> {
     }
 
     pub fn new_with_batch(seq: SeqNo, batch: Vec<StoredMessage<RQ>>) -> Self {
-        DecisionRequestBatch {
+        BatchedDecision {
             seq,
             inner: batch,
             meta: None,
@@ -551,3 +486,4 @@ impl<DAD, PM> From<PartialDecisionInformation<DAD, PM>>
         (value.message_partial_info, value.messages)
     }
 }
+

@@ -1,5 +1,5 @@
-use atlas_smr_application::app::{Application, Reply, Request};
 use getset::{CopyGetters, Getters};
+use atlas_smr_application::app::{Application, Reply, Request};
 
 /// A trait defining the CRUD operations required to be implemented for a given state in order
 /// for it to be utilized as a scalable state.

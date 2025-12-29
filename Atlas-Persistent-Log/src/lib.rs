@@ -7,39 +7,38 @@ use std::path::Path;
 use std::sync::Arc;
 
 use atlas_common::channel;
-use atlas_common::channel::oneshot::{OneShotTx, new_oneshot_channel};
+use atlas_common::channel::oneshot::{new_oneshot_channel, OneShotTx};
 use atlas_common::channel::sync::ChannelSyncTx;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_common::persistentdb::KVDB;
 use atlas_common::serialization_helper::SerMsg;
-use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
+use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{OrderProtocolLogHelper, PProof};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::ordering_protocol::{
     DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
 };
+use atlas_core::ordering_protocol::decision::BatchedDecision;
 use atlas_core::persistent_log::{
     OperationMode, OrderingProtocolLog, PersistableStateTransferProtocol,
 };
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::{
-    DecLog, DecLogMetadata, DecisionSummaryForPersistence, TDecisionLogPersistenceHelper,
+    DecLog, DecLogMetadata, DecisionLogPersistenceHelper, LoggingDecision,
 };
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 
 use crate::backlog::{ConsensusBackLogHandle, ConsensusBacklog};
-use crate::execution_handle::TLoggedDecisionsHandle;
 use crate::worker::{
-    COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, PersistentLogWorker, PersistentLogWorkerHandle,
-    PersistentLogWriteStub, write_latest_seq_no,
+    write_latest_seq_no, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub,
+    COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS,
 };
 
 pub mod backlog;
-pub mod execution_handle;
 pub mod metrics;
 pub mod serialize;
 mod worker;
@@ -91,7 +90,7 @@ pub trait PersistentLogModeTrait: Send {
     fn init_persistent_log<RQ, EX>(executor: EX) -> PersistentLogMode<RQ>
     where
         RQ: Send + 'static,
-        EX: TLoggedDecisionsHandle<RQ> + 'static;
+        EX: TDeterministicDecisionExecutorHandle<RQ> + 'static;
 }
 
 ///Strict log mode initializer
@@ -101,7 +100,7 @@ impl PersistentLogModeTrait for StrictPersistentLog {
     fn init_persistent_log<RQ, EX>(executor: EX) -> PersistentLogMode<RQ>
     where
         RQ: Send + 'static,
-        EX: TLoggedDecisionsHandle<RQ> + 'static,
+        EX: TDeterministicDecisionExecutorHandle<RQ> + 'static,
     {
         let handle = ConsensusBacklog::init_backlog(executor);
 
@@ -116,7 +115,7 @@ impl PersistentLogModeTrait for OptimisticPersistentLog {
     fn init_persistent_log<RQ, EX>(_: EX) -> PersistentLogMode<RQ>
     where
         RQ: Send + 'static,
-        EX: TLoggedDecisionsHandle<RQ> + 'static,
+        EX: TDeterministicDecisionExecutorHandle<RQ> + 'static,
     {
         PersistentLogMode::Optimistic
     }
@@ -128,7 +127,7 @@ impl PersistentLogModeTrait for NoPersistentLog {
     fn init_persistent_log<RQ, EX>(_: EX) -> PersistentLogMode<RQ>
     where
         RQ: Send + 'static,
-        EX: TLoggedDecisionsHandle<RQ> + 'static,
+        EX: TDeterministicDecisionExecutorHandle<RQ> + 'static,
     {
         PersistentLogMode::None
     }
@@ -257,8 +256,8 @@ where
         T: PersistentLogModeTrait,
         POS: OrderProtocolLogHelper<RQ, OPM, POPT>,
         PSP: PersistableStateTransferProtocol + Send + 'static,
-        DLPH: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
-        EX: TLoggedDecisionsHandle<RQ>,
+        DLPH: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
+        EX: TDeterministicDecisionExecutorHandle<RQ>,
     {
         let mut message_types = POS::message_types();
 
@@ -435,38 +434,6 @@ where
         }
     }
 
-    fn write_decision_log_metadata(
-        &self,
-        mode: OperationMode,
-        log_metadata: DecLogMetadata<RQ, OPM, POPT, LS>,
-    ) -> Result<()> {
-        match self.persistency_mode {
-            PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => match mode {
-                OperationMode::NonBlockingSync(callback) => self
-                    .worker_handle
-                    .queue_decision_log_metadata(log_metadata, callback),
-                OperationMode::BlockingSync => todo!(),
-            },
-            PersistentLogMode::None => Ok(()),
-        }
-    }
-
-    fn write_decision_log(
-        &self,
-        mode: OperationMode,
-        log: DecLog<RQ, OPM, POPT, LS>,
-    ) -> Result<()> {
-        match self.persistency_mode {
-            PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => match mode {
-                OperationMode::NonBlockingSync(callback) => {
-                    self.worker_handle.queue_install_state((log,), callback)
-                }
-                OperationMode::BlockingSync => todo!(),
-            },
-            PersistentLogMode::None => Ok(()),
-        }
-    }
-
     fn read_proof(&self, mode: OperationMode, seq: SeqNo) -> Result<Option<PProof<RQ, OPM, POPT>>> {
         match self.persistency_mode {
             PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => {
@@ -513,11 +480,27 @@ where
         }
     }
 
+    fn write_decision_log(
+        &self,
+        mode: OperationMode,
+        log: DecLog<RQ, OPM, POPT, LS>,
+    ) -> Result<()> {
+        match self.persistency_mode {
+            PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => match mode {
+                OperationMode::NonBlockingSync(callback) => {
+                    self.worker_handle.queue_install_state((log,), callback)
+                }
+                OperationMode::BlockingSync => todo!(),
+            },
+            PersistentLogMode::None => Ok(()),
+        }
+    }
+
     fn wait_for_full_persistence(
         &self,
-        batch: DecisionRequestBatch<RQ>,
-        decision_logging: DecisionSummaryForPersistence,
-    ) -> Result<Option<DecisionRequestBatch<RQ>>> {
+        batch: BatchedDecision<RQ>,
+        decision_logging: LoggingDecision,
+    ) -> Result<Option<BatchedDecision<RQ>>> {
         match &self.persistency_mode {
             PersistentLogMode::Strict(backlog) => {
                 backlog.queue_decision(batch, decision_logging)?;
@@ -525,6 +508,22 @@ where
                 Ok(None)
             }
             PersistentLogMode::None | PersistentLogMode::Optimistic => Ok(Some(batch)),
+        }
+    }
+
+    fn write_decision_log_metadata(
+        &self,
+        mode: OperationMode,
+        log_metadata: DecLogMetadata<RQ, OPM, POPT, LS>,
+    ) -> Result<()> {
+        match self.persistency_mode {
+            PersistentLogMode::Strict(_) | PersistentLogMode::Optimistic => match mode {
+                OperationMode::NonBlockingSync(callback) => self
+                    .worker_handle
+                    .queue_decision_log_metadata(log_metadata, callback),
+                OperationMode::BlockingSync => todo!(),
+            },
+            PersistentLogMode::None => Ok(()),
         }
     }
 }
