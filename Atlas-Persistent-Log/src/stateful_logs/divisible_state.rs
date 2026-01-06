@@ -6,7 +6,6 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::SeqNo;
 use atlas_common::persistentdb::KVDB;
-use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{OrderProtocolLogHelper, PProof};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
@@ -36,6 +35,7 @@ use crate::worker::{
     COLUMN_FAMILY_PROOFS,
 };
 use crate::{worker, PersistentLog, PersistentLogMode, PersistentLogModeTrait};
+use crate::execution_handle::TLoggedDecisionsHandle;
 
 /// The message containing the information necessary to persist the most recently received
 /// State parts
@@ -79,7 +79,7 @@ where
         POS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT>,
         PSP: PersistableStateTransferProtocol + Send + 'static,
         DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
-        EX: TDeterministicDecisionExecutorHandle<SMRReq<D>>
+        EX: TLoggedDecisionsHandle<SMRReq<D>>
     {
         let mut message_types = POS::message_types();
 

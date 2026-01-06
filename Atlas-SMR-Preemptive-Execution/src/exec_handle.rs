@@ -24,12 +24,12 @@ pub enum PreemptiveExecutionRequest<O> {
     Read(NodeId),
 }
 
-pub struct PreemptiveExecutorHandler<RQ> {
+pub struct PreemptiveExecutorHandle<RQ> {
     e_tx: ChannelSyncTx<PreemptiveExecutionRequest<RQ>>,
     request_rx: ChannelSyncRx<PreemptiveExecutionRequest<RQ>>,
 }
 
-impl<RQ> TExecutionHandle<RQ> for PreemptiveExecutorHandler<RQ>
+impl<RQ> TExecutionHandle<RQ> for PreemptiveExecutorHandle<RQ>
 where
     RQ: Send,
 {
@@ -58,7 +58,7 @@ where
     }
 }
 
-impl<RQ> TPreemptiveExecutionHandle<RQ> for PreemptiveExecutorHandler<RQ>
+impl<RQ> TPreemptiveExecutionHandle<RQ> for PreemptiveExecutorHandle<RQ>
 where
     RQ: Send,
 {
@@ -87,7 +87,7 @@ where
     }
 }
 
-impl<RQ> Clone for PreemptiveExecutorHandler<RQ> {
+impl<RQ> Clone for PreemptiveExecutorHandle<RQ> {
     fn clone(&self) -> Self {
         Self {
             e_tx: self.e_tx.clone(),

@@ -14,13 +14,13 @@ use atlas_communication::message::StoredMessage;
 use atlas_core::execution::requests::{
     IncrementableUpdateBatch, UnorderedUpdateBatch, UpdateBatch, UpdateInfo,
 };
-use atlas_core::execution::TDecisionExecutorHandle;
+use atlas_core::execution::{TExecutorDecisionHandle, TDeterministicExecutorDecisionHandle};
 use atlas_core::messages::SessionBased;
 use atlas_core::ordering_protocol::decision::BatchedDecision;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::deterministic_execution::TDeterministicExecutionHandle;
 use std::ops::Deref;
-use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
+use atlas_smr_application::TExecutionHandle;
 use crate::execution::state_management::{TDeterministicExecutorStateHandle, TExecutorStateHandle};
 
 pub trait TExecutor<A, S>
@@ -57,9 +57,9 @@ impl<E> WrappedExecHandle<E> {
     }
 }
 
-impl<E, RQ> TDecisionExecutorHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
+impl<E, RQ> TExecutorDecisionHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
 where
-    E: TDeterministicExecutionHandle<RQ> + Send + 'static,
+    E: TExecutionHandle<RQ> + Send + 'static,
 {
     fn catch_up_to_quorum(&self, requests: MaybeVec<BatchedDecision<SMRRawReq<RQ>>>) -> Result<()> {
         let requests: MaybeVec<_> = requests
@@ -76,7 +76,7 @@ where
     }
 }
 
-impl<E, RQ> TDeterministicDecisionExecutorHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
+impl<E, RQ> TDeterministicExecutorDecisionHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
 where
     E: TDeterministicExecutionHandle<RQ> + Send + 'static, {
     fn queue_update(&self, batch: BatchedDecision<SMRRawReq<RQ>>) -> Result<()> {
@@ -86,7 +86,7 @@ where
 
 impl<E, RQ> TExecutorStateHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
 where
-    E: TDeterministicExecutionHandle<RQ> + Send + 'static,
+    E: TExecutionHandle<RQ> + Send + 'static,
 {
     fn poll_state_channel(&self) -> Result<()> {
         self.0.poll_state_channel()

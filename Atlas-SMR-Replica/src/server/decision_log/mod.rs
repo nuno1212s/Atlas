@@ -1,8 +1,10 @@
+pub mod messages;
+mod execution;
+
 use anyhow::Context;
 use either::Either;
 use getset::Getters;
 use std::collections::VecDeque;
-use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
@@ -19,33 +21,33 @@ use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::phantom::FPhantom;
 use atlas_common::serialization_helper::SerMsg;
-use atlas_communication::message::StoredMessage;
-use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
+use atlas_core::execution::{TDeterministicExecutorDecisionHandle};
 use atlas_core::ordering_protocol::decision::Decision;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
-use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
+use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol};
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
 use atlas_core::ordering_protocol::{
     DecisionAD, DecisionMetadata, ExecutionResult, ProtocolMessage,
 };
 use atlas_core::request_pre_processing::RequestPreProcessing;
-use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle};
+use atlas_core::timeouts::timeout::{ TimeoutModHandle};
 use atlas_logging_core::decision_log::{
     DecisionLog, DecisionLogInitializer, LoggedDecision, LoggedDecisionValue,
 };
 use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_logging_core::log_transfer::networking::LogTransferSendNode;
 use atlas_logging_core::log_transfer::{
-    LTResult, LTTimeoutResult, LogTM, LogTransferProtocol, LogTransferProtocolInitializer,
+    LTResult, LTTimeoutResult, LogTransferProtocol, LogTransferProtocolInitializer,
 };
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
-use atlas_smr_core::execution::state_management::TDeterministicExecutorStateHandle;
+use atlas_smr_core::execution::state_management::{TDeterministicExecutorStateHandle};
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
 use atlas_smr_core::SMRRawReq;
 
 use crate::server::state_transfer::{StateTransferThreadHandle, StateTransferWorkMessage};
 use crate::server::CHECKPOINT_PERIOD;
+pub(crate) use crate::server::decision_log::messages::{DLWorkMessage, DLWorkMessageShort, DLWorkMessageType, DecisionLogWorkMessage, LogTransferWorkMessage, ReplicaWorkResponses};
 
 const CHANNEL_SIZE: usize = 1024;
 
@@ -69,64 +71,8 @@ where
 }
 
 pub type DecisionShort<RQ, OPM> =
-    Decision<DecisionMetadata<RQ, OPM>, DecisionAD<RQ, OPM>, ProtocolMessage<RQ, OPM>, RQ>;
+Decision<DecisionMetadata<RQ, OPM>, DecisionAD<RQ, OPM>, ProtocolMessage<RQ, OPM>, RQ>;
 
-#[allow(dead_code, clippy::large_enum_variant)]
-pub enum DecisionLogWorkMessage<RQ, OPM, POT>
-where
-    RQ: SerMsg,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
-{
-    ClearSequenceNumber(SeqNo),
-    ClearUnfinishedDecisions,
-    DecisionInformation(MaybeVec<DecisionShort<RQ, OPM>>),
-    Proof(PProof<RQ, OPM, POT>),
-    CheckpointDone(SeqNo),
-}
-
-/// Messages that are destined to the replica so it can piece
-/// together the current state of the decision log
-pub enum ReplicaWorkResponses {
-    InstallSeqNo(SeqNo),
-    LogTransferFinalized(SeqNo, SeqNo),
-    LogTransferNotNeeded(SeqNo, SeqNo),
-}
-
-pub enum LogTransferWorkMessage<RQ, OPM, LTM>
-where
-    RQ: SerMsg,
-    OPM: OrderingProtocolMessage<RQ>,
-    LTM: LogTransferMessage<RQ, OPM>,
-{
-    RequestLogTransfer,
-    LogTransferMessage(StoredMessage<LogTM<RQ, OPM, LTM>>),
-    ReceivedTimeout(Vec<ModTimeout>),
-    TransferDone(SeqNo, SeqNo),
-}
-
-pub enum DLWorkMessageType<RQ, OPM, POT, LTM>
-where
-    RQ: SerMsg,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
-    LTM: LogTransferMessage<RQ, OPM>,
-{
-    DecisionLog(DecisionLogWorkMessage<RQ, OPM, POT>),
-    LogTransfer(LogTransferWorkMessage<RQ, OPM, LTM>),
-}
-
-pub struct DLWorkMessage<V, RQ, OPM, POT, LTM>
-where
-    V: NetworkView,
-    RQ: SerMsg,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
-    LTM: LogTransferMessage<RQ, OPM>,
-{
-    view: V,
-    message: DLWorkMessageType<RQ, OPM, POT, LTM>,
-}
 
 pub enum ActivePhase {
     LogTransfer,
@@ -143,14 +89,6 @@ where
     work_queue: VecDeque<DecisionLogWorkMessage<RQ, OPM, POT>>,
 }
 
-pub type DLWorkMessageShort<
-    V: NetworkView,
-    R: SerMsg,
-    OP: LoggableOrderProtocol<SMRRawReq<R>>,
-    LT: LogTransferProtocol<SMRRawReq<R>, OP, DL>,
-    DL: DecisionLog<SMRRawReq<R>, OP>,
-> = DLWorkMessage<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>;
-
 pub type DecisionLogHandleShort<
     V: NetworkView,
     R: SerMsg,
@@ -158,6 +96,7 @@ pub type DecisionLogHandleShort<
     LT: LogTransferProtocol<SMRRawReq<R>, OP, DL>,
     DL: DecisionLog<SMRRawReq<R>, OP>,
 > = DecisionLogHandle<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>;
+
 
 pub struct DecisionLogManager<V, R, OP, DL, LT, NT, PL, EX>
 where
@@ -181,6 +120,20 @@ where
     _ph: FPhantom<(V, R, OP, NT, PL)>,
 }
 
+pub trait DecisionLogManagement<R> {
+
+    fn execute_logged_decisions(
+        &mut self,
+        decisions: MaybeVec<LoggedDecision<SMRRawReq<R>>>
+    ) -> Result<()>;
+
+    fn execute_transferred_decisions(
+        &mut self,
+        decisions: MaybeVec<LoggedDecision<SMRRawReq<R>>>
+    ) -> Result<()>;
+
+}
+
 impl<V, R, OP, DL, LT, NT, PL, EX> DecisionLogManager<V, R, OP, DL, LT, NT, PL, EX>
 where
     V: NetworkView + 'static,
@@ -189,13 +142,13 @@ where
     DL: DecisionLog<SMRRawReq<R>, OP> + Send,
     LT: LogTransferProtocol<SMRRawReq<R>, OP, DL> + Send,
     PL: PersistentDecisionLog<
-            SMRRawReq<R>,
-            OP::Serialization,
-            OP::PersistableTypes,
-            DL::LogSerialization,
-        > + 'static,
+        SMRRawReq<R>,
+        OP::Serialization,
+        OP::PersistableTypes,
+        DL::LogSerialization,
+    > + 'static,
     NT: LogTransferSendNode<SMRRawReq<R>, OP::Serialization, LT::Serialization>,
-    EX: TDeterministicDecisionExecutorHandle<SMRRawReq<R>> + TDeterministicExecutorStateHandle<SMRRawReq<R>>,
+    EX: TDeterministicExecutorDecisionHandle<SMRRawReq<R>> + TDeterministicExecutorStateHandle<SMRRawReq<R>>,
 {
     /// Initialize the decision log
     pub fn initialize_decision_log_mngt(
@@ -237,7 +190,7 @@ where
                     persistent_log.clone(),
                     execution_handle.clone(),
                 )
-                .expect("Failed initialize decision log");
+                    .expect("Failed initialize decision log");
 
                 let log_transfer =
                     LT::initialize(lt_config, timeouts, node.clone(), persistent_log)
@@ -507,12 +460,51 @@ where
 
         Ok(())
     }
+    fn probe_checkpoint_needed(&mut self, seq: SeqNo, last_seq_no_u32: u32) -> ExecutionResult {
+        let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
+            //We check that % == 0 so we don't start multiple checkpoints
 
-    #[instrument(skip(self))]
-    fn execute_logged_decisions(
-        &mut self,
-        decisions: MaybeVec<LoggedDecision<SMRRawReq<R>>>,
-    ) -> Result<()> {
+            let (e_tx, e_rx) = channel::oneshot::new_oneshot_channel();
+
+            debug!(
+                    "Checking if checkpoint is needed with state transfer protocol {:?}",
+                    seq
+                );
+
+            self.state_transfer_handle
+                .send_work_message(StateTransferWorkMessage::ShouldRequestAppState(seq, e_tx));
+
+            debug!("Sent work message to state transfer protocol, awaiting response");
+
+            if let Ok(res) = e_rx.recv() {
+                res
+            } else {
+                ExecutionResult::Nil
+            }
+        } else {
+            ExecutionResult::Nil
+        };
+
+        checkpoint
+    }
+}
+
+impl<V, R, OP, DL, LT, NT, PL, EX> DecisionLogManagement<R> for DecisionLogManager<V, R, OP, DL, LT, NT, PL, EX>
+where
+    V: NetworkView + 'static,
+    R: SerMsg,
+    OP: LoggableOrderProtocol<SMRRawReq<R>>,
+    DL: DecisionLog<SMRRawReq<R>, OP> + Send,
+    LT: LogTransferProtocol<SMRRawReq<R>, OP, DL> + Send,
+    PL: PersistentDecisionLog<
+        SMRRawReq<R>,
+        OP::Serialization,
+        OP::PersistableTypes,
+        DL::LogSerialization,
+    > + 'static,
+    NT: LogTransferSendNode<SMRRawReq<R>, OP::Serialization, LT::Serialization>,
+    EX: TDeterministicExecutorDecisionHandle<SMRRawReq<R>> + TDeterministicExecutorStateHandle<SMRRawReq<R>>,{
+    default fn execute_logged_decisions(&mut self, decisions: MaybeVec<LoggedDecision<SMRRawReq<R>>>) -> Result<()> {
         for decision in decisions.into_iter() {
             let (seq, requests, to_batch) = decision.into_inner();
 
@@ -538,7 +530,7 @@ where
                     }
                 },
                 LoggedDecisionValue::ExecutionNotNeeded => {
-                    // When the execution is handled
+                    // When the execution is handled by other parts of the system
                 }
             }
         }
@@ -546,59 +538,8 @@ where
         Ok(())
     }
 
-    fn probe_checkpoint_needed(&mut self, seq: SeqNo, last_seq_no_u32: u32) -> ExecutionResult {
-        let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
-            //We check that % == 0 so we don't start multiple checkpoints
-
-            let (e_tx, e_rx) = channel::oneshot::new_oneshot_channel();
-
-            debug!(
-                    "Checking if checkpoint is needed with state transfer protocol {:?}",
-                    seq
-                );
-
-            self.state_transfer_handle
-                .send_work_message(StateTransferWorkMessage::ShouldRequestAppState(seq, e_tx));
-
-            debug!("Sent work message to state transfer protocol, awaiting response");
-
-            if let Ok(res) = e_rx.recv() {
-                res
-            } else {
-                ExecutionResult::Nil
-            }
-        } else {
-            ExecutionResult::Nil
-        };
-        
-        checkpoint
-    }
-}
-
-impl<V, RQ, OPM, POT, LTM> DLWorkMessage<V, RQ, OPM, POT, LTM>
-where
-    V: NetworkView,
-    RQ: SerMsg,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
-    LTM: LogTransferMessage<RQ, OPM>,
-{
-    pub fn initialize_message(view: V, work_msg: DLWorkMessageType<RQ, OPM, POT, LTM>) -> Self {
-        Self {
-            view,
-            message: work_msg,
-        }
-    }
-
-    pub fn init_log_transfer_message(
-        view: V,
-        work_msg: LogTransferWorkMessage<RQ, OPM, LTM>,
-    ) -> Self {
-        Self::initialize_message(view, DLWorkMessageType::LogTransfer(work_msg))
-    }
-
-    pub fn init_dec_log_message(view: V, work_msg: DecisionLogWorkMessage<RQ, OPM, POT>) -> Self {
-        Self::initialize_message(view, DLWorkMessageType::DecisionLog(work_msg))
+    default fn execute_transferred_decisions(&mut self, decisions: MaybeVec<LoggedDecision<SMRRawReq<R>>>) -> Result<()> {
+        todo!()
     }
 }
 
@@ -631,53 +572,3 @@ where
     }
 }
 
-impl<RQ, OPM, POT> Debug for DecisionLogWorkMessage<RQ, OPM, POT>
-where
-    RQ: SerMsg,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DecisionLogWorkMessage::ClearSequenceNumber(seq) => {
-                write!(f, "Clear sequence number: {seq:?}")
-            }
-            DecisionLogWorkMessage::ClearUnfinishedDecisions => {
-                write!(f, "Clear unfinished decisions")
-            }
-            DecisionLogWorkMessage::DecisionInformation(dec_info) => {
-                write!(f, "Decision information: {dec_info:?}")
-            }
-            DecisionLogWorkMessage::Proof(proof) => {
-                write!(f, "Proof: {:?}", proof.sequence_number())
-            }
-            DecisionLogWorkMessage::CheckpointDone(seq) => {
-                write!(f, "Checkpoint done: {seq:?}")
-            }
-        }
-    }
-}
-
-impl<RQ, OPM, LTM> Debug for LogTransferWorkMessage<RQ, OPM, LTM>
-where
-    RQ: SerMsg,
-    OPM: OrderingProtocolMessage<RQ>,
-    LTM: LogTransferMessage<RQ, OPM>,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LogTransferWorkMessage::RequestLogTransfer => {
-                write!(f, "Request log transfer")
-            }
-            LogTransferWorkMessage::LogTransferMessage(message) => {
-                write!(f, "Log transfer message: {:?}", message.header())
-            }
-            LogTransferWorkMessage::ReceivedTimeout(timeout) => {
-                write!(f, "Received timeout: {timeout:?}")
-            }
-            LogTransferWorkMessage::TransferDone(start, end) => {
-                write!(f, "Transfer done: {start:?} - {end:?}")
-            }
-        }
-    }
-}

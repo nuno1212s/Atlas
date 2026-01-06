@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use atlas_common::error::*;
-use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
+use atlas_core::execution::TDeterministicExecutorDecisionHandle;
+use atlas_core::ordering_protocol::decision::BatchedDecision;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::OrderProtocolLogHelper;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
@@ -9,6 +10,7 @@ use atlas_core::persistent_log::{OrderingProtocolLog, PersistableStateTransferPr
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::DecisionLogPersistenceHelper;
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
+use atlas_persistent_log::execution_handle::TLoggedDecisionsHandle;
 use atlas_persistent_log::stateful_logs::monolithic_state::{
     initialize_mon_persistent_log, MonStatePersistentLog,
 };
@@ -28,17 +30,14 @@ where
 {
     type Config;
 
-    fn init_log<K, T, POS, PSP, DLPH, EX>(
-        executor: EX,
-        db_path: K,
-    ) -> Result<Self>
+    fn init_log<K, T, POS, PSP, DLPH, EX>(executor: EX, db_path: K) -> Result<Self>
     where
         K: AsRef<Path>,
         T: PersistentLogModeTrait,
         POS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT> + Send + 'static,
         PSP: PersistableStateTransferProtocol + Send + 'static,
         DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
-        EX: TDeterministicDecisionExecutorHandle<SMRReq<D>>,
+        EX: TLoggedDecisionsHandle<SMRReq<D>>,
         Self: Sized;
 }
 
@@ -54,21 +53,44 @@ where
 {
     type Config = ();
 
-    fn init_log<K, T, POS, PSP, DLPH, EX>(
-        executor: EX,
-        db_path: K,
-    ) -> Result<Self>
+    fn init_log<K, T, POS, PSP, DLPH, EX>(executor: EX, db_path: K) -> Result<Self>
     where
         K: AsRef<Path>,
         T: PersistentLogModeTrait,
         POS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT> + Send + 'static,
         PSP: PersistableStateTransferProtocol + Send + 'static,
         DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
-        EX: TDeterministicDecisionExecutorHandle<SMRReq<D>>,
+        EX: TLoggedDecisionsHandle<SMRReq<D>>,
         Self: Sized,
     {
         initialize_mon_persistent_log::<S, D, K, T, OPM, POPT, LS, STM, POS, PSP, DLPH, EX>(
             executor, db_path,
         )
+    }
+}
+
+pub struct PersistentLogHandle<EX>(EX);
+
+impl<EX> PersistentLogHandle<EX> {
+    pub fn new(executor_handle: EX) -> Self {
+        Self(executor_handle)
+    }
+}
+
+impl<EX> Clone for PersistentLogHandle<EX>
+where
+    EX: Clone,
+{
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<EX, RQ> TLoggedDecisionsHandle<RQ> for PersistentLogHandle<EX>
+where
+    EX: TDeterministicExecutorDecisionHandle<RQ>,
+{
+    fn register_decisions_logged(&self, decision: BatchedDecision<RQ>) -> Result<()> {
+        self.0.queue_update(decision)
     }
 }

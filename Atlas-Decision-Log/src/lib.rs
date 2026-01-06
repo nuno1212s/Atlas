@@ -11,13 +11,13 @@ use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_common::Err;
-use atlas_core::execution::TDecisionExecutorHandle;
-use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
-use atlas_core::ordering_protocol::{
-    DecisionAD, DecisionMetadata,
-    ProtocolMessage,
+use atlas_core::execution::TExecutorDecisionHandle;
+use atlas_core::messages::ClientRqInfo;
+use atlas_core::ordering_protocol::decision::{
+    BatchedDecision, Decision, DecisionInfo, ProtocolConsensusDecision,
 };
-use atlas_core::ordering_protocol::decision::{Decision, DecisionInfo, ProtocolConsensusDecision};
+use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
+use atlas_core::ordering_protocol::{DecisionAD, DecisionMetadata, ProtocolMessage};
 use atlas_core::persistent_log::OperationMode;
 use atlas_logging_core::decision_log::serialize::OrderProtocolLog;
 use atlas_logging_core::decision_log::{
@@ -143,7 +143,7 @@ where
             OP::PersistableTypes,
             Self::LogSerialization,
         >,
-        EX: TDecisionExecutorHandle<RQ>,
+        EX: TExecutorDecisionHandle<RQ>,
         Self: Sized,
     {
         let dec_log = persistent_log
@@ -427,16 +427,14 @@ where
 
             let logging_info = LoggingDecision::Proof(seq);
 
-            if let Some(to_execute) = self
-                .persistent_log
-                .wait_for_full_persistence(update, logging_info)?
-            {
-                decisions_made.push(LoggedDecision::from_decision_with_execution(
-                    seq, client_rqs, to_execute,
-                ));
-            } else {
-                decisions_made.push(LoggedDecision::from_decision(seq, client_rqs));
-            }
+            let logged_decision = self.create_logged_decision(
+                seq,
+                client_rqs,
+                update,
+                logging_info,
+            )?;
+
+            decisions_made.push(logged_decision);
         }
 
         Ok(decisions_made.build())
@@ -467,19 +465,40 @@ where
 
             let (seq, batch, client_rqs, _batch_digest) = protocol_decision.into();
 
-            if let Some(batch) = self
-                .persistent_log
-                .wait_for_full_persistence(batch, logged_info)?
-            {
-                decisions_made.push(LoggedDecision::from_decision_with_execution(
-                    seq, client_rqs, batch,
-                ));
-            } else {
-                decisions_made.push(LoggedDecision::from_decision(seq, client_rqs));
-            }
+            let logged_decision = self.create_logged_decision(
+                seq,
+                client_rqs,
+                batch,
+                logged_info,
+            )?;
+
+            decisions_made.push(logged_decision);
         }
 
         Ok(decisions_made.build())
+    }
+
+    fn create_logged_decision(
+        &self,
+        seq: SeqNo,
+        client_rqs: Vec<ClientRqInfo>,
+        batch: BatchedDecision<RQ>,
+        logged_info: LoggingDecision,
+    ) -> Result<LoggedDecision<RQ>>
+    where
+        PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>,
+    {
+
+        Ok(if let Some(batch) = self
+            .persistent_log
+            .wait_for_full_persistence(batch, logged_info)?
+        {
+            LoggedDecision::from_decision_with_execution(
+                seq, client_rqs, batch,
+            )
+        } else {
+            LoggedDecision::from_decision(seq, client_rqs)
+        })
     }
 }
 
