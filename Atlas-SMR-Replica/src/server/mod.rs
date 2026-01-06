@@ -13,10 +13,10 @@ use tracing::{debug, error, info, instrument, trace};
 use crate::config::ReplicaConfig;
 use crate::metric::{
     OP_MESSAGES_PROCESSED_ID, ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID,
-    PASSED_TO_DECISION_LOG, RECEIVED_FROM_DECISION_LOG, REPLICA_ORDERED_RQS_PROCESSED_ID,
+    PASSED_TO_DECISION_LOG, REPLICA_ORDERED_RQS_PROCESSED_ID,
     REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID, TIMEOUT_RECEIVED_COUNT_ID,
 };
-use crate::persistent_log::SMRPersistentLog;
+use crate::persistent_log::{PersistentLogHandle, SMRPersistentLog};
 use crate::server::decision_log::{
     DLWorkMessage, DecisionLogHandle, DecisionLogManager, DecisionLogWorkMessage,
     LogTransferWorkMessage, ReplicaWorkResponses,
@@ -31,7 +31,6 @@ use crate::server::state_transfer::{
 use crate::server::timeout_handler::TimeoutHandler;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
-use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::phantom::FPhantom;
@@ -42,8 +41,7 @@ use atlas_communication::reconfiguration::{
     ReconfigurationNetworkCommunication,
 };
 use atlas_communication::stub::RegularNetworkStub;
-use atlas_core::execution::deterministic_execution::TDeterministicDecisionExecutorHandle;
-use atlas_core::messages::create_rq_correlation_id_from_info;
+use atlas_core::execution::{TDeterministicExecutorDecisionHandle, TExecutorDecisionHandle};
 use atlas_core::metric::RQ_BATCH_TRACKING_ID;
 use atlas_core::ordering_protocol::decision::DecisionInfo;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
@@ -55,8 +53,8 @@ use atlas_core::ordering_protocol::reconfigurable_order_protocol::{
     ReconfigurableOrderProtocol, ReconfigurationAttemptResult,
 };
 use atlas_core::ordering_protocol::{
-    DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OPResult, OrderingProtocol,
-    OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolMessage, ShareableMessage, View,
+    DecisionsAhead, OPExecResult, OPPollResult, OPResult, OrderingProtocol, OrderingProtocolArgs,
+    PermissionedOrderingProtocol, ProtocolMessage, ShareableMessage, View,
 };
 use atlas_core::persistent_log::OperationMode;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
@@ -71,17 +69,14 @@ use atlas_core::request_pre_processing::{
 };
 use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_core::timeouts::{initialize_timeouts, Timeout, TimeoutIdentification, TimeoutsHandle};
-use atlas_logging_core::decision_log::{
-    DecisionLog, DecisionLogInitializer, LoggedDecision, LoggedDecisionValue,
-};
+use atlas_logging_core::decision_log::{DecisionLog, DecisionLogInitializer};
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
-use atlas_metrics::metrics::{
-    metric_correlation_id_ended, metric_correlation_id_passed, metric_decapsulate_correlation_id,
-    metric_duration, metric_increment,
-};
+use atlas_metrics::metrics::{metric_correlation_id_passed, metric_duration, metric_increment};
 use atlas_persistent_log::{NoPersistentLog, PersistentLogModeTrait};
 use atlas_smr_application::serialize::ApplicationData;
-use atlas_smr_core::execution::state_management::TDeterministicExecutorStateHandle;
+use atlas_smr_core::execution::state_management::{
+    TDeterministicExecutorStateHandle, TExecutorStateHandle,
+};
 use atlas_smr_core::message::SystemMessage;
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::request_pre_processing::{
@@ -92,7 +87,7 @@ use atlas_smr_core::state_transfer::{STResult, StateTransferProtocol};
 use atlas_smr_core::SMRReq;
 use reconfig::MockView;
 
-mod decision_log;
+pub(super) mod decision_log;
 pub mod divisible_state_server;
 pub mod follower_handling;
 pub mod monolithic_server;
@@ -242,7 +237,6 @@ where
         ST::Serialization,
     >,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-    EX: TDeterministicDecisionExecutorHandle<SMRReq<D>> + TDeterministicExecutorStateHandle<SMRReq<D>>,
 {
     async fn bootstrap(
         cfg: ReplicaConfig<RP, S, D, OP, DL, ST, LT, VT, NT, PL>,
@@ -260,6 +254,8 @@ where
         VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
         LT: LogTransferProtocolInitializer<SMRReq<D>, OP, DL, PL, EX, NT::ProtocolNode>,
         DL: DecisionLogInitializer<SMRReq<D>, OP, PL, EX>,
+        EX: TDeterministicExecutorDecisionHandle<SMRReq<D>>
+            + TDeterministicExecutorStateHandle<SMRReq<D>>,
     {
         let ReplicaConfig {
             db_path,
@@ -580,6 +576,8 @@ where
     where
         LT: LogTransferProtocolInitializer<SMRReq<D>, OP, DL, PL, EX, NT::ProtocolNode>,
         DL: DecisionLogInitializer<SMRReq<D>, OP, PL, EX>,
+        EX: TDeterministicExecutorDecisionHandle<SMRReq<D>>
+            + TDeterministicExecutorStateHandle<SMRReq<D>>,
     {
         let (rq, _) = ordered_rq_handles.into();
 
@@ -606,7 +604,10 @@ where
     fn initialize_unordered_rq_bridge(
         rq_handle: UnorderedRqHandles<SMRReq<D>>,
         executor: EX,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        EX: TExecutorDecisionHandle<SMRReq<D>>,
+    {
         unordered_rq_handler::start_unordered_rq_thread::<D>(rq_handle, executor.clone())?;
 
         Ok(())
@@ -619,8 +620,9 @@ where
         DL: 'static,
         ST: 'static,
         OP: 'static,
+        EX: TDeterministicExecutorDecisionHandle<SMRReq<D>>
     {
-        PL::init_log::<K, LM, OP, ST, DL, EX>(executor.clone(), db_path)
+        PL::init_log::<K, LM, OP, ST, DL, PersistentLogHandle<EX>>(PersistentLogHandle::new(executor), db_path)
     }
 
     fn id(&self) -> NodeId {
@@ -636,7 +638,10 @@ where
         Ok(())
     }
 
-    pub fn iterate(&mut self) -> Result<()> {
+    pub fn iterate(&mut self) -> Result<()>
+    where
+        EX: TExecutorStateHandle<SMRReq<D>>,
+    {
         trace!(
             "Iterating protocols with current execution state {:?}",
             self.execution_state
@@ -803,7 +808,10 @@ where
     }
 
     #[allow(dead_code)]
-    fn poll_state_transfer_protocol(&mut self) -> Result<()> {
+    fn poll_state_transfer_protocol(&mut self) -> Result<()>
+    where
+        EX: TExecutorStateHandle<SMRReq<D>>,
+    {
         while let Some(state_result) = self.state_transfer_handle.try_recv_state_transfer_update() {
             self.handle_state_transfer_progress_message(state_result)?;
         }
@@ -814,7 +822,10 @@ where
     fn handle_state_transfer_progress_message(
         &mut self,
         state_transfer_message: StateTransferProgress,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        EX: TExecutorStateHandle<SMRReq<D>>,
+    {
         match state_transfer_message {
             StateTransferProgress::StateTransferProgress(progress) => {
                 self.handle_state_transfer_result(progress)?;
@@ -831,7 +842,10 @@ where
         Ok(())
     }
 
-    fn handle_state_transfer_result(&mut self, result: STResult) -> Result<()> {
+    fn handle_state_transfer_result(&mut self, result: STResult) -> Result<()>
+    where
+        EX: TExecutorStateHandle<SMRReq<D>>,
+    {
         match result {
             STResult::StateTransferRunning => {}
             STResult::StateTransferReady => {
@@ -1020,69 +1034,6 @@ where
         Ok(())
     }
 
-    /// TODO: Figure out whether we should keep this or not
-    #[allow(dead_code)]
-    #[instrument(skip_all, fields(decisions = decisions.len()))]
-    fn execute_logged_decisions(
-        &mut self,
-        decisions: MaybeVec<LoggedDecision<SMRReq<D>>>,
-    ) -> Result<()> {
-        for decision in decisions.into_iter() {
-            let (seq, requests, to_batch) = decision.into_inner();
-
-            metric_correlation_id_ended(
-                RQ_BATCH_TRACKING_ID,
-                seq.into_u32().to_string(),
-                RECEIVED_FROM_DECISION_LOG.clone(),
-            );
-
-            requests.iter().for_each(|req| {
-                metric_decapsulate_correlation_id(
-                    RQ_BATCH_TRACKING_ID,
-                    create_rq_correlation_id_from_info(req),
-                    RECEIVED_FROM_DECISION_LOG.clone(),
-                )
-            });
-
-            if let Err(err) = self.rq_pre_processor.process_decided_batch(requests) {
-                error!("Error sending decided batch to pre processor: {err:?}");
-            }
-
-            let last_seq_no_u32 = u32::from(seq);
-
-            let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
-                //We check that % == 0 so we don't start multiple checkpoints
-
-                let (e_tx, e_rx) = channel::oneshot::new_oneshot_channel();
-
-                self.state_transfer_handle
-                    .send_work_message(StateTransferWorkMessage::ShouldRequestAppState(seq, e_tx));
-
-                if let Ok(res) = e_rx.recv() {
-                    res
-                } else {
-                    ExecutionResult::Nil
-                }
-            } else {
-                ExecutionResult::Nil
-            };
-
-            match to_batch {
-                LoggedDecisionValue::Execute(requests) => match checkpoint {
-                    ExecutionResult::Nil => self.executor_handle.queue_update(requests)?,
-                    ExecutionResult::BeginCheckpoint => self
-                        .executor_handle
-                        .queue_update_and_get_appstate(requests)?,
-                },
-                LoggedDecisionValue::ExecutionNotNeeded => {
-                    // When the execution is handled
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     fn handle_network_update_message(
         &mut self,
         network_update: NodeConnectionUpdateMessage,
@@ -1144,7 +1095,10 @@ where
         Ok(())
     }
 
-    fn receive_internal(&mut self) -> Result<()> {
+    fn receive_internal(&mut self) -> Result<()>
+    where
+        EX: TExecutorStateHandle<SMRReq<D>>,
+    {
         self.receive_internal_select()
     }
 
@@ -1152,7 +1106,10 @@ where
     /// in parallel.
     /// All functions called by this should be NON-BLOCKING (and should use try_recv) as this WILL
     /// tank the performance of the orchestrator.
-    fn receive_internal_select(&mut self) -> Result<()> {
+    fn receive_internal_select(&mut self) -> Result<()>
+    where
+        EX: TExecutorStateHandle<SMRReq<D>>,
+    {
         channel::sync::sync_select_biased! {
             recv(unwrap_channel!(self.node.protocol_node().incoming_stub().as_ref())) -> network_msg => exhaust_and_consume!(network_msg?, self.node.protocol_node().incoming_stub().as_ref(), self, handle_network_message_received),
             recv(unwrap_channel!(self.decision_log_handle.status_rx())) -> status_msg => exhaust_and_consume!(status_msg?, self.decision_log_handle.status_rx(), self, handle_decision_log_work_message),
@@ -1169,7 +1126,10 @@ where
     }
 
     #[allow(dead_code)]
-    fn receive_internal_exhaust(&mut self) -> Result<()> {
+    fn receive_internal_exhaust(&mut self) -> Result<()>
+    where
+        EX: TExecutorStateHandle<SMRReq<D>>,
+    {
         exhaust_and_consume!(
             self.node.protocol_node().incoming_stub().as_ref(),
             self,
@@ -1623,7 +1583,6 @@ where
             VT::Serialization,
             ST::Serialization,
         > + 'static,
-    EX: TDeterministicDecisionExecutorHandle<SMRReq<D>> + TDeterministicExecutorStateHandle<SMRReq<D>>,
 {
     type View = View<OP::PermissionedSerialization>;
 
@@ -1717,7 +1676,6 @@ where
         > + 'static,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + 'static,
-    EX: TDeterministicDecisionExecutorHandle<SMRReq<D>> + TDeterministicExecutorStateHandle<SMRReq<D>>,
 {
     default fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
         self.reply_to_quorum_entrance_request(node, Either::Right(AlterationFailReason::Failed))
@@ -1753,7 +1711,6 @@ where
         > + 'static,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + 'static,
-    EX: TDeterministicDecisionExecutorHandle<SMRReq<D>>+ TDeterministicExecutorStateHandle<SMRReq<D>>,
 {
     fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
         match self.execution_state {

@@ -12,7 +12,7 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
-use atlas_core::execution::TDecisionExecutorHandle;
+use atlas_core::execution::TExecutorDecisionHandle;
 use atlas_core::messages::ClientRqInfo;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
@@ -205,7 +205,7 @@ where
             OP::PersistableTypes,
             Self::LogSerialization,
         >,
-        EX: TDecisionExecutorHandle<RQ>,
+        EX: TExecutorDecisionHandle<RQ>,
         Self: Sized;
 }
 

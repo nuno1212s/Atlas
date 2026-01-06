@@ -1,25 +1,26 @@
-use crate::server::decision_log::DecisionShort;
+use std::fmt::{Debug, Formatter};
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
-use atlas_core::ordering_protocol::loggable::{PProof, TLoggableOrderProtocol};
+use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
 use atlas_core::timeouts::timeout::ModTimeout;
-use atlas_logging_core::decision_log::TDecisionLog;
-use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
+use atlas_logging_core::decision_log::DecisionLog;
 use atlas_logging_core::log_transfer::{LogTM, LogTransferProtocol};
+use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_smr_core::SMRRawReq;
-use std::fmt::{Debug, Formatter};
+use crate::server::decision_log::DecisionShort;
 
 pub type DLWorkMessageShort<
     V: NetworkView,
     R: SerMsg,
-    OP: TLoggableOrderProtocol<SMRRawReq<R>>,
+    OP: LoggableOrderProtocol<SMRRawReq<R>>,
     LT: LogTransferProtocol<SMRRawReq<R>, OP, DL>,
-    DL: TDecisionLog<SMRRawReq<R>, OP>,
+    DL: DecisionLog<SMRRawReq<R>, OP>,
 > = DLWorkMessage<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>;
+
 
 #[allow(dead_code, clippy::large_enum_variant)]
 pub enum DecisionLogWorkMessage<RQ, OPM, POT>
@@ -101,6 +102,7 @@ where
     }
 }
 
+
 /// Messages that are destined to the replica so it can piece
 /// together the current state of the decision log
 pub enum ReplicaWorkResponses {
@@ -121,6 +123,7 @@ where
     ReceivedTimeout(Vec<ModTimeout>),
     TransferDone(SeqNo, SeqNo),
 }
+
 
 impl<RQ, OPM, LTM> Debug for LogTransferWorkMessage<RQ, OPM, LTM>
 where
@@ -156,3 +159,4 @@ where
     DecisionLog(DecisionLogWorkMessage<RQ, OPM, POT>),
     LogTransfer(LogTransferWorkMessage<RQ, OPM, LTM>),
 }
+
