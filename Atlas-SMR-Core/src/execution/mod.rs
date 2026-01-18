@@ -16,7 +16,7 @@ use atlas_core::execution::requests::{
 };
 use atlas_core::execution::{TExecutorDecisionHandle, TDeterministicExecutorDecisionHandle};
 use atlas_core::messages::SessionBased;
-use atlas_core::ordering_protocol::decision::BatchedDecision;
+use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::deterministic_execution::TDeterministicExecutionHandle;
 use std::ops::Deref;
@@ -37,7 +37,7 @@ where
 pub struct WrappedExecHandle<E>(pub E);
 
 impl<E> WrappedExecHandle<E> {
-    pub fn transform_update_batch<RQ>(decision: BatchedDecision<SMRRawReq<RQ>>) -> UpdateBatch<RQ> {
+    pub fn transform_update_batch<RQ>(decision: DecisionRequestBatch<SMRRawReq<RQ>>) -> UpdateBatch<RQ> {
         let update_batch = UpdateBatch::new_with_cap(decision.sequence_number(), decision.len());
 
         decision
@@ -61,7 +61,7 @@ impl<E, RQ> TExecutorDecisionHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
 where
     E: TExecutionHandle<RQ> + Send + 'static,
 {
-    fn catch_up_to_quorum(&self, requests: MaybeVec<BatchedDecision<SMRRawReq<RQ>>>) -> Result<()> {
+    fn catch_up_to_quorum(&self, requests: MaybeVec<DecisionRequestBatch<SMRRawReq<RQ>>>) -> Result<()> {
         let requests: MaybeVec<_> = requests
             .into_iter()
             .map(Self::transform_update_batch)
@@ -79,7 +79,7 @@ where
 impl<E, RQ> TDeterministicExecutorDecisionHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
 where
     E: TDeterministicExecutionHandle<RQ> + Send + 'static, {
-    fn queue_update(&self, batch: BatchedDecision<SMRRawReq<RQ>>) -> Result<()> {
+    fn queue_update(&self, batch: DecisionRequestBatch<SMRRawReq<RQ>>) -> Result<()> {
         self.0.queue_update(Self::transform_update_batch(batch))
     }
 }
@@ -97,7 +97,7 @@ impl<E, RQ> TDeterministicExecutorStateHandle<SMRRawReq<RQ>> for WrappedExecHand
 where
     E: TDeterministicExecutionHandle<RQ> + Send + 'static,
 {
-    fn queue_update_and_get_appstate(&self, batch: BatchedDecision<SMRRawReq<RQ>>) -> Result<()> {
+    fn queue_update_and_get_appstate(&self, batch: DecisionRequestBatch<SMRRawReq<RQ>>) -> Result<()> {
         self.0.queue_update_and_get_appstate(Self::transform_update_batch(batch))
     }
 }

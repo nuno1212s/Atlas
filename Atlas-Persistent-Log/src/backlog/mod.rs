@@ -11,8 +11,8 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{channel, Err};
-use atlas_core::ordering_protocol::decision::BatchedDecision;
-use atlas_logging_core::decision_log::LoggingDecision;
+use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
+use atlas_logging_core::decision_log::DecisionSummaryForPersistence;
 
 ///This is made to handle the backlog when the consensus is working faster than the persistent storage layer.
 /// It holds update batches that are yet to be executed since they are still waiting for the confirmation of the persistent log
@@ -156,7 +156,7 @@ where
         }
     }
 
-    fn dispatch_batch(&self, batch: BatchedDecision<RQ>) {
+    fn dispatch_batch(&self, batch: DecisionRequestBatch<RQ>) {
         //TODO: Request checkpointing from the execution
 
         self.executor_handle
@@ -196,9 +196,9 @@ type BacklogMessage<O> = BackloggedMessage<O>;
 
 /// Backlogged message information
 struct BackloggedMessage<O> {
-    decision: BatchedDecision<O>,
+    decision: DecisionRequestBatch<O>,
     // Information about the decision
-    logged_decision: LoggingDecision,
+    logged_decision: DecisionSummaryForPersistence,
 }
 
 pub enum LoggedMessages {
@@ -276,7 +276,7 @@ impl<O> AwaitingPersistence<O> {
     }
 }
 
-impl<O> From<AwaitingPersistence<O>> for BatchedDecision<O> {
+impl<O> From<AwaitingPersistence<O>> for DecisionRequestBatch<O> {
     fn from(value: AwaitingPersistence<O>) -> Self {
         value.message.decision
     }
@@ -285,8 +285,8 @@ impl<O> From<AwaitingPersistence<O>> for BatchedDecision<O> {
 impl<O> From<BacklogMessage<O>> for AwaitingPersistence<O> {
     fn from(value: BacklogMessage<O>) -> Self {
         let received = match &value.logged_decision {
-            LoggingDecision::Proof(_seq) => LoggedMessages::Proof(false),
-            LoggingDecision::PartialDecision(seq, digests) => {
+            DecisionSummaryForPersistence::Proof(_seq) => LoggedMessages::Proof(false),
+            DecisionSummaryForPersistence::PartialDecision(seq, digests) => {
                 let message_digests = digests
                     .clone()
                     .into_iter()
@@ -319,8 +319,8 @@ impl<O> ConsensusBackLogHandle<O> {
     /// Queue a decision
     pub fn queue_decision(
         &self,
-        batch: BatchedDecision<O>,
-        decision: LoggingDecision,
+        batch: DecisionRequestBatch<O>,
+        decision: DecisionSummaryForPersistence,
     ) -> Result<()> {
         let message = BackloggedMessage {
             decision: batch,

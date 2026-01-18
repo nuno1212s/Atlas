@@ -43,8 +43,8 @@ use atlas_communication::reconfiguration::{
 use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::execution::{TDeterministicExecutorDecisionHandle, TExecutorDecisionHandle};
 use atlas_core::metric::RQ_BATCH_TRACKING_ID;
-use atlas_core::ordering_protocol::decision::DecisionInfo;
-use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
+use atlas_core::ordering_protocol::decision::DecisionPart;
+use atlas_core::ordering_protocol::loggable::TLoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::ordering_protocol::permissioned::{
     VTMsg, VTPollResult, VTResult, ViewTransferProtocol, ViewTransferProtocolInitializer,
@@ -69,7 +69,7 @@ use atlas_core::request_pre_processing::{
 };
 use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_core::timeouts::{initialize_timeouts, Timeout, TimeoutIdentification, TimeoutsHandle};
-use atlas_logging_core::decision_log::{DecisionLog, DecisionLogInitializer};
+use atlas_logging_core::decision_log::{TDecisionLog, DecisionLogInitializer};
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::{metric_correlation_id_passed, metric_duration, metric_increment};
 use atlas_persistent_log::{NoPersistentLog, PersistentLogModeTrait};
@@ -162,8 +162,8 @@ where
             ST::Serialization,
         > + 'static,
     D: ApplicationData + 'static,
-    OP: LoggableOrderProtocol<SMRReq<D>>,
-    DL: DecisionLog<SMRReq<D>, OP>,
+    OP: TLoggableOrderProtocol<SMRReq<D>>,
+    DL: TDecisionLog<SMRReq<D>, OP>,
     LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
     VT: ViewTransferProtocol<OP>,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol,
@@ -222,8 +222,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX> Replica<RP, S, D, OP, DL, ST, LT,
 where
     RP: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
-    OP: LoggableOrderProtocol<SMRReq<D>> + Send,
-    DL: DecisionLog<SMRReq<D>, OP>,
+    OP: TLoggableOrderProtocol<SMRReq<D>> + Send,
+    DL: TDecisionLog<SMRReq<D>, OP>,
     LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
     VT: ViewTransferProtocol<OP>,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send,
@@ -974,7 +974,7 @@ where
                         decision
                             .decision_info()
                             .iter()
-                            .any(|info| matches!(info, DecisionInfo::DecisionDone(_)))
+                            .any(|info| matches!(info, DecisionPart::DecisionDone))
                     })
                     .for_each(|dec| {
                         metric_correlation_id_passed(
@@ -1518,8 +1518,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX> PermissionedProtocolHandling<D, V
     for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX>
 where
     D: ApplicationData + 'static,
-    OP: LoggableOrderProtocol<SMRReq<D>>,
-    DL: DecisionLog<SMRReq<D>, OP>,
+    OP: TLoggableOrderProtocol<SMRReq<D>>,
+    DL: TDecisionLog<SMRReq<D>, OP>,
     LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
     VT: ViewTransferProtocol<OP>,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol,
@@ -1566,8 +1566,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX> PermissionedProtocolHandling<D, V
     for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX>
 where
     D: ApplicationData + 'static,
-    OP: LoggableOrderProtocol<SMRReq<D>> + PermissionedOrderingProtocol + 'static,
-    DL: DecisionLog<SMRReq<D>, OP> + 'static,
+    OP: TLoggableOrderProtocol<SMRReq<D>> + PermissionedOrderingProtocol + 'static,
+    DL: TDecisionLog<SMRReq<D>, OP> + 'static,
     LT: LogTransferProtocol<SMRReq<D>, OP, DL> + 'static,
     VT: ViewTransferProtocol<OP> + 'static,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send + 'static,
@@ -1660,8 +1660,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX> ReconfigurableProtocolHandling
 where
     RP: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
-    OP: LoggableOrderProtocol<SMRReq<D>> + Send,
-    DL: DecisionLog<SMRReq<D>, OP>,
+    OP: TLoggableOrderProtocol<SMRReq<D>> + Send,
+    DL: TDecisionLog<SMRReq<D>, OP>,
     LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
     VT: ViewTransferProtocol<OP>,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send,
@@ -1692,11 +1692,11 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL, EX> ReconfigurableProtocolHandling
 where
     RP: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
-    OP: LoggableOrderProtocol<SMRReq<D>>
+    OP: TLoggableOrderProtocol<SMRReq<D>>
         + ReconfigurableOrderProtocol<RP::Serialization>
         + Send
         + 'static,
-    DL: DecisionLog<SMRReq<D>, OP> + 'static,
+    DL: TDecisionLog<SMRReq<D>, OP> + 'static,
     LT: LogTransferProtocol<SMRReq<D>, OP, DL> + 'static,
     VT: ViewTransferProtocol<OP> + 'static,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send + 'static,

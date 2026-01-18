@@ -4,10 +4,10 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
-use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
+use atlas_core::ordering_protocol::loggable::{TLoggableOrderProtocol, PProof};
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
 use atlas_core::timeouts::timeout::ModTimeout;
-use atlas_logging_core::decision_log::DecisionLog;
+use atlas_logging_core::decision_log::TDecisionLog;
 use atlas_logging_core::log_transfer::{LogTM, LogTransferProtocol};
 use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_smr_core::SMRRawReq;
@@ -16,9 +16,9 @@ use crate::server::decision_log::DecisionShort;
 pub type DLWorkMessageShort<
     V: NetworkView,
     R: SerMsg,
-    OP: LoggableOrderProtocol<SMRRawReq<R>>,
+    OP: TLoggableOrderProtocol<SMRRawReq<R>>,
     LT: LogTransferProtocol<SMRRawReq<R>, OP, DL>,
-    DL: DecisionLog<SMRRawReq<R>, OP>,
+    DL: TDecisionLog<SMRRawReq<R>, OP>,
 > = DLWorkMessage<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>;
 
 

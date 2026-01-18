@@ -6,14 +6,14 @@ use tracing::error;
 
 use atlas_common::error::*;
 use atlas_common::phantom::FPhantom;
-use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
+use atlas_core::ordering_protocol::loggable::TLoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::ordering_protocol::permissioned::{
     ViewTransferProtocol, ViewTransferProtocolInitializer,
 };
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_logging_core::decision_log::{DecisionLog, DecisionLogInitializer};
+use atlas_logging_core::decision_log::{TDecisionLog, DecisionLogInitializer};
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::Application;
@@ -44,8 +44,8 @@ where
     S: MonolithicState + 'static,
     A: Application<S> + Send,
     ME: TExecutor<A, S>,
-    OP: LoggableOrderProtocol<SMRReq<A::AppData>>,
-    DL: DecisionLog<SMRReq<A::AppData>, OP>,
+    OP: TLoggableOrderProtocol<SMRReq<A::AppData>>,
+    DL: TDecisionLog<SMRReq<A::AppData>, OP>,
     LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL>,
     VT: ViewTransferProtocol<OP>,
     ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol,
@@ -85,8 +85,8 @@ where
     ME: TMonolithicStateExecutor<A, S, NT::ApplicationNode> + 'static,
     S: MonolithicState + 'static,
     A: Application<S> + Send + 'static,
-    OP: LoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
-    DL: DecisionLog<SMRReq<A::AppData>, OP> + 'static,
+    OP: TLoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
+    DL: TDecisionLog<SMRReq<A::AppData>, OP> + 'static,
     LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL> + 'static,
     VT: ViewTransferProtocol<OP> + 'static,
     ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol + Send + 'static,

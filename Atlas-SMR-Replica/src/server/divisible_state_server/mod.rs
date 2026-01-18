@@ -2,14 +2,14 @@ use std::marker::PhantomData;
 use std::time::Instant;
 
 use atlas_common::error::*;
-use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
+use atlas_core::ordering_protocol::loggable::TLoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::ordering_protocol::permissioned::{
     ViewTransferProtocol, ViewTransferProtocolInitializer,
 };
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_logging_core::decision_log::{DecisionLog, DecisionLogInitializer};
+use atlas_logging_core::decision_log::{TDecisionLog, DecisionLogInitializer};
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::Application;
@@ -39,9 +39,9 @@ where
     S: DivisibleState + 'static,
     SE: TExecutor<A, S>,
     A: Application<S> + Send,
-    OP: LoggableOrderProtocol<SMRReq<A::AppData>>,
+    OP: TLoggableOrderProtocol<SMRReq<A::AppData>>,
     LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL>,
-    DL: DecisionLog<SMRReq<A::AppData>, OP>,
+    DL: TDecisionLog<SMRReq<A::AppData>, OP>,
     VT: ViewTransferProtocol<OP>,
     ST: DivisibleStateTransfer<S> + PersistableStateTransferProtocol,
     PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
@@ -69,8 +69,8 @@ where
     SE: TDivisibleStateExecutor<A, S, NT::ApplicationNode> + 'static,
     S: DivisibleState + Send + 'static,
     A: Application<S> + Send + 'static,
-    OP: LoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
-    DL: DecisionLog<SMRReq<A::AppData>, OP> + 'static,
+    OP: TLoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
+    DL: TDecisionLog<SMRReq<A::AppData>, OP> + 'static,
     LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL> + 'static,
     VT: ViewTransferProtocol<OP> + 'static,
     ST: DivisibleStateTransfer<S> + PersistableStateTransferProtocol + Send + 'static,
