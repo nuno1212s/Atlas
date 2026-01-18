@@ -2,13 +2,13 @@ use std::path::Path;
 
 use atlas_common::error::*;
 use atlas_core::execution::TDeterministicExecutorDecisionHandle;
-use atlas_core::ordering_protocol::decision::BatchedDecision;
+use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::OrderProtocolLogHelper;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::persistent_log::{OrderingProtocolLog, PersistableStateTransferProtocol};
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
-use atlas_logging_core::decision_log::DecisionLogPersistenceHelper;
+use atlas_logging_core::decision_log::TDecisionLogPersistenceHelper;
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_persistent_log::execution_handle::TLoggedDecisionsHandle;
 use atlas_persistent_log::stateful_logs::monolithic_state::{
@@ -36,7 +36,7 @@ where
         T: PersistentLogModeTrait,
         POS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT> + Send + 'static,
         PSP: PersistableStateTransferProtocol + Send + 'static,
-        DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
+        DLPH: TDecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
         EX: TLoggedDecisionsHandle<SMRReq<D>>,
         Self: Sized;
 }
@@ -59,7 +59,7 @@ where
         T: PersistentLogModeTrait,
         POS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT> + Send + 'static,
         PSP: PersistableStateTransferProtocol + Send + 'static,
-        DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
+        DLPH: TDecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
         EX: TLoggedDecisionsHandle<SMRReq<D>>,
         Self: Sized,
     {
@@ -90,7 +90,7 @@ impl<EX, RQ> TLoggedDecisionsHandle<RQ> for PersistentLogHandle<EX>
 where
     EX: TDeterministicExecutorDecisionHandle<RQ>,
 {
-    fn register_decisions_logged(&self, decision: BatchedDecision<RQ>) -> Result<()> {
+    fn register_decisions_logged(&self, decision: DecisionRequestBatch<RQ>) -> Result<()> {
         self.0.queue_update(decision)
     }
 }

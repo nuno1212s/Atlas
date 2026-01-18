@@ -18,7 +18,7 @@ use atlas_core::ordering_protocol::loggable::OrderProtocolLogHelper;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
-use atlas_logging_core::decision_log::DecisionLogPersistenceHelper;
+use atlas_logging_core::decision_log::TDecisionLogPersistenceHelper;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
 use atlas_smr_core::state_transfer::Checkpoint;
 
@@ -73,7 +73,7 @@ where
     LS: DecisionLogMessage<RQ, OPM, POPT> + 'static,
     POP: OrderProtocolLogHelper<RQ, OPM, POPT> + 'static,
     PSP: PersistableStateTransferProtocol + 'static,
-    DLPH: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
+    DLPH: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
 {
     request_rx: ChannelSyncRx<MonolithicStateMessage<S>>,
 
@@ -91,7 +91,7 @@ where
     LS: DecisionLogMessage<RQ, OPM, POPT> + 'static,
     POP: OrderProtocolLogHelper<RQ, OPM, POPT>,
     PSP: PersistableStateTransferProtocol + 'static,
-    DLPH: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
+    DLPH: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
 {
     pub fn new(
         request_rx: ChannelSyncRx<MonolithicStateMessage<S>>,

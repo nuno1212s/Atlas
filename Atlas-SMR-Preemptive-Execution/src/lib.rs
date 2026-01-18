@@ -1,5 +1,3 @@
-use atlas_smr_application::app::{Application, Request};
-use atlas_smr_core::execution::TExecutor;
 
 mod exec_handle;
 mod single_threaded_crud;

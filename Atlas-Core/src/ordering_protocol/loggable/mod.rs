@@ -4,7 +4,7 @@ use atlas_common::error::*;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 
-use crate::ordering_protocol::decision::ProtocolConsensusDecision;
+use crate::ordering_protocol::decision::DecisionRequests;
 use crate::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use crate::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use crate::ordering_protocol::{
@@ -13,7 +13,7 @@ use crate::ordering_protocol::{
 
 /// The trait to define the necessary methods and data types for this order protocol
 /// to be compatible with the decision log
-pub trait LoggableOrderProtocol<RQ>:
+pub trait TLoggableOrderProtocol<RQ>:
     OrderingProtocol<RQ> + OrderProtocolLogHelper<RQ, Self::Serialization, Self::PersistableTypes>
 where
     RQ: SerMsg,
@@ -54,7 +54,7 @@ where
     fn decompose_proof(proof: &PProof<RQ, OP, PT>) -> DecomposedProof<RQ, OP>;
 
     /// Extract the proof out of the protocol decision proof
-    fn get_requests_in_proof(proof: &PProof<RQ, OP, PT>) -> Result<ProtocolConsensusDecision<RQ>>;
+    fn get_requests_in_proof(proof: &PProof<RQ, OP, PT>) -> Result<DecisionRequests<RQ>>;
 }
 
 pub type DecomposedProof<'a, RQ, OPM> = (

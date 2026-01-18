@@ -20,13 +20,13 @@ use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessag
 use atlas_core::ordering_protocol::{
     DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
 };
-use atlas_core::ordering_protocol::decision::BatchedDecision;
+use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_core::persistent_log::{
     OperationMode, OrderingProtocolLog, PersistableStateTransferProtocol,
 };
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::{
-    DecLog, DecLogMetadata, DecisionLogPersistenceHelper, LoggingDecision,
+    DecLog, DecLogMetadata, TDecisionLogPersistenceHelper, DecisionSummaryForPersistence,
 };
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
@@ -257,7 +257,7 @@ where
         T: PersistentLogModeTrait,
         POS: OrderProtocolLogHelper<RQ, OPM, POPT>,
         PSP: PersistableStateTransferProtocol + Send + 'static,
-        DLPH: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
+        DLPH: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
         EX: TLoggedDecisionsHandle<RQ>
     {
         let mut message_types = POS::message_types();
@@ -515,9 +515,9 @@ where
 
     fn wait_for_full_persistence(
         &self,
-        batch: BatchedDecision<RQ>,
-        decision_logging: LoggingDecision,
-    ) -> Result<Option<BatchedDecision<RQ>>> {
+        batch: DecisionRequestBatch<RQ>,
+        decision_logging: DecisionSummaryForPersistence,
+    ) -> Result<Option<DecisionRequestBatch<RQ>>> {
         match &self.persistency_mode {
             PersistentLogMode::Strict(backlog) => {
                 backlog.queue_decision(batch, decision_logging)?;

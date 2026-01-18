@@ -13,23 +13,18 @@ use atlas_common::serialization_helper::SerMsg;
 use atlas_common::Err;
 use atlas_core::execution::TExecutorDecisionHandle;
 use atlas_core::messages::ClientRqInfo;
-use atlas_core::ordering_protocol::decision::{
-    BatchedDecision, Decision, DecisionInfo, ProtocolConsensusDecision,
-};
-use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
+use atlas_core::ordering_protocol::decision::{Decision, DecisionPart, DecisionRequestBatch, DecisionRequests};
 use atlas_core::ordering_protocol::{DecisionAD, DecisionMetadata, ProtocolMessage};
+use atlas_core::ordering_protocol::loggable::{PProof, TLoggableOrderProtocol};
 use atlas_core::persistent_log::OperationMode;
 use atlas_logging_core::decision_log::serialize::OrderProtocolLog;
-use atlas_logging_core::decision_log::{
-    DecLog as LogCoreDecLog, DecisionLogInitializer, DecisionLogPersistenceHelper, LoggedDecision,
-    LoggingDecision, RangeOrderable,
-};
+use atlas_logging_core::decision_log::{DecLog as LogCoreDecLog, DecisionLogInitializer, DecisionSummaryForPersistence, LoggedDecision, RangeOrderable, TDecisionLog, TDecisionLogPersistenceHelper};
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_metrics::metrics::metric_duration;
 
 use crate::config::DecLogConfig;
 use crate::deciding_log::DecidingLog;
-use crate::decision_log::DecisionLog;
+use crate::decision_log::InMemDecisionLog;
 use crate::decisions::CompletedDecision;
 use crate::metric::DECISION_LOG_CHECKPOINT_TIME_ID;
 use crate::serialize::LogSerialization;
@@ -42,71 +37,73 @@ mod metric;
 pub mod serialize;
 
 /// Decision log implementation type
-pub struct Log<RQ, OP, PL, EX>
+/// Named after the Council of Five Hundred in ancient Greece.
+/// Boule represents the deliberative body where decisions were recorded and enacted.
+pub struct Boule<RQ, OP, PL, EX>
 where
     RQ: SerMsg,
-    OP: LoggableOrderProtocol<RQ>,
+    OP: TLoggableOrderProtocol<RQ>,
 {
     // The log of decisions that are currently ongoing
     deciding_log: DecidingLog<RQ, OP::Serialization, PL>,
     // The log of decisions that have already been decided since the last checkpoint
-    decision_log: DecisionLog<RQ, OP::Serialization, OP::PersistableTypes>,
+    decision_log: InMemDecisionLog<RQ, OP::Serialization, OP::PersistableTypes>,
     // A reference to the persistent log
     persistent_log: PL,
     // An execution handle
     _executor_handle: EX,
 }
 
-impl<RQ, OP, PL, EX> Orderable for Log<RQ, OP, PL, EX>
+impl<RQ, OP, PL, EX> Orderable for Boule<RQ, OP, PL, EX>
 where
     RQ: SerMsg,
-    OP: LoggableOrderProtocol<RQ>,
+    OP: TLoggableOrderProtocol<RQ>,
 {
     fn sequence_number(&self) -> SeqNo {
         self.decision_log.last_execution().unwrap_or(SeqNo::ZERO)
     }
 }
 
-impl<RQ, OP, PL, EX> RangeOrderable for Log<RQ, OP, PL, EX>
+impl<RQ, OP, PL, EX> RangeOrderable for Boule<RQ, OP, PL, EX>
 where
     RQ: SerMsg,
-    OP: LoggableOrderProtocol<RQ>,
+    OP: TLoggableOrderProtocol<RQ>,
 {
     fn first_sequence(&self) -> SeqNo {
         self.decision_log.first_seq().unwrap_or(SeqNo::ZERO)
     }
 }
 
-pub type LogSer<RQ: SerMsg, OP: LoggableOrderProtocol<RQ>> =
+pub type LogSer<RQ: SerMsg, OP: TLoggableOrderProtocol<RQ>> =
     LogSerialization<RQ, OP::Serialization, OP::PersistableTypes>;
 
-pub type Proof<RQ: SerMsg, OP: LoggableOrderProtocol<RQ>> =
+pub type Proof<RQ: SerMsg, OP: TLoggableOrderProtocol<RQ>> =
     PProof<RQ, OP::Serialization, OP::PersistableTypes>;
 
-pub type DecLog<RQ: SerMsg, OP: LoggableOrderProtocol<RQ>> =
+pub type DecLog<RQ: SerMsg, OP: TLoggableOrderProtocol<RQ>> =
     LogCoreDecLog<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>;
 
 impl<RQ, OP, PL, EX>
-    DecisionLogPersistenceHelper<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>
-    for Log<RQ, OP, PL, EX>
+    TDecisionLogPersistenceHelper<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>
+    for Boule<RQ, OP, PL, EX>
 where
     RQ: SerMsg,
-    OP: LoggableOrderProtocol<RQ>,
+    OP: TLoggableOrderProtocol<RQ>,
     PL: Send,
     EX: Send,
 {
     fn init_decision_log(_: (), proofs: Vec<Proof<RQ, OP>>) -> Result<DecLog<RQ, OP>> {
-        Ok(DecisionLog::from_ordered_proofs(proofs))
+        Ok(InMemDecisionLog::from_ordered_proofs(proofs))
     }
 
     fn decompose_decision_log(
-        dec_log: DecisionLog<RQ, OP::Serialization, OP::PersistableTypes>,
+        dec_log: InMemDecisionLog<RQ, OP::Serialization, OP::PersistableTypes>,
     ) -> ((), Vec<Proof<RQ, OP>>) {
         ((), dec_log.into_proofs())
     }
 
     fn decompose_decision_log_ref(
-        dec_log: &DecisionLog<RQ, OP::Serialization, OP::PersistableTypes>,
+        dec_log: &InMemDecisionLog<RQ, OP::Serialization, OP::PersistableTypes>,
     ) -> (&(), Vec<&Proof<RQ, OP>>) {
         let mut proofs = Vec::with_capacity(dec_log.proofs().len());
 
@@ -118,10 +115,10 @@ where
     }
 }
 
-impl<RQ, OP, PL, EX> DecisionLogInitializer<RQ, OP, PL, EX> for Log<RQ, OP, PL, EX>
+impl<RQ, OP, PL, EX> DecisionLogInitializer<RQ, OP, PL, EX> for Boule<RQ, OP, PL, EX>
 where
     RQ: SerMsg + 'static,
-    OP: LoggableOrderProtocol<RQ>,
+    OP: TLoggableOrderProtocol<RQ>,
     PL: PersistentDecisionLog<
         RQ,
         OP::Serialization,
@@ -164,7 +161,7 @@ where
             )
         };
 
-        Ok(Log {
+        Ok(Boule {
             deciding_log: deciding,
             decision_log: dec_log,
             persistent_log,
@@ -173,10 +170,104 @@ where
     }
 }
 
-impl<RQ, OP, PL, EX> atlas_logging_core::decision_log::DecisionLog<RQ, OP> for Log<RQ, OP, PL, EX>
+impl<RQ, OP, PL, EX> Boule<RQ, OP, PL, EX>
 where
     RQ: SerMsg + 'static,
-    OP: LoggableOrderProtocol<RQ>,
+    OP: TLoggableOrderProtocol<RQ>,
+    PL: PersistentDecisionLog<
+        RQ,
+        OP::Serialization,
+        OP::PersistableTypes,
+        LogSerialization<RQ, OP::Serialization, OP::PersistableTypes>,
+    >,
+    EX: Send,
+{
+    #[instrument(skip_all, level = Level::DEBUG, fields(batch_count = batches.len()))]
+    fn execute_decision_from_proofs(
+        &mut self,
+        batches: MaybeVec<DecisionRequests<RQ>>,
+    ) -> Result<MaybeVec<LoggedDecision<RQ>>>
+    where
+        PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>,
+    {
+        let mut decisions_made = MaybeVec::builder();
+
+        for protocol_decision in batches.into_iter() {
+            let (seq, update, client_rqs, _batch_digest) = protocol_decision.into();
+
+            let logging_info = DecisionSummaryForPersistence::Proof(seq);
+
+            let logged_decision =
+                self.create_logged_decision(seq, client_rqs, update, logging_info)?;
+
+            decisions_made.push(logged_decision);
+        }
+
+        Ok(decisions_made.build())
+    }
+
+    fn create_logged_decision(
+        &self,
+        seq: SeqNo,
+        client_rqs: Vec<ClientRqInfo>,
+        batch: DecisionRequestBatch<RQ>,
+        logged_info: DecisionSummaryForPersistence,
+    ) -> Result<LoggedDecision<RQ>>
+    where
+        PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>,
+    {
+        Ok(
+            if let Some(batch) = self
+                .persistent_log
+                .wait_for_full_persistence(batch, logged_info)?
+            {
+                LoggedDecision::from_decision_with_execution(seq, client_rqs, batch)
+            } else {
+                LoggedDecision::from_decision(seq, client_rqs)
+            },
+        )
+    }
+
+
+    #[instrument(skip_all, level = Level::DEBUG, fields(batch_count = decisions.len()))]
+    fn execute_decisions(
+        &mut self,
+        decisions: Vec<CompletedDecision<RQ, OP::Serialization>>,
+    ) -> Result<MaybeVec<LoggedDecision<RQ>>>
+    where
+        PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>,
+    {
+        debug!(
+            "Sending {} decisions to be executed by the execution",
+            decisions.len()
+        );
+
+        let mut decisions_made = MaybeVec::builder();
+
+        for decision in decisions {
+            let (_seq, metadata, additional_data, messages, protocol_decision, logged_info) =
+                decision.into();
+
+            let proof = OP::init_proof_from_scm(metadata, additional_data, messages)?;
+
+            self.decision_log.append_proof(proof)?;
+
+            let (seq, batch, client_rqs, _batch_digest) = protocol_decision.into();
+
+            let logged_decision =
+                self.create_logged_decision(seq, client_rqs, batch, logged_info)?;
+
+            decisions_made.push(logged_decision);
+        }
+
+        Ok(decisions_made.build())
+    }
+}
+
+impl<RQ, OP, PL, EX> TDecisionLog<RQ, OP> for Boule<RQ, OP, PL, EX>
+where
+    RQ: SerMsg + 'static,
+    OP: TLoggableOrderProtocol<RQ>,
     PL: PersistentDecisionLog<
         RQ,
         OP::Serialization,
@@ -213,61 +304,6 @@ where {
         self.deciding_log.clear_seq_forward_of(seq);
 
         Ok(())
-    }
-
-    #[instrument(skip(self), level = Level::DEBUG)]
-    fn decision_information_received(
-        &mut self,
-        decision_info: Decision<
-            DecisionMetadata<RQ, OP::Serialization>,
-            DecisionAD<RQ, OP::Serialization>,
-            ProtocolMessage<RQ, OP::Serialization>,
-            RQ,
-        >,
-    ) -> Result<MaybeVec<LoggedDecision<RQ>>> {
-        let seq = decision_info.sequence_number();
-
-        let index = seq.index(self.decision_log.last_execution().unwrap_or(SeqNo::ZERO));
-
-        match index {
-            Either::Left(_) => {
-                error!("Received decision information about a decision that has already been made");
-            }
-            Either::Right(_index) => {
-                trace!("Received information about decision {:?}", decision_info);
-
-                decision_info
-                    .into_decision_info()
-                    .into_iter()
-                    .for_each(|info| match info {
-                        DecisionInfo::DecisionDone(done) => {
-                            self.deciding_log.complete_decision(seq, done);
-                        }
-                        DecisionInfo::PartialDecisionInformation(messages) => {
-                            let (decisions_ad, messages) = messages.into();
-
-                            decisions_ad.into_iter().for_each(|decision_ad| {
-                                self.deciding_log.decision_additional_data(seq, decision_ad);
-                            });
-
-                            messages.into_iter().for_each(|message| {
-                                self.deciding_log.decision_progressed(seq, message);
-                            });
-                        }
-                        DecisionInfo::DecisionMetadata(metadata) => {
-                            self.deciding_log.decision_metadata(seq, metadata);
-                        }
-                    });
-            }
-        }
-
-        let decisions = self.deciding_log.complete_pending_decisions();
-
-        if decisions.is_empty() {
-            Ok(MaybeVec::None)
-        } else {
-            Ok(self.execute_decisions(decisions)?)
-        }
     }
 
     #[instrument(skip(self, proof), level = Level::DEBUG, fields(seq_no = proof.sequence_number().into_u32()))]
@@ -403,102 +439,68 @@ where {
             Ok(None)
         }
     }
-}
 
-impl<RQ, OP, PL, EX> Log<RQ, OP, PL, EX>
-where
-    RQ: SerMsg,
-    OP: LoggableOrderProtocol<RQ>,
-    PL: Send,
-    EX: Send,
-{
-    #[instrument(skip_all, level = Level::DEBUG, fields(batch_count = batches.len()))]
-    fn execute_decision_from_proofs(
+    #[instrument(skip(self), level = Level::DEBUG)]
+    fn decision_information_received(
         &mut self,
-        batches: MaybeVec<ProtocolConsensusDecision<RQ>>,
-    ) -> Result<MaybeVec<LoggedDecision<RQ>>>
-    where
-        PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>,
-    {
-        let mut decisions_made = MaybeVec::builder();
+        decision_info: Decision<
+            DecisionMetadata<RQ, OP::Serialization>,
+            DecisionAD<RQ, OP::Serialization>,
+            ProtocolMessage<RQ, OP::Serialization>,
+            RQ,
+        >,
+    ) -> Result<MaybeVec<LoggedDecision<RQ>>> {
+        let seq = decision_info.sequence_number();
 
-        for protocol_decision in batches.into_iter() {
-            let (seq, update, client_rqs, _batch_digest) = protocol_decision.into();
-
-            let logging_info = LoggingDecision::Proof(seq);
-
-            let logged_decision = self.create_logged_decision(
-                seq,
-                client_rqs,
-                update,
-                logging_info,
-            )?;
-
-            decisions_made.push(logged_decision);
-        }
-
-        Ok(decisions_made.build())
-    }
-
-    #[instrument(skip_all, level = Level::DEBUG, fields(batch_count = decisions.len()))]
-    fn execute_decisions(
-        &mut self,
-        decisions: Vec<CompletedDecision<RQ, OP::Serialization>>,
-    ) -> Result<MaybeVec<LoggedDecision<RQ>>>
-    where
-        PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>,
-    {
-        debug!(
-            "Sending {} decisions to be executed by the execution",
-            decisions.len()
+        let index = seq.index(
+            self.decision_log
+                .last_execution()
+                .unwrap_or(SeqNo::ZERO),
         );
 
-        let mut decisions_made = MaybeVec::builder();
+        match index {
+            Either::Left(_) => {
+                error!("Received decision information about a decision that has already been made");
+            }
+            Either::Right(_index) => {
+                trace!("Received information about decision {:?}", decision_info);
 
-        for decision in decisions {
-            let (_seq, metadata, additional_data, messages, protocol_decision, logged_info) =
-                decision.into();
+                decision_info
+                    .into_decision_info()
+                    .into_iter()
+                    .for_each(|info| match info {
+                        DecisionPart::DecisionDone => {
+                            self.deciding_log.complete_decision(seq);
+                        }
+                        DecisionPart::DecisionRequests(req) => {
+                            self.deciding_log.handle_requests(seq, req);
+                        }
+                        DecisionPart::PartialDecisionInformation(messages) => {
+                            let (decisions_ad, messages) = messages.into();
 
-            let proof = OP::init_proof_from_scm(metadata, additional_data, messages)?;
+                            decisions_ad.into_iter().for_each(|decision_ad| {
+                                self.deciding_log
+                                    .decision_additional_data(seq, decision_ad);
+                            });
 
-            self.decision_log.append_proof(proof)?;
-
-            let (seq, batch, client_rqs, _batch_digest) = protocol_decision.into();
-
-            let logged_decision = self.create_logged_decision(
-                seq,
-                client_rqs,
-                batch,
-                logged_info,
-            )?;
-
-            decisions_made.push(logged_decision);
+                            messages.into_iter().for_each(|message| {
+                                self.deciding_log.decision_progressed(seq, message);
+                            });
+                        }
+                        DecisionPart::DecisionMetadata(metadata) => {
+                            self.deciding_log.decision_metadata(seq, metadata);
+                        }
+                    });
+            }
         }
 
-        Ok(decisions_made.build())
-    }
+        let decisions = self.deciding_log.complete_pending_decisions();
 
-    fn create_logged_decision(
-        &self,
-        seq: SeqNo,
-        client_rqs: Vec<ClientRqInfo>,
-        batch: BatchedDecision<RQ>,
-        logged_info: LoggingDecision,
-    ) -> Result<LoggedDecision<RQ>>
-    where
-        PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, LogSer<RQ, OP>>,
-    {
-
-        Ok(if let Some(batch) = self
-            .persistent_log
-            .wait_for_full_persistence(batch, logged_info)?
-        {
-            LoggedDecision::from_decision_with_execution(
-                seq, client_rqs, batch,
-            )
+        if decisions.is_empty() {
+            Ok(MaybeVec::None)
         } else {
-            LoggedDecision::from_decision(seq, client_rqs)
-        })
+            Ok(self.execute_decisions(decisions)?)
+        }
     }
 }
 

@@ -1,11 +1,11 @@
 use crate::decision_log::serialize::DecisionLogMessage;
-use crate::decision_log::{DecLog, DecLogMetadata, LoggingDecision};
+use crate::decision_log::{DecLog, DecLogMetadata, DecisionSummaryForPersistence};
 use atlas_common::ordering::SeqNo;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::PProof;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
-use atlas_core::ordering_protocol::decision::BatchedDecision;
+use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_core::persistent_log::{OperationMode, OrderingProtocolLog};
 
 /// The trait that defines the the persistent decision log, so that the decision log can be persistent
@@ -68,7 +68,7 @@ where
     /// [Some(ProtocolConsensusDecision<D::Request>)]
     fn wait_for_full_persistence(
         &self,
-        batch: BatchedDecision<RQ>,
-        logging_decision: LoggingDecision,
-    ) -> atlas_common::error::Result<Option<BatchedDecision<RQ>>>;
+        batch: DecisionRequestBatch<RQ>,
+        logging_decision: DecisionSummaryForPersistence,
+    ) -> atlas_common::error::Result<Option<DecisionRequestBatch<RQ>>>;
 }

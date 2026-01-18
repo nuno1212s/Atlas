@@ -15,13 +15,13 @@ use atlas_common::error::*;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
+use atlas_core::ordering_protocol::loggable::{TLoggableOrderProtocol, PProof};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 use atlas_core::timeouts::TimeoutID;
 use atlas_logging_core::decision_log::serialize::OrderProtocolLog;
-use atlas_logging_core::decision_log::{DecLog, DecisionLog};
+use atlas_logging_core::decision_log::{DecLog, TDecisionLog};
 use atlas_logging_core::log_transfer::networking::LogTransferSendNode;
 use atlas_logging_core::log_transfer::{
     LTPollResult, LTResult, LTTimeoutResult, LogTM, LogTransferProtocol,
@@ -74,17 +74,17 @@ enum LogTransferState<P, D> {
 
 pub type Serialization<LT, D, OP, POP> = <LT as LogTransferProtocol<D, OP, POP>>::Serialization;
 
-pub type Proof<D: SerMsg, OP: LoggableOrderProtocol<D>> =
+pub type Proof<D: SerMsg, OP: TLoggableOrderProtocol<D>> =
     PProof<D, OP::Serialization, OP::PersistableTypes>;
-pub type DeclarationLog<D: SerMsg, OP: LoggableOrderProtocol<D>, DL: DecisionLog<D, OP>> =
+pub type DeclarationLog<D: SerMsg, OP: TLoggableOrderProtocol<D>, DL: TDecisionLog<D, OP>> =
     DecLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>;
 
 #[allow(clippy::type_complexity)]
 pub struct CollabLogTransfer<D, OP, DL, NT, PL, EX>
 where
     D: SerMsg + 'static,
-    OP: LoggableOrderProtocol<D>,
-    DL: DecisionLog<D, OP>,
+    OP: TLoggableOrderProtocol<D>,
+    DL: TDecisionLog<D, OP>,
 {
     // The current sequence number of the log transfer protocol
     curr_seq: SeqNo,
@@ -103,8 +103,8 @@ where
 impl<D, OP, DL, NT, PL, EX> CollabLogTransfer<D, OP, DL, NT, PL, EX>
 where
     D: SerMsg + 'static,
-    OP: LoggableOrderProtocol<D>,
-    DL: DecisionLog<D, OP>,
+    OP: TLoggableOrderProtocol<D>,
+    DL: TDecisionLog<D, OP>,
 {
     fn next_seq(&mut self) -> SeqNo {
         self.curr_seq += SeqNo::ONE;
@@ -271,8 +271,8 @@ impl<RQ, OP, DL, NT, PL, EX> LogTransferProtocolInitializer<RQ, OP, DL, PL, EX, 
     for CollabLogTransfer<RQ, OP, DL, NT, PL, EX>
 where
     RQ: SerMsg + 'static,
-    OP: LoggableOrderProtocol<RQ>,
-    DL: DecisionLog<RQ, OP>,
+    OP: TLoggableOrderProtocol<RQ>,
+    DL: TDecisionLog<RQ, OP>,
     PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
     NT: LogTransferSendNode<
         RQ,
@@ -320,8 +320,8 @@ impl<RQ, OP, DL, NT, PL, EX> TimeoutableMod<LTTimeoutResult>
     for CollabLogTransfer<RQ, OP, DL, NT, PL, EX>
 where
     RQ: SerMsg + 'static,
-    OP: LoggableOrderProtocol<RQ>,
-    DL: DecisionLog<RQ, OP>,
+    OP: TLoggableOrderProtocol<RQ>,
+    DL: TDecisionLog<RQ, OP>,
     PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
     NT: LogTransferSendNode<
         RQ,
@@ -343,8 +343,8 @@ impl<RQ, OP, DL, NT, PL, EX> LogTransferProtocol<RQ, OP, DL>
     for CollabLogTransfer<RQ, OP, DL, NT, PL, EX>
 where
     RQ: SerMsg + 'static,
-    OP: LoggableOrderProtocol<RQ>,
-    DL: DecisionLog<RQ, OP>,
+    OP: TLoggableOrderProtocol<RQ>,
+    DL: TDecisionLog<RQ, OP>,
     PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
     NT: LogTransferSendNode<
         RQ,
