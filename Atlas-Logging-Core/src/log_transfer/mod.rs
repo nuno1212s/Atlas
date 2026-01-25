@@ -7,7 +7,7 @@ use atlas_common::ordering::SeqNo;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 
-use crate::decision_log::{TDecisionLog, LoggedDecision};
+use crate::decision_log::{LoggedDecision, TDecisionLog};
 use crate::log_transfer::networking::serialize::LogTransferMessage;
 use crate::log_transfer::networking::LogTransferSendNode;
 use crate::persistent_log::PersistentDecisionLog;

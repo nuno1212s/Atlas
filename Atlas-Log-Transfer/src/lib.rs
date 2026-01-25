@@ -15,7 +15,7 @@ use atlas_common::error::*;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_core::ordering_protocol::loggable::{TLoggableOrderProtocol, PProof};
+use atlas_core::ordering_protocol::loggable::{PProof, TLoggableOrderProtocol};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};

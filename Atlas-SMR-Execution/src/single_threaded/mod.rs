@@ -3,13 +3,11 @@ use crate::metric::{
     UNORDERED_OPS_PER_SECOND_ID,
 };
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 use atlas_metrics::metrics::{metric_duration, metric_increment};
-use atlas_smr_application::app::{
-    Application, Reply, Request,
-};
+use atlas_smr_application::app::{Application, Reply, Request};
 use std::time::Instant;
 use tracing::instrument;
-use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 
 pub mod divisible_state_exec;
 pub mod monolithic_executor;

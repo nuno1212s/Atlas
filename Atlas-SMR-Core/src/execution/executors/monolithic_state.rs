@@ -1,19 +1,18 @@
-use std::sync::Arc;
+use crate::execution::reply::ReplyNode;
+use crate::execution::TExecutor;
+use crate::SMRReply;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::state::monolithic_state;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
-use crate::execution::reply::ReplyNode;
-use crate::execution::TExecutor;
-use crate::SMRReply;
+use std::sync::Arc;
 
 pub type MonStateInstallHandle<S> = (
     ChannelSyncTx<monolithic_state::InstallStateMessage<S>>,
     ChannelSyncRx<monolithic_state::AppStateMessage<S>>,
 );
 
-
-pub trait TMonolithicStateExecutor<A, S, NT> : TExecutor<A, S>
+pub trait TMonolithicStateExecutor<A, S, NT>: TExecutor<A, S>
 where
     A: Application<S> + 'static,
     S: MonolithicState + 'static,
@@ -30,4 +29,3 @@ where
     where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static;
 }
-

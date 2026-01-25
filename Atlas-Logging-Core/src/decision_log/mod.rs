@@ -14,14 +14,13 @@ use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 use atlas_core::execution::TExecutorDecisionHandle;
 use atlas_core::messages::ClientRqInfo;
+use atlas_core::ordering_protocol::decision::{Decision, DecisionRequestBatch};
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
-use atlas_core::ordering_protocol::loggable::{TLoggableOrderProtocol, PProof};
+use atlas_core::ordering_protocol::loggable::{PProof, TLoggableOrderProtocol};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::ordering_protocol::{
-    DecisionAD, DecisionMetadata, ProtocolMessage,
-    ShareableConsensusMessage,
+    DecisionAD, DecisionMetadata, ProtocolMessage, ShareableConsensusMessage,
 };
-use atlas_core::ordering_protocol::decision::{DecisionRequestBatch, Decision};
 
 pub type DecLog<
     RQ: SerMsg,
@@ -113,7 +112,7 @@ where
         &mut self,
         dec_log: DecisionLogType<RQ, OP, Self::LogSerialization>,
     ) -> Result<MaybeVec<LoggedDecision<RQ>>>;
-    
+
     /// Take a snapshot of our current decision log.
     fn snapshot_log(&mut self) -> Result<DecisionLogType<RQ, OP, Self::LogSerialization>>;
 
@@ -131,7 +130,7 @@ where
 
     /// Get the proof of decision for a given sequence number
     fn get_proof(&self, seq: SeqNo) -> Result<Option<ProofType<RQ, OP>>>;
-    
+
     /// The given sequence number was advanced in state with the given
     fn decision_information_received(
         &mut self,
@@ -211,18 +210,16 @@ where
 #[derive(Clone, Debug)]
 pub struct LoggedDecisionInfo {
     seq: SeqNo,
-    contained_client_requests: Vec<ClientRqInfo>
+    contained_client_requests: Vec<ClientRqInfo>,
 }
 
 impl LoggedDecisionInfo {
-    
     fn new(seq: SeqNo, contained_client_requests: Vec<ClientRqInfo>) -> Self {
         Self {
             seq,
             contained_client_requests,
         }
     }
-    
 }
 
 impl Orderable for LoggedDecisionInfo {
@@ -230,7 +227,6 @@ impl Orderable for LoggedDecisionInfo {
         self.seq
     }
 }
-
 
 /// The record of the decision that has been made.
 #[derive(Clone)]
@@ -305,7 +301,6 @@ impl<O> Debug for ExecutionInstructions<O> {
         }
     }
 }
-
 
 /// The information about a decision that is part of the decision log.
 /// Namely, the sequence number and the messages that must be stored

@@ -1,7 +1,6 @@
-#![allow(dead_code)]
 use std::ops::{Deref, DerefMut};
 
-use atlas_common::ordering::SeqNo;
+use atlas_common::{ordering::SeqNo};
 
 /// A structure that holds two copies of a state for preemptive execution.
 ///

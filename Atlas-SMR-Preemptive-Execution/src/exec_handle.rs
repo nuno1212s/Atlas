@@ -5,15 +5,24 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_smr_application::TExecutionHandle;
+use atlas_smr_application::deterministic_execution::TDeterministicExecutionHandle;
 use atlas_smr_application::preemptive_execution::TPreemptiveExecutionHandle;
 use std::time::Instant;
 
 pub enum PreemptiveExecutionRequest<O> {
+    /// Instruct the executor to poll the state channel for new state updates.
     PollStateChannel,
-
+    /// Instruct the executor to catch up to a quorum of updates.
     CatchUp(MaybeVec<UpdateBatch<O>>),
-
-    PreemptiveUpdate((UpdateBatch<O>, Instant)),
+    /// A decided, finalized update batch to be executed.
+    /// The Instant represents the time at which the update was originally queued for execution.
+    UpdateBatch(UpdateBatch<O>, Instant),
+    /// A decided, finalized update batch to be executed, and the application state to be retrieved after execution.
+    /// The Instant represents the time at which the update was originally queued for execution.
+    UpdateFinalizedAndGetAppstateBatch(UpdateBatch<O>, Instant),
+    /// A preemptive update batch to be executed.
+    /// The Instant represents the time at which the update was originally queued for execution.
+    PreemptiveUpdate(UpdateBatch<O>, Instant),
 
     UpdateFinalized(SeqNo),
 
@@ -27,6 +36,21 @@ pub enum PreemptiveExecutionRequest<O> {
 pub struct PreemptiveExecutorHandle<RQ> {
     e_tx: ChannelSyncTx<PreemptiveExecutionRequest<RQ>>,
     request_rx: ChannelSyncRx<PreemptiveExecutionRequest<RQ>>,
+}
+
+impl<RQ> PreemptiveExecutorHandle<RQ> {
+    /// Creates a new `PreemptiveExecutorHandle` with the given execution channel sender.
+    pub fn new(
+        e_tx: ChannelSyncTx<PreemptiveExecutionRequest<RQ>>,
+        request_rx: ChannelSyncRx<PreemptiveExecutionRequest<RQ>>,
+    ) -> Self {
+        Self { e_tx, request_rx }
+    }
+
+    /// Returns the execution request receiver channel.
+    pub fn get_request_receiver(&self) -> &ChannelSyncRx<PreemptiveExecutionRequest<RQ>> {
+        &self.request_rx
+    }
 }
 
 impl<RQ> TExecutionHandle<RQ> for PreemptiveExecutorHandle<RQ>
@@ -58,14 +82,44 @@ where
     }
 }
 
+impl<RQ> TDeterministicExecutionHandle<RQ> for PreemptiveExecutorHandle<RQ>
+where
+    RQ: Send,
+{
+    fn queue_update(&self, batch: UpdateBatch<RQ>) -> atlas_common::error::Result<()> {
+        self.e_tx
+            .send(PreemptiveExecutionRequest::UpdateBatch(
+                batch,
+                Instant::now(),
+            ))
+            .context("Failed to send UpdateBatch request to executor")
+    }
+
+    fn queue_update_and_get_appstate(
+        &self,
+        batch: UpdateBatch<RQ>,
+    ) -> atlas_common::error::Result<()> {
+        self.e_tx
+            .send(
+                PreemptiveExecutionRequest::UpdateFinalizedAndGetAppstateBatch(
+                    batch,
+                    Instant::now(),
+                ),
+            )
+            .context("Failed to send UpdateFinalizedAndGetAppstateBatch request to executor")
+    }
+}
+
 impl<RQ> TPreemptiveExecutionHandle<RQ> for PreemptiveExecutorHandle<RQ>
 where
     RQ: Send,
 {
     fn queue_preemptive_update(&self, batch: UpdateBatch<RQ>) -> atlas_common::error::Result<()> {
-        let now = Instant::now();
         self.e_tx
-            .send(PreemptiveExecutionRequest::PreemptiveUpdate((batch, now)))
+            .send(PreemptiveExecutionRequest::PreemptiveUpdate(
+                batch,
+                Instant::now(),
+            ))
             .context("Failed to send PreemptiveUpdate request to executor")
     }
 

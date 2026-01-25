@@ -53,8 +53,6 @@ where
     DashMap::with_capacity_and_hasher(size, Default::default())
 }
 
-
-
 /// A `HashSet` with a faster hashing function.
 pub type HashSet<T> = ::std::collections::HashSet<T, RandomState>;
 
@@ -69,4 +67,3 @@ pub fn hash_set<T>() -> HashSet<T> {
 }
 
 pub type LinkedHashSet<T> = ::linked_hash_map::LinkedHashMap<T, (), RandomState>;
-

@@ -6,9 +6,7 @@ use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_metrics::metrics::metric_duration;
-use atlas_smr_application::app::{
-    AppData, Application, Reply, Request,
-};
+use atlas_smr_application::app::{AppData, Application, Reply, Request};
 use atlas_smr_application::state::monolithic_state::{
     AppStateMessage, InstallStateMessage, MonolithicState,
 };
@@ -17,10 +15,10 @@ use atlas_smr_core::SMRReply;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 
-use tracing::info;
-use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 use crate::crud_states::CRUDApplication;
 use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
+use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
+use tracing::info;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;

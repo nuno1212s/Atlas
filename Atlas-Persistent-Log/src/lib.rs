@@ -14,19 +14,19 @@ use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_common::persistentdb::KVDB;
 use atlas_common::serialization_helper::SerMsg;
+use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{OrderProtocolLogHelper, PProof};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::ordering_protocol::{
     DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
 };
-use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_core::persistent_log::{
     OperationMode, OrderingProtocolLog, PersistableStateTransferProtocol,
 };
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::{
-    DecLog, DecLogMetadata, TDecisionLogPersistenceHelper, DecisionSummaryForPersistence,
+    DecLog, DecLogMetadata, DecisionSummaryForPersistence, TDecisionLogPersistenceHelper,
 };
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
@@ -39,10 +39,10 @@ use crate::worker::{
 };
 
 pub mod backlog;
+pub mod execution_handle;
 pub mod metrics;
 pub mod serialize;
 mod worker;
-pub mod execution_handle;
 
 pub mod stateful_logs {
     pub mod divisible_state;
@@ -91,7 +91,7 @@ pub trait PersistentLogModeTrait: Send {
     fn init_persistent_log<RQ, EX>(executor: EX) -> PersistentLogMode<RQ>
     where
         RQ: Send + 'static,
-        EX: TLoggedDecisionsHandle<RQ>+ 'static;
+        EX: TLoggedDecisionsHandle<RQ> + 'static;
 }
 
 ///Strict log mode initializer
@@ -258,7 +258,7 @@ where
         POS: OrderProtocolLogHelper<RQ, OPM, POPT>,
         PSP: PersistableStateTransferProtocol + Send + 'static,
         DLPH: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
-        EX: TLoggedDecisionsHandle<RQ>
+        EX: TLoggedDecisionsHandle<RQ>,
     {
         let mut message_types = POS::message_types();
 
