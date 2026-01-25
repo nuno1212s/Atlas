@@ -162,8 +162,8 @@ impl ClientRqInfo {
         }
     }
 
-    pub fn digest(&self) -> Digest {
-        self.digest
+    pub fn digest(&self) -> &Digest {
+        &self.digest
     }
 
     pub fn sender(&self) -> NodeId {

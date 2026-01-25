@@ -18,8 +18,12 @@ use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::divisible_state::DivisibleState;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
-use atlas_smr_core::execution::executors::divisible_state::{DVStateInstallHandle, TDivisibleStateExecutor};
-use atlas_smr_core::execution::executors::monolithic_state::{MonStateInstallHandle, TMonolithicStateExecutor};
+use atlas_smr_core::execution::executors::divisible_state::{
+    DVStateInstallHandle, TDivisibleStateExecutor,
+};
+use atlas_smr_core::execution::executors::monolithic_state::{
+    MonStateInstallHandle, TMonolithicStateExecutor,
+};
 use atlas_smr_core::execution::reply::{ReplyNode, RequestType};
 use atlas_smr_core::execution::TExecutor;
 use atlas_smr_core::SMRReply;

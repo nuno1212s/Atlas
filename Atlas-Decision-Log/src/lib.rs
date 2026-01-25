@@ -13,12 +13,17 @@ use atlas_common::serialization_helper::SerMsg;
 use atlas_common::Err;
 use atlas_core::execution::TExecutorDecisionHandle;
 use atlas_core::messages::ClientRqInfo;
-use atlas_core::ordering_protocol::decision::{Decision, DecisionPart, DecisionRequestBatch, DecisionRequests};
-use atlas_core::ordering_protocol::{DecisionAD, DecisionMetadata, ProtocolMessage};
+use atlas_core::ordering_protocol::decision::{
+    Decision, DecisionPart, DecisionRequestBatch, DecisionRequests,
+};
 use atlas_core::ordering_protocol::loggable::{PProof, TLoggableOrderProtocol};
+use atlas_core::ordering_protocol::{DecisionAD, DecisionMetadata, ProtocolMessage};
 use atlas_core::persistent_log::OperationMode;
 use atlas_logging_core::decision_log::serialize::OrderProtocolLog;
-use atlas_logging_core::decision_log::{DecLog as LogCoreDecLog, DecisionLogInitializer, DecisionSummaryForPersistence, LoggedDecision, RangeOrderable, TDecisionLog, TDecisionLogPersistenceHelper};
+use atlas_logging_core::decision_log::{
+    DecLog as LogCoreDecLog, DecisionLogInitializer, DecisionSummaryForPersistence, LoggedDecision,
+    RangeOrderable, TDecisionLog, TDecisionLogPersistenceHelper,
+};
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_metrics::metrics::metric_duration;
 
@@ -227,7 +232,6 @@ where
             },
         )
     }
-
 
     #[instrument(skip_all, level = Level::DEBUG, fields(batch_count = decisions.len()))]
     fn execute_decisions(
@@ -452,11 +456,7 @@ where {
     ) -> Result<MaybeVec<LoggedDecision<RQ>>> {
         let seq = decision_info.sequence_number();
 
-        let index = seq.index(
-            self.decision_log
-                .last_execution()
-                .unwrap_or(SeqNo::ZERO),
-        );
+        let index = seq.index(self.decision_log.last_execution().unwrap_or(SeqNo::ZERO));
 
         match index {
             Either::Left(_) => {
@@ -479,8 +479,7 @@ where {
                             let (decisions_ad, messages) = messages.into();
 
                             decisions_ad.into_iter().for_each(|decision_ad| {
-                                self.deciding_log
-                                    .decision_additional_data(seq, decision_ad);
+                                self.deciding_log.decision_additional_data(seq, decision_ad);
                             });
 
                             messages.into_iter().for_each(|message| {

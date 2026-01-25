@@ -69,7 +69,7 @@ use atlas_core::request_pre_processing::{
 };
 use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_core::timeouts::{initialize_timeouts, Timeout, TimeoutIdentification, TimeoutsHandle};
-use atlas_logging_core::decision_log::{TDecisionLog, DecisionLogInitializer};
+use atlas_logging_core::decision_log::{DecisionLogInitializer, TDecisionLog};
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::{metric_correlation_id_passed, metric_duration, metric_increment};
 use atlas_persistent_log::{NoPersistentLog, PersistentLogModeTrait};
@@ -620,9 +620,12 @@ where
         DL: 'static,
         ST: 'static,
         OP: 'static,
-        EX: TDeterministicExecutorDecisionHandle<SMRReq<D>>
+        EX: TDeterministicExecutorDecisionHandle<SMRReq<D>>,
     {
-        PL::init_log::<K, LM, OP, ST, DL, PersistentLogHandle<EX>>(PersistentLogHandle::new(executor), db_path)
+        PL::init_log::<K, LM, OP, ST, DL, PersistentLogHandle<EX>>(
+            PersistentLogHandle::new(executor),
+            db_path,
+        )
     }
 
     fn id(&self) -> NodeId {

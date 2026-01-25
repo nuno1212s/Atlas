@@ -9,13 +9,13 @@ use atlas_core::ordering_protocol::permissioned::{
 };
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_logging_core::decision_log::{TDecisionLog, DecisionLogInitializer};
+use atlas_logging_core::decision_log::{DecisionLogInitializer, TDecisionLog};
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::Application;
 use atlas_smr_application::state::divisible_state::DivisibleState;
-use atlas_smr_core::execution::{TExecutor, WrappedExecHandle};
 use atlas_smr_core::execution::executors::divisible_state::TDivisibleStateExecutor;
+use atlas_smr_core::execution::{TExecutor, WrappedExecHandle};
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::DivisibleStateLog;
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
@@ -59,7 +59,19 @@ where
 {
     p: PhantomData<fn() -> (A, SE)>,
     /// The inner replica object, responsible for the general replica things
-    inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL, WrappedExecHandle<SE::ExecutionHandle>>,
+    inner_replica: Replica<
+        RP,
+        S,
+        A::AppData,
+        OP,
+        DL,
+        ST,
+        LT,
+        VT,
+        NT,
+        PL,
+        WrappedExecHandle<SE::ExecutionHandle>,
+    >,
 }
 
 impl<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL>
@@ -105,9 +117,13 @@ where
             WrappedExecHandle<SE::ExecutionHandle>,
             NT::ProtocolNode,
         >,
-        DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, WrappedExecHandle<SE::ExecutionHandle>>,
+        DL: DecisionLogInitializer<
+            SMRReq<A::AppData>,
+            OP,
+            PL,
+            WrappedExecHandle<SE::ExecutionHandle>,
+        >,
         ST: DivisibleStateTransferInitializer<S, NT::StateTransferNode, PL>,
-        
     {
         let DivisibleStateReplicaConfig {
             service,
@@ -121,22 +137,43 @@ where
 
         let wrapped_executor = WrappedExecHandle(executor_handle.clone());
 
-        let inner_replica = Replica::bootstrap(replica_config, wrapped_executor, handle)
-        .await?;
+        let inner_replica = Replica::bootstrap(replica_config, wrapped_executor, handle).await?;
 
         let node = inner_replica.node.clone();
 
         let (state_tx, checkpoint_rx) =
             SE::init(executor_handle, None, service, node.app_node().clone())?;
 
-        DivStateTransfer
-            ::<<Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL, WrappedExecHandle<SE::ExecutionHandle>> as PermissionedProtocolHandling<A::AppData, VT, OP, NT>>::View,
-            S, NT::StateTransferNode, PL, ST>
-        ::init_state_transfer_thread(state_tx, checkpoint_rx, st_config,
-                                     node.state_transfer_node().clone(),
-                                     inner_replica.timeouts.gen_mod_handle_with_name(ST::mod_name()),
-                                     inner_replica.persistent_log.clone(),
-                                     inner_handle, inner_replica.view());
+        DivStateTransfer::<
+            <Replica<
+                RP,
+                S,
+                A::AppData,
+                OP,
+                DL,
+                ST,
+                LT,
+                VT,
+                NT,
+                PL,
+                WrappedExecHandle<SE::ExecutionHandle>,
+            > as PermissionedProtocolHandling<A::AppData, VT, OP, NT>>::View,
+            S,
+            NT::StateTransferNode,
+            PL,
+            ST,
+        >::init_state_transfer_thread(
+            state_tx,
+            checkpoint_rx,
+            st_config,
+            node.state_transfer_node().clone(),
+            inner_replica
+                .timeouts
+                .gen_mod_handle_with_name(ST::mod_name()),
+            inner_replica.persistent_log.clone(),
+            inner_handle,
+            inner_replica.view(),
+        );
 
         let mut replica = Self {
             p: Default::default(),

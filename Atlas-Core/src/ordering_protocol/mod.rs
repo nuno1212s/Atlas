@@ -19,11 +19,11 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
 use decision::Decision;
 
+pub mod decision;
 pub mod loggable;
 pub mod networking;
 pub mod permissioned;
 pub mod reconfigurable_order_protocol;
-pub mod decision;
 
 pub type View<POP: PermissionedOrderingProtocolMessage> =
     <POP as PermissionedOrderingProtocolMessage>::ViewInfo;

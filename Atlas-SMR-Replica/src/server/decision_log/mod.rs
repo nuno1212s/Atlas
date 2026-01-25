@@ -393,7 +393,7 @@ where
                 );
 
                 if let Some(decisions) = self.pending_decisions_to_execute.take() {
-                    self.execute_transferred_decisions(start, decisions)?;
+                    self.execute_transferred_decisions(start, decisions);
                 }
 
                 self.run_decision_log_protocol()?;
@@ -456,7 +456,7 @@ where
         &mut self,
         start: SeqNo,
         decisions: MaybeVec<LoggedDecision<SMRRawReq<R>>>,
-    ) -> Result<()> {
+    ) {
         decisions.into_iter().for_each(|decision| {
             match decision.sequence_number().index(start) {
                 Either::Left(_) => {}
@@ -476,8 +476,6 @@ where
                 }
             }
         });
-
-        Ok(())
     }
 }
 
@@ -507,7 +505,7 @@ where
         R: SerMsg,
         OP: TLoggableOrderProtocol<SMRRawReq<R>>,
     {
-        for info in decision_info.into_iter() {
+        for info in decision_info {
             let decisions = self.decision_log.decision_information_received(info)?;
 
             self.execute_logged_decisions(decisions)?;
@@ -520,7 +518,7 @@ where
         &mut self,
         decisions: MaybeVec<LoggedDecision<SMRRawReq<R>>>,
     ) -> Result<()> {
-        for decision in decisions.into_iter() {
+        for decision in decisions {
             let (seq, requests, to_batch) = decision.into_inner();
 
             debug!("Sending decided batch to pre processor: {:?}", seq);
@@ -578,7 +576,7 @@ where
         R: SerMsg,
         OP: TLoggableOrderProtocol<SMRRawReq<R>>,
     {
-        for info in decision_info.into_iter() {
+        for info in decision_info {
             info.decision_info()
                 .iter()
                 .filter_map(|decision_part| {
@@ -605,7 +603,7 @@ where
         &mut self,
         decisions: MaybeVec<LoggedDecision<SMRRawReq<R>>>,
     ) -> Result<()> {
-        for decision in decisions.into_iter() {
+        for decision in decisions {
             let (seq, requests, to_batch) = decision.into_inner();
 
             debug!("Sending decided batch to pre processor: {:?}", seq);
@@ -627,7 +625,9 @@ where
                         .queue_preemptive_update_finalized(requests.sequence_number())?,
                     ExecutionResult::BeginCheckpoint => self
                         .executor_handle
-                        .queue_preemptive_update_finalized_and_get_appstate(requests.sequence_number())?,
+                        .queue_preemptive_update_finalized_and_get_appstate(
+                            requests.sequence_number(),
+                        )?,
                 },
                 ExecutionInstructions::ExecutionNotNeeded => {
                     // When the execution is handled by other parts of the system

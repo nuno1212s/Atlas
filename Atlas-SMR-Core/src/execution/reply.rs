@@ -9,7 +9,13 @@ pub enum RequestType {
 
 /// Trait for a network node capable of sending replies to clients
 pub trait ReplyNode<RP>: Send + Sync {
-    fn send(&self, reply_type: RequestType, reply: RP, target: NodeId, flush: bool) -> error::Result<()>;
+    fn send(
+        &self,
+        reply_type: RequestType,
+        reply: RP,
+        target: NodeId,
+        flush: bool,
+    ) -> error::Result<()>;
 
     fn send_signed(
         &self,

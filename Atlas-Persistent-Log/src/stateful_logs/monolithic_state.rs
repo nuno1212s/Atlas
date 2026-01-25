@@ -6,19 +6,19 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::SeqNo;
 use atlas_common::persistentdb::KVDB;
+use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{OrderProtocolLogHelper, PProof};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::ordering_protocol::{
     DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
 };
-use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_core::persistent_log::{
     OperationMode, OrderingProtocolLog, PersistableStateTransferProtocol,
 };
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::{
-    DecLog, DecLogMetadata, TDecisionLogPersistenceHelper, DecisionSummaryForPersistence,
+    DecLog, DecLogMetadata, DecisionSummaryForPersistence, TDecisionLogPersistenceHelper,
 };
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_application::serialize::ApplicationData;
@@ -28,6 +28,7 @@ use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::Checkpoint;
 use atlas_smr_core::SMRReq;
 
+use crate::execution_handle::TLoggedDecisionsHandle;
 use crate::worker::monolithic_worker::{
     read_mon_state, MonStatePersistentLogWorker, PersistentMonolithicStateHandle,
     PersistentMonolithicStateStub,
@@ -37,7 +38,6 @@ use crate::worker::{
     COLUMN_FAMILY_PROOFS,
 };
 use crate::{PersistentLog, PersistentLogMode, PersistentLogModeTrait};
-use crate::execution_handle::TLoggedDecisionsHandle;
 
 /// The persistent log handle to the worker for the monolithic state persistency log
 pub struct MonStatePersistentLog<S, D, OPM, POPT, LS, STM>
@@ -92,10 +92,7 @@ where
     LS: DecisionLogMessage<SMRReq<D>, OPM, POPT> + 'static,
     STM: StateTransferMessage + 'static,
 {
-    fn init_mon_log<K, T, POS, PSP, DLPH, EX>(
-        executor: EX,
-        db_path: K,
-    ) -> Result<Self>
+    fn init_mon_log<K, T, POS, PSP, DLPH, EX>(executor: EX, db_path: K) -> Result<Self>
     where
         K: AsRef<Path>,
         T: PersistentLogModeTrait,

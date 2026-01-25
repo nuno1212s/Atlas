@@ -1,12 +1,12 @@
 //mod v2;
 
+use crate::crud_states::Access;
 use crate::scalable::{AccessType, CRUDState};
 use atlas_common::collections::HashMap;
 use atlas_common::ordering::SeqNo;
 use getset::{CopyGetters, Getters};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
-use crate::crud_states::Access;
 
 /// A data structure that represents a single execution unit
 /// Which can be speculatively parallelized.

@@ -1,6 +1,8 @@
 use crate::serialize::ApplicationData;
 use atlas_common::error::*;
-use atlas_core::execution::requests::{IncrementableUpdateBatch, ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
+use atlas_core::execution::requests::{
+    IncrementableUpdateBatch, ReplyBatch, UnorderedUpdateBatch, UpdateBatch,
+};
 
 /// Request type of the `Service`.
 pub type Request<A, S> = <<A as Application<S>>::AppData as ApplicationData>::Request;

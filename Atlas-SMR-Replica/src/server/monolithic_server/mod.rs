@@ -13,13 +13,13 @@ use atlas_core::ordering_protocol::permissioned::{
 };
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_logging_core::decision_log::{TDecisionLog, DecisionLogInitializer};
+use atlas_logging_core::decision_log::{DecisionLogInitializer, TDecisionLog};
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::Application;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
-use atlas_smr_core::execution::{TExecutor, WrappedExecHandle};
 use atlas_smr_core::execution::executors::monolithic_state::TMonolithicStateExecutor;
+use atlas_smr_core::execution::{TExecutor, WrappedExecHandle};
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::MonolithicStateLog;
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;

@@ -7,6 +7,7 @@ edition = "2024"
 getset = "0"
 tracing = "*"
 anyhow = "*"
+either="*"
 atlas-core = { path = "../Atlas-Core" }
 atlas-smr-application = { path = "../Atlas-SMR-Application" }
 atlas-smr-core = { path = "../Atlas-SMR-Core" }

@@ -32,7 +32,8 @@ where
     DAD: PartialEq,
 {
     /// Create a decision information object from a stored message
-    pub fn decision_part_from_message(seq: SeqNo, decision: ShareableMessage<P>) -> Self {
+    #[must_use]
+    pub fn decision_from_message(seq: SeqNo, decision: ShareableMessage<P>) -> Self {
         Decision {
             seq,
             decision_parts: MaybeOrderedVec::One(DecisionPart::PartialDecisionInformation(
@@ -42,7 +43,8 @@ where
     }
 
     /// Create a decision information object from a metadata object
-    pub fn decision_part_from_metadata(seq: SeqNo, metadata: MD) -> Self {
+    #[must_use]
+    pub fn decision_from_metadata(seq: SeqNo, metadata: MD) -> Self {
         Decision {
             seq,
             decision_parts: MaybeOrderedVec::One(DecisionPart::DecisionMetadata(metadata)),
@@ -50,7 +52,8 @@ where
     }
 
     /// Create a decision information object from a group of messages
-    pub fn decision_part_from_messages(seq: SeqNo, messages: Vec<ShareableMessage<P>>) -> Self {
+    #[must_use]
+    pub fn decision_from_messages(seq: SeqNo, messages: Vec<ShareableMessage<P>>) -> Self {
         Decision {
             seq,
             decision_parts: MaybeOrderedVec::One(DecisionPart::PartialDecisionInformation(
@@ -59,14 +62,24 @@ where
         }
     }
 
-    pub fn decision_part_from_requests(seq: SeqNo, requests: DecisionRequests<O>) -> Self {
+    #[must_use]
+    pub fn decision_from_requests(seq: SeqNo, requests: DecisionRequests<O>) -> Self {
         Decision {
             seq,
             decision_parts: MaybeOrderedVec::One(DecisionPart::DecisionRequests(requests)),
         }
     }
 
+    #[must_use]
+    pub fn decision_done(seq: SeqNo) -> Self {
+        Decision {
+            seq,
+            decision_parts: MaybeOrderedVec::One(DecisionPart::DecisionDone),
+        }
+    }
+
     /// Partial decision information creation
+    #[must_use]
     pub fn partial_decision_info(
         seq: SeqNo,
         additional_data: MaybeVec<DAD>,
@@ -81,6 +94,7 @@ where
     }
 
     /// Create a decision info from metadata and messages
+    #[must_use]
     pub fn decision_info_from_metadata_and_messages(
         seq: SeqNo,
         metadata: MD,
@@ -103,7 +117,33 @@ where
         }
     }
 
+    #[must_use]
+    pub fn decision_from_metadata_and_requests(
+        seq: SeqNo,
+        metadata: MD,
+        additional_data: MaybeVec<DAD>,
+        messages: MaybeVec<ShareableMessage<P>>,
+        requests: DecisionRequests<O>,
+    ) -> Self
+    where
+        DAD: PartialEq,
+    {
+        let mut decision_info = BTreeSet::new();
+
+        decision_info.insert(DecisionPart::DecisionMetadata(metadata));
+        decision_info.insert(DecisionPart::DecisionRequests(requests));
+        decision_info.insert(DecisionPart::PartialDecisionInformation(
+            PartialDecisionInformation::new(additional_data, messages),
+        ));
+
+        Decision {
+            seq,
+            decision_parts: MaybeOrderedVec::from_set(decision_info),
+        }
+    }
+
     /// Create a decision done object
+    #[must_use]
     pub fn completed_decision_with_requests(seq: SeqNo, update: DecisionRequests<O>) -> Self {
         Decision {
             seq,
@@ -115,6 +155,7 @@ where
     }
 
     /// Create a full decision info, from all of the components
+    #[must_use]
     pub fn full_decision_info(
         seq: SeqNo,
         metadata: MD,
@@ -142,6 +183,9 @@ where
 
     /// Merge two decisions by appending one to the other
     /// Returns an error when the sequence number of the decisions does not match
+    ///
+    /// # Errors
+    /// Returns an error if the sequence numbers of the decisions do not match
     pub fn merge_decisions(&mut self, other: Self) -> error::Result<()>
     where
         DAD: PartialEq,
@@ -157,7 +201,7 @@ where
         self.decision_parts = {
             let decisions = std::mem::replace(&mut self.decision_parts, MaybeOrderedVec::None);
 
-            for dec_info in decisions.into_iter() {
+            for dec_info in decisions {
                 ordered_vec_builder.push(dec_info);
             }
 
@@ -390,6 +434,7 @@ impl<O> Orderable for DecisionRequests<O> {
 
 /// Constructor for the ProtocolConsensusDecision struct
 impl<O> DecisionRequests<O> {
+    #[must_use]
     pub fn new(
         seq: SeqNo,
         executable_batch: DecisionRequestBatch<O>,
@@ -404,6 +449,7 @@ impl<O> DecisionRequests<O> {
         }
     }
 
+    #[must_use]
     pub fn into(self) -> (SeqNo, DecisionRequestBatch<O>, Vec<ClientRqInfo>, Digest) {
         (
             self.seq,
