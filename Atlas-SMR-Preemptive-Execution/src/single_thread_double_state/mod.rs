@@ -15,7 +15,7 @@ use atlas_smr_core::execution::executors::monolithic_state::MonStateInstallHandl
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_execution::ExecutorReplier;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-
+use atlas_smr_application::serialize::ApplicationData;
 use crate::{
     exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle},
     single_thread_double_state::duplicate_state::DuplicateState,
@@ -23,6 +23,8 @@ use crate::{
 
 mod duplicate_state;
 mod preemptive_requests;
+mod confirmed_requests;
+mod state_management;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
@@ -119,6 +121,17 @@ where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     {
         while let Ok(exec_req) = self.work_rx.recv() {
+            match exec_req {
+                PreemptiveExecutionRequest::PollStateChannel => {}
+                PreemptiveExecutionRequest::CatchUp(_) => {}
+                PreemptiveExecutionRequest::UpdateBatch(_, _) => {}
+                PreemptiveExecutionRequest::UpdateFinalizedAndGetAppstateBatch(_, _) => {}
+                PreemptiveExecutionRequest::PreemptiveUpdate(_, _) => {}
+                PreemptiveExecutionRequest::UpdateFinalized(_) => {}
+                PreemptiveExecutionRequest::UpdateFinalizedAndGetAppstate(_) => {}
+                PreemptiveExecutionRequest::ExecuteUnordered(_) => {}
+                PreemptiveExecutionRequest::Read(_) => {}
+            }
             
         }
         // Worker loop implementation goes here
