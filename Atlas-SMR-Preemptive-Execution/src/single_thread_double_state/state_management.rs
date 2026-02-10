@@ -1,22 +1,32 @@
+use atlas_common::channel::sync::ChannelSyncTx;
 use atlas_common::ordering::SeqNo;
-use atlas_core::execution::requests::UpdateBatch;
-use std::time::Instant;
+use atlas_core::execution::requests::{Update, UpdateBatch};
+use atlas_smr_application::app::{Application, Request};
 
-/// Messages sent by the work distributor to the preemptive state management thread to trigger updates to the preemptive state.
-pub(super) enum StateMessage<S> {
-    ConfirmedStateReceived(SeqNo, S),
+enum PreemptiveStateMessage<A, S>
+where
+    A: Application<S>,
+{
+    PreemptiveUpdate(UpdateBatch<Request<A, S>>),
+    ConfirmedUpdate(SeqNo)
 }
 
-/// Messages that the preemptive state management thread sends to the confirmed state management thread.
-#[allow(dead_code)]
-pub(super) enum PreemptiveToConfirmedMsg<R> {
-    /// A confirmed batch forwarded to the confirmed worker for authoritative execution.
-    /// The Instant records when the message was sent so the confirmed worker can measure its
-    /// processing latency.
-    UpdateConfirmed(UpdateBatch<R>, Instant),
-    UpdateConfirmedEmitAppState(UpdateBatch<R>, Instant),
-    RequestStateCopy,
+enum ConfirmedStateMessage<A, S>
+where
+    A: Application<S>,
+{
+    Update(UpdateBatch<Request<A, S>>),
 }
 
-/// Messages that the confirmed state management thread sends to the preemptive state management thread.
-pub(super) struct ConfirmedToPreemptiveMsg<S>(#[allow(dead_code)] pub SeqNo, pub S);
+enum ManagementMessage<A, S>
+where A: Application<S> {
+    UpdateConfirmed(UpdateBatch<Request<A, S>>),
+}
+
+struct PreemptiveStateManagementHandle<A, S>
+where
+    A: Application<S>,
+{
+    preemptive_execution_handle: ChannelSyncTx<PreemptiveStateMessage<A, S>>,
+    confirmed_execution_handle: ChannelSyncTx<ConfirmedStateMessage<A, S>>,
+}

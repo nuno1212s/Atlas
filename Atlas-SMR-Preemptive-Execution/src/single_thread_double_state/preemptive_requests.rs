@@ -16,8 +16,14 @@ where
 
     preemptive_state: S,
 
-    pending_permanent_update: VecDeque<(UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>)>,
+    pending_permanent_update: VecDeque<PendingPermanentUpdate<A, S>>,
 }
+
+pub(super) struct PendingPermanentUpdate<A, S>(
+    UpdateBatch<Request<A, S>>,
+    ReplyBatch<Reply<A, S>>)
+where
+    A: Application<S>;
 
 impl<S, A> Orderable for PreemptiveRequestPipeline<S, A>
 where
@@ -40,6 +46,12 @@ where
         }
     }
 
+    pub fn install_confirmed_state(&mut self, confirmed_state: S, confirmed_seq_no: SeqNo) {
+        self.preemptive_state = confirmed_state;
+        self.current_state_seq_no = confirmed_seq_no;
+        self.pending_permanent_update.clear();
+    }
+
     pub fn handle_preemptive_update(
         &mut self,
         application: &A,
@@ -49,7 +61,7 @@ where
     {
         match update_batch.sequence_number().index(self.current_state_seq_no) {
             Either::Left(_) => {
-                
+
             },
             Either::Right(1) => (),
             Either::Right(_) => panic!("Preemptive update batch sequence number is too far ahead of current state sequence number"),
@@ -60,18 +72,22 @@ where
 
         // Update the current state sequence number.
         self.current_state_seq_no = pending_copy.seq_no();
-        self.pending_permanent_update.push_back((pending_copy, replies));
+        self.pending_permanent_update.push_back(PendingPermanentUpdate(pending_copy, replies));
     }
 
-    pub fn handle_update_confirmed(&mut self, sequence_no: SeqNo) -> Option<(UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>)> {
+    pub fn handle_update_confirmed(&mut self, sequence_no: SeqNo) -> PendingPermanentUpdate<A, S> {
 
-
-        if let Some((pending_update, _)) = self.pending_permanent_update.front() {
-            if pending_update.seq_no() == sequence_no {
-                return self.pending_permanent_update.pop_front();
+        // We can only confirm the next pending permanent update in order.
+        if let Some(pending_permanent_update) = self.pending_permanent_update.front() {
+            if pending_permanent_update.0.seq_no() == sequence_no {
+                self.pending_permanent_update.pop_front().unwrap()
+            } else {
+                panic!("Confirmed update batch sequence number does not match the next pending permanent update");
             }
+        } else {
+            panic!("Preemptive update batch sequence number is not found");
         }
-
-        None
     }
+
+
 }
