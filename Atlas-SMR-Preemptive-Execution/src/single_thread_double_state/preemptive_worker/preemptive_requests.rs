@@ -49,7 +49,15 @@ where
     pub fn install_confirmed_state(&mut self, confirmed_state: S, confirmed_seq_no: SeqNo) {
         self.preemptive_state = confirmed_state;
         self.current_state_seq_no = confirmed_seq_no;
-        self.pending_permanent_update.clear();
+        
+        // Remove any pending permanent updates that are now stale.
+        while let Some(pending_permanent_update) = self.pending_permanent_update.front() {
+            if pending_permanent_update.0.seq_no() <= confirmed_seq_no {
+                self.pending_permanent_update.pop_front();
+            } else {
+                break;
+            }
+        }
     }
 
     pub fn handle_preemptive_update(

@@ -1,22 +1,15 @@
 use crate::ordering::{InvalidSeqNo, Orderable, SeqNo};
 use std::collections::VecDeque;
 
-pub mod btree_tbo_queue;
+pub mod tbo_queue;
 pub mod vec_tbo_queue;
-
-#[cfg(test)]
-mod test;
 
 /// A TBO (Total-Buffered-Ordering) queue is a data structure that maintains a total order of
 /// messages based on their sequence numbers.
 /// It allows for out-of-order insertion of messages
 /// but ensures that messages are processed in the correct order when they are popped from the queue.
-///
-/// These queues only move forward in sequence numbers,
-/// so messages with sequence numbers that are too old to be popped
-/// will be rejected when pushed into the queue
-/// or discarded when the sequence number is advanced or installed.
-pub trait TTboQueue<M>: Orderable + Default {
+pub trait TTboQueue<M>: Orderable {
+
     /// Push a new message into the TBO queue. Will only be popped
     /// when its sequence number matches the current sequence number of the queue.
     /// Returns an error if the message has a sequence number
@@ -24,9 +17,6 @@ pub trait TTboQueue<M>: Orderable + Default {
     fn push(&mut self, message: M) -> Result<(), InvalidSeqNo>
     where
         M: Orderable;
-
-    /// Returns true if there is no message available at the current sequence number.
-    fn is_empty(&self) -> bool;
 
     /// Peeks at the next message in the TBO queue,
     /// if its sequence number matches the current sequence number of the queue.
@@ -49,13 +39,10 @@ pub trait TTboQueue<M>: Orderable + Default {
     /// Installs a new sequence number for the queue, which may be used to skip over
     /// a range of sequence numbers. Any messages with sequence numbers that are now too old to be popped
     /// will be discarded.
-    fn advance_to_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo>;
+    fn install_seq(&mut self, seq_no: SeqNo);
 
     /// Clears all messages from the queue, does not change the current sequence number.
     fn clear(&mut self);
-
-    /// Resets the current queue, clearing all messages and setting the current sequence number to `seq`.
-    fn reset_with_seq(&mut self, seq: SeqNo);
 }
 
 struct SeqMessageEntry<M>(SeqNo, VecDeque<M>);
@@ -87,4 +74,7 @@ impl<M> Ord for SeqMessageEntry<M> {
 }
 
 #[cfg(test)]
-mod perf_tests {}
+mod perf_tests {
+
+}
+
