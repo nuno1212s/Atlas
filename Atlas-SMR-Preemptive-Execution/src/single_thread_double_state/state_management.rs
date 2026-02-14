@@ -13,15 +13,6 @@ where
     ConfirmedUpdate(SeqNo),
 }
 
-/// Messages sent by the work distributor to the confirmed state management thread to trigger updates to the confirmed state.
-pub(super) enum ConfirmedStateMessage<A, S>
-where
-    A: Application<S>,
-{
-    Update(UpdateBatch<Request<A, S>>),
-    ConfirmedStateReceived(SeqNo, S)
-}
-
 /// messages that the preemptive state management thread sends to the confirmed state management thread.
 pub(super) enum PreemptiveToConfirmedMsg<A, S>
 where
@@ -39,5 +30,4 @@ where
     A: Application<S>,
 {
     preemptive_execution_handle: ChannelSyncTx<PreemptiveStateMessage<A, S>>,
-    confirmed_execution_handle: ChannelSyncTx<ConfirmedStateMessage<A, S>>,
 }
