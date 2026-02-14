@@ -15,16 +15,15 @@ use atlas_smr_core::execution::executors::monolithic_state::MonStateInstallHandl
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_execution::ExecutorReplier;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use atlas_smr_application::serialize::ApplicationData;
 use crate::{
     exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle},
     single_thread_double_state::duplicate_state::DuplicateState,
 };
 
 mod duplicate_state;
-mod preemptive_requests;
-mod confirmed_requests;
 mod state_management;
+mod preemptive_worker;
+mod confirmed_worker;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;

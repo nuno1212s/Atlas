@@ -2,6 +2,9 @@
 #![allow(dead_code)]
 #![allow(clippy::non_canonical_partial_ord_impl)]
 
+mod tbo_queue;
+mod singular_tbo_queue;
+
 use std::cmp::{Ordering, PartialEq, PartialOrd};
 use std::collections::VecDeque;
 use std::ops::{Add, AddAssign};

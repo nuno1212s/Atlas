@@ -1,33 +1,44 @@
+use crate::single_thread_double_state::confirmed_worker::comm_handles::ConfirmedChannels;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::execution::requests::{ReplyBatch, UpdateBatch};
 use atlas_smr_application::app::{Application, Reply, Request};
 
-pub(super) struct ConfirmedRequestPipeline<S> {
+pub(super) struct ConfirmedRequestPipeline<A, S>
+where
+    A: Application<S>,
+{
+    comm_handle: ConfirmedChannels<A, S>,
+
     current_confirmed_seq_no: SeqNo,
     confirmed_state: S,
 }
 
-impl<S> Orderable for ConfirmedRequestPipeline<S> {
+impl<A, S> Orderable for ConfirmedRequestPipeline<A, S>
+where
+    A: Application<S>,
+{
     fn sequence_number(&self) -> SeqNo {
         self.current_confirmed_seq_no
     }
 }
 
-impl<S> ConfirmedRequestPipeline<S> {
-    pub fn new(initial_state: S) -> Self {
+impl<A, S> ConfirmedRequestPipeline<A, S>
+where
+    A: Application<S>,
+{
+    pub fn new(initial_state: S, handle: ConfirmedChannels<A, S>) -> Self {
         Self {
+            comm_handle: handle,
             current_confirmed_seq_no: SeqNo::ZERO,
             confirmed_state: initial_state,
         }
     }
 
-    pub fn execute_update<A>(
+    pub fn execute_update(
         &mut self,
         application: &A,
         update_batch: UpdateBatch<Request<A, S>>,
     ) -> ReplyBatch<Reply<A, S>>
-    where
-        A: Application<S>,
     {
         let update_seq = update_batch.seq_no();
 

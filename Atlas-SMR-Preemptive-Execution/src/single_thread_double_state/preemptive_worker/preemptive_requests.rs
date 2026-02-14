@@ -1,11 +1,10 @@
 use std::collections::VecDeque;
 
+use crate::single_thread_double_state::preemptive_worker::comm_handles::PreemptiveChannels;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_core::execution::requests::UpdateBatch;
-use atlas_smr_application::{
-    app::{Application, Reply, Request}
-};
 use atlas_core::execution::requests::ReplyBatch;
+use atlas_core::execution::requests::UpdateBatch;
+use atlas_smr_application::app::{Application, Reply, Request};
 use either::Either;
 
 pub(super) struct PreemptiveRequestPipeline<S, A>
@@ -17,11 +16,11 @@ where
     preemptive_state: S,
 
     pending_permanent_update: VecDeque<PendingPermanentUpdate<A, S>>,
+    
+    channel_handles: PreemptiveChannels<A, S>
 }
 
-pub(super) struct PendingPermanentUpdate<A, S>(
-    UpdateBatch<Request<A, S>>,
-    ReplyBatch<Reply<A, S>>)
+pub(super) struct PendingPermanentUpdate<A, S>(UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>)
 where
     A: Application<S>;
 
@@ -38,11 +37,12 @@ impl<S, A> PreemptiveRequestPipeline<S, A>
 where
     A: Application<S>,
 {
-    pub fn new(initial_state: S) -> Self {
+    pub fn new(handle: PreemptiveChannels<A, S>, initial_state: S) -> Self {
         Self {
             current_state_seq_no: SeqNo::ZERO,
             preemptive_state: initial_state,
             pending_permanent_update: VecDeque::new(),
+            channel_handles: handle,
         }
     }
 
@@ -59,12 +59,15 @@ where
     ) where
         A: Application<S>,
     {
-        match update_batch.sequence_number().index(self.current_state_seq_no) {
-            Either::Left(_) => {
-
-            },
+        match update_batch
+            .sequence_number()
+            .index(self.current_state_seq_no)
+        {
+            Either::Left(_) => {}
             Either::Right(1) => (),
-            Either::Right(_) => panic!("Preemptive update batch sequence number is too far ahead of current state sequence number"),
+            Either::Right(_) => panic!(
+                "Preemptive update batch sequence number is too far ahead of current state sequence number"
+            ),
         }
 
         let pending_copy = update_batch.clone();
@@ -72,22 +75,22 @@ where
 
         // Update the current state sequence number.
         self.current_state_seq_no = pending_copy.seq_no();
-        self.pending_permanent_update.push_back(PendingPermanentUpdate(pending_copy, replies));
+        self.pending_permanent_update
+            .push_back(PendingPermanentUpdate(pending_copy, replies));
     }
 
     pub fn handle_update_confirmed(&mut self, sequence_no: SeqNo) -> PendingPermanentUpdate<A, S> {
-
         // We can only confirm the next pending permanent update in order.
         if let Some(pending_permanent_update) = self.pending_permanent_update.front() {
             if pending_permanent_update.0.seq_no() == sequence_no {
                 self.pending_permanent_update.pop_front().unwrap()
             } else {
-                panic!("Confirmed update batch sequence number does not match the next pending permanent update");
+                panic!(
+                    "Confirmed update batch sequence number does not match the next pending permanent update"
+                );
             }
         } else {
             panic!("Preemptive update batch sequence number is not found");
         }
     }
-
-
 }
