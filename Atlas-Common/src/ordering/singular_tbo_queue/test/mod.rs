@@ -145,7 +145,7 @@ where
     assert_eq!(SeqNo::ZERO, queue.sequence_number());
 
     // Install new sequence number 3
-    queue.advance_to_seq(SeqNo::from(3u32)).unwrap();
+    queue.install_seq(SeqNo::from(3u32));
 
     // Current sequence should now be 3
     assert_eq!(SeqNo::from(3u32), queue.sequence_number());
@@ -171,7 +171,7 @@ where
     assert_eq!(SeqNo::ZERO, queue.sequence_number());
 
     // Install same sequence
-    queue.advance_to_seq(SeqNo::ZERO).unwrap();
+    queue.install_seq(SeqNo::ZERO);
 
     // Should still be at 0 with same message
     assert_eq!(SeqNo::ZERO, queue.sequence_number());
@@ -373,7 +373,7 @@ where
     assert_eq!(SeqNo::from(3u32), queue.sequence_number());
 
     // Install seq 7
-    queue.advance_to_seq(SeqNo::from(7u32)).unwrap();
+    queue.install_seq(SeqNo::from(7u32));
 
     // Should be at seq 7 now
     assert_eq!(SeqNo::from(7u32), queue.sequence_number());
@@ -454,7 +454,7 @@ where
 
     // Jump far ahead
     let far_seq = SeqNo::from(100u32);
-    queue.advance_to_seq(far_seq).unwrap();
+    queue.install_seq(far_seq);
 
     assert_eq!(far_seq, queue.sequence_number());
     assert!(queue.is_empty());
@@ -579,7 +579,7 @@ where
     let current_seq = queue.sequence_number();
 
     assert!(matches!(
-        queue.advance_to_seq(SeqNo::ZERO),
+        queue.install_seq(SeqNo::ZERO),
         Err(InvalidSeqNo::Small)
     ));
 

@@ -68,8 +68,8 @@ pub trait Application<S>: Send + Sync {
     ///
     /// ```rust
     /// fn update(
-    ///     state: &mut State<Self>,
-    ///     request: Request<Self>,
+    ///     state: &mut S,
+    ///     request: Request<Self, S>,
     /// ) -> Reply<Self> {
     ///     unimplemented!()
     /// }
