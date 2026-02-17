@@ -1,11 +1,11 @@
-use std::fmt::Display;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use atlas_common::ordering::{SeqNo};
-use atlas_common::ordering::tbo_queue::TTboQueue;
-use atlas_common::ordering::Orderable;
-use std::sync::Arc;
 use atlas_common::ordering::tbo_queue::btree_tbo_queue::TboQueue;
 use atlas_common::ordering::tbo_queue::vec_tbo_queue::VTboQueue;
+use atlas_common::ordering::tbo_queue::TTboQueue;
+use atlas_common::ordering::Orderable;
+use atlas_common::ordering::SeqNo;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::fmt::Display;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Copy)]
 struct BenchSeq(usize, usize);
@@ -31,7 +31,10 @@ impl Orderable for BenchMsg {
 
 impl BenchMsg {
     fn new(seq: SeqNo, size: usize) -> Self {
-        BenchMsg { seq, payload: Arc::new(vec![0u8; size]) }
+        BenchMsg {
+            seq,
+            payload: Arc::new(vec![0u8; size]),
+        }
     }
 }
 
@@ -42,8 +45,14 @@ impl BenchMsg {
 // - M: message type implementing Orderable + Clone
 // - msg_per_seq: number of messages per sequence number (dynamic parameter)
 
-fn bench_push<F, G, T, M>(c: &mut Criterion, id: &str, factory: F, gen: G, sizes: &[usize], msg_per_seqs: &[usize])
-where
+fn bench_push<F, G, T, M>(
+    c: &mut Criterion,
+    id: &str,
+    factory: F,
+    gen: G,
+    sizes: &[usize],
+    msg_per_seqs: &[usize],
+) where
     F: Fn() -> T + Send + Sync + 'static,
     G: Fn(usize, usize) -> M + Send + Sync + 'static,
     T: TTboQueue<M> + Send + 'static,
@@ -56,26 +65,36 @@ where
             let total_messages = size * msg_per_seq;
             group.throughput(Throughput::Elements(total_messages as u64));
             let seq = BenchSeq(size, msg_per_seq);
-            group.bench_with_input(BenchmarkId::from_parameter(seq.clone()), &seq, |b, &num_seqs| {
-                b.iter_batched(
-                    &factory,
-                    |mut q| {
-                        for i in 0..total_messages {
-                            let m = gen(i, msg_per_seq);
-                            let _ = q.push(m);
-                        }
-                    },
-                    criterion::BatchSize::LargeInput,
-                )
-            });
+            group.bench_with_input(
+                BenchmarkId::from_parameter(seq.clone()),
+                &seq,
+                |b, &num_seqs| {
+                    b.iter_batched(
+                        &factory,
+                        |mut q| {
+                            for i in 0..total_messages {
+                                let m = gen(i, msg_per_seq);
+                                let _ = q.push(m);
+                            }
+                        },
+                        criterion::BatchSize::LargeInput,
+                    )
+                },
+            );
         }
     }
 
     group.finish();
 }
 
-fn bench_pop<F, G, T, M>(c: &mut Criterion, id: &str, factory: F, gen: G, sizes: &[usize], msg_per_seqs: &[usize])
-where
+fn bench_pop<F, G, T, M>(
+    c: &mut Criterion,
+    id: &str,
+    factory: F,
+    gen: G,
+    sizes: &[usize],
+    msg_per_seqs: &[usize],
+) where
     F: Fn() -> T + Send + Sync + 'static,
     G: Fn(usize, usize) -> M + Send + Sync + 'static,
     T: TTboQueue<M> + Send + 'static,
@@ -118,8 +137,14 @@ where
     group.finish();
 }
 
-fn bench_peek<F, G, T, M>(c: &mut Criterion, id: &str, factory: F, gen: G, sizes: &[usize], msg_per_seq: &[usize])
-where
+fn bench_peek<F, G, T, M>(
+    c: &mut Criterion,
+    id: &str,
+    factory: F,
+    gen: G,
+    sizes: &[usize],
+    msg_per_seq: &[usize],
+) where
     F: Fn() -> T + Send + Sync + 'static,
     G: Fn(usize, usize) -> M + Send + Sync + 'static,
     T: TTboQueue<M> + Send + 'static,
@@ -161,8 +186,13 @@ where
     group.finish();
 }
 
-fn bench_advance_install_clear<F, G, T, M>(c: &mut Criterion, id: &str, factory: F, gen: G, msg_per_seq: usize)
-where
+fn bench_advance_install_clear<F, G, T, M>(
+    c: &mut Criterion,
+    id: &str,
+    factory: F,
+    gen: G,
+    msg_per_seq: usize,
+) where
     F: Fn() -> T + Send + Sync + 'static,
     G: Fn(usize, usize) -> M + Send + Sync + 'static,
     T: TTboQueue<M> + Send + 'static,
@@ -225,7 +255,10 @@ where
 
 // Example: bench the library's TboQueue implementation with varying payload sizes
 // Here, sizes represent the number of sequence numbers, and we vary the messages per sequence
-fn tbo_queue_bench<Q>(c: &mut Criterion, name: &str) where Q: TTboQueue<BenchMsg> + Send + 'static {
+fn tbo_queue_bench<Q>(c: &mut Criterion, name: &str)
+where
+    Q: TTboQueue<BenchMsg> + Send + 'static,
+{
     // Test configurations: number of sequence numbers to generate
     let seq_sizes = [1usize, 10usize, 100usize, 1000usize];
 
@@ -233,9 +266,8 @@ fn tbo_queue_bench<Q>(c: &mut Criterion, name: &str) where Q: TTboQueue<BenchMsg
 
     let factory = || Q::default();
 
-    let gen = |i: usize, msg_per_seq: usize| {
-        BenchMsg::new(SeqNo::from((i / msg_per_seq) as u32), 128)
-    };
+    let gen =
+        |i: usize, msg_per_seq: usize| BenchMsg::new(SeqNo::from((i / msg_per_seq) as u32), 128);
 
     bench_push(c, name, factory, gen, &seq_sizes, &msg_per_seq);
     bench_pop(c, name, factory, gen, &seq_sizes, &msg_per_seq);

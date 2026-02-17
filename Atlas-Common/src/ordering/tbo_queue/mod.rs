@@ -12,7 +12,6 @@ mod test;
 /// It allows for out-of-order insertion of messages
 /// but ensures that messages are processed in the correct order when they are popped from the queue.
 pub trait TTboQueue<M>: Orderable + Default {
-
     /// Push a new message into the TBO queue. Will only be popped
     /// when its sequence number matches the current sequence number of the queue.
     /// Returns an error if the message has a sequence number
@@ -49,7 +48,6 @@ pub trait TTboQueue<M>: Orderable + Default {
 
     /// Clears all messages from the queue, does not change the current sequence number.
     fn clear(&mut self);
-
 }
 
 struct SeqMessageEntry<M>(SeqNo, VecDeque<M>);
@@ -81,6 +79,4 @@ impl<M> Ord for SeqMessageEntry<M> {
 }
 
 #[cfg(test)]
-mod perf_tests {
-
-}
+mod perf_tests {}
