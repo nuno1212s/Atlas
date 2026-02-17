@@ -1,7 +1,7 @@
-use crate::ordering::tbo_queue::{SeqMessageEntry, TTboQueue};
 use crate::ordering::{InvalidSeqNo, Orderable, SeqNo};
 use either::Either;
 use std::collections::{BTreeMap, VecDeque};
+use crate::ordering::tbo_queue::{SeqMessageEntry, TTboQueue};
 
 /// A TBO (Total-Buffered-Ordering) queue is a data structure that maintains a total order of
 /// messages based on their sequence numbers.
@@ -27,7 +27,7 @@ where
 impl<M> Default for TboQueue<M>
 where
     M: Orderable,
-{
+ {
     fn default() -> Self {
         Self::new()
     }
@@ -100,9 +100,9 @@ where
         self.current_seq_no = self.current_seq_no.next();
     }
 
-    fn advance_to_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo> {
+    fn install_seq(&mut self, seq_no: SeqNo) {
         if seq_no < self.current_seq_no {
-            Err(InvalidSeqNo::Small)
+            self.current_seq_no = seq_no;
         } else {
             self.current_seq_no = seq_no;
 
@@ -115,17 +115,131 @@ where
             for key in to_remove {
                 self.message_queue.remove(&key);
             }
-
-            Ok(())
         }
     }
 
     fn clear(&mut self) {
         self.message_queue.clear();
     }
+}
 
-    fn reset_with_seq(&mut self, seq: SeqNo) {
-        self.message_queue.clear();
-        self.current_seq_no = seq;
+#[cfg(test)]
+mod tests {
+    use crate::ordering::tbo_queue::test::*;
+    use super::*;
+
+    #[test]
+    fn test_btree_can_not_pop_until_adv() {
+        test_tbo_queue_can_not_pop_until_adv::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_can_pop_after_adv() {
+        test_tbo_queue_can_pop_after_adv::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_adv_skips_old_messages() {
+        test_adv_skips_old_messages::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_clear_queue() {
+        test_clear_queue::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_reject_old_messages() {
+        test_reject_old_messages::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_install_seq_discards_old_messages() {
+        test_install_seq_discards_old_messages::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_install_seq_with_current_seq_no_change() {
+        test_install_seq_with_current_seq_no_change::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_is_empty_consistent_with_peek() {
+        test_is_empty_consistent_with_peek::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_is_empty_consistent_with_pop() {
+        test_is_empty_consistent_with_pop::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_fifo_ordering_same_sequence() {
+        test_fifo_ordering_same_sequence::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_out_of_order_insertion() {
+        test_out_of_order_insertion::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_peek_does_not_remove() {
+        test_peek_does_not_remove::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_multiple_advance_seq() {
+        test_multiple_advance_seq::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_clear_preserves_sequence_number() {
+        test_clear_preserves_sequence_number::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_interleaved_push_pop() {
+        test_interleaved_push_pop::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_multiple_pops_same_sequence() {
+        test_multiple_pops_same_sequence::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_peek_empty_after_advance() {
+        test_peek_empty_after_advance::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_install_seq_after_consumption() {
+        test_install_seq_after_consumption::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_push_same_sequence_multiple_times() {
+        test_push_same_sequence_multiple_times::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_gaps_in_sequence_numbers() {
+        test_gaps_in_sequence_numbers::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_clear_empty_queue() {
+        test_clear_empty_queue::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_push_after_clear() {
+        test_push_after_clear::<TboQueue<Message>>();
+    }
+
+    #[test]
+    fn test_btree_install_seq_far_future() {
+        test_install_seq_far_future::<TboQueue<Message>>();
     }
 }

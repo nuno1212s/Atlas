@@ -1,14 +1,17 @@
 use crate::ordering::{InvalidSeqNo, Orderable, SeqNo};
 use std::collections::VecDeque;
 
-pub mod tbo_queue;
+pub mod btree_tbo_queue;
 pub mod vec_tbo_queue;
+
+#[cfg(test)]
+mod test;
 
 /// A TBO (Total-Buffered-Ordering) queue is a data structure that maintains a total order of
 /// messages based on their sequence numbers.
 /// It allows for out-of-order insertion of messages
 /// but ensures that messages are processed in the correct order when they are popped from the queue.
-pub trait TTboQueue<M>: Orderable {
+pub trait TTboQueue<M>: Orderable + Default {
 
     /// Push a new message into the TBO queue. Will only be popped
     /// when its sequence number matches the current sequence number of the queue.
@@ -17,6 +20,9 @@ pub trait TTboQueue<M>: Orderable {
     fn push(&mut self, message: M) -> Result<(), InvalidSeqNo>
     where
         M: Orderable;
+
+    /// Returns true if there is no message available at the current sequence number.
+    fn is_empty(&self) -> bool;
 
     /// Peeks at the next message in the TBO queue,
     /// if its sequence number matches the current sequence number of the queue.
@@ -43,6 +49,7 @@ pub trait TTboQueue<M>: Orderable {
 
     /// Clears all messages from the queue, does not change the current sequence number.
     fn clear(&mut self);
+
 }
 
 struct SeqMessageEntry<M>(SeqNo, VecDeque<M>);
@@ -77,4 +84,3 @@ impl<M> Ord for SeqMessageEntry<M> {
 mod perf_tests {
 
 }
-
