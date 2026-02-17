@@ -87,6 +87,12 @@ impl<M> TTboQueue<M> for VTboQueue<M> {
         Ok(())
     }
 
+    fn is_empty(&self) -> bool {
+        self.get_entry_for_seq_no(&self.current_seq_no)
+            .map(|e| e.1.is_empty())
+            .unwrap_or(true)
+    }
+
     fn peek(&self) -> Option<&M> {
         self.get_entry_for_seq_no(&self.current_seq_no)?.1.front()
     }
@@ -122,12 +128,6 @@ impl<M> TTboQueue<M> for VTboQueue<M> {
 
     fn clear(&mut self) {
         self.message_queue.clear();
-    }
-
-    fn is_empty(&self) -> bool {
-        self.get_entry_for_seq_no(&self.current_seq_no)
-            .map(|e| e.1.is_empty())
-            .unwrap_or(true)
     }
 }
 

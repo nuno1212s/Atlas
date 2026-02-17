@@ -1,6 +1,8 @@
+use crate::single_thread_double_state::state_management::{
+    ConfirmedToPreemptiveMsg, PreemptiveToConfirmedMsg,
+};
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_smr_application::app::Application;
-use crate::single_thread_double_state::state_management::{ConfirmedToPreemptiveMsg, PreemptiveToConfirmedMsg};
 
 pub(super) struct ConfirmedChannels<A, S>
 where
@@ -24,4 +26,3 @@ where
         }
     }
 }
-

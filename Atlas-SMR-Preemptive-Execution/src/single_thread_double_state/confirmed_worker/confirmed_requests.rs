@@ -38,8 +38,7 @@ where
         &mut self,
         application: &A,
         update_batch: UpdateBatch<Request<A, S>>,
-    ) -> ReplyBatch<Reply<A, S>>
-    {
+    ) -> ReplyBatch<Reply<A, S>> {
         let update_seq = update_batch.seq_no();
 
         let reply_batch = application.update_batch(&mut self.confirmed_state, update_batch);
