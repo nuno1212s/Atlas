@@ -1,7 +1,7 @@
+use crate::ordering::tbo_queue::{SeqMessageEntry, TTboQueue};
 use crate::ordering::{InvalidSeqNo, Orderable, SeqNo};
 use either::Either;
 use std::collections::{BTreeMap, VecDeque};
-use crate::ordering::tbo_queue::{SeqMessageEntry, TTboQueue};
 
 /// A TBO (Total-Buffered-Ordering) queue is a data structure that maintains a total order of
 /// messages based on their sequence numbers.
@@ -27,7 +27,7 @@ where
 impl<M> Default for TboQueue<M>
 where
     M: Orderable,
- {
+{
     fn default() -> Self {
         Self::new()
     }
@@ -125,8 +125,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::ordering::tbo_queue::test::*;
     use super::*;
+    use crate::ordering::tbo_queue::test::*;
 
     #[test]
     fn test_btree_can_not_pop_until_adv() {

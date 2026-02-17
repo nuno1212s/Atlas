@@ -1,22 +1,20 @@
 use crate::ordering::tbo_queue::{SeqMessageEntry, TTboQueue};
 use crate::ordering::{InvalidSeqNo, Orderable, SeqNo};
-use std::collections::VecDeque;
 use either::Either;
+use std::collections::VecDeque;
 
 pub struct VTboQueue<M> {
     current_seq_no: SeqNo,
     message_queue: VecDeque<SeqMessageEntry<M>>,
 }
 
-impl<M> Default for VTboQueue<M>
- {
+impl<M> Default for VTboQueue<M> {
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl<M> VTboQueue<M> {
-
     pub fn new() -> Self {
         Self {
             current_seq_no: SeqNo::ZERO,
@@ -31,12 +29,16 @@ impl<M> VTboQueue<M> {
             }
             Either::Right(index) => {
                 if index >= self.message_queue.len() {
-                    let last_seq_no = self.current_seq_no + SeqNo::from(self.message_queue.len() as u32);
-                    
+                    let last_seq_no =
+                        self.current_seq_no + SeqNo::from(self.message_queue.len() as u32);
+
                     let len = index - self.message_queue.len() + 1;
-                    
+
                     for i in 0..len {
-                        self.message_queue.push_back(SeqMessageEntry(last_seq_no + SeqNo::from(i as u32), VecDeque::new()));
+                        self.message_queue.push_back(SeqMessageEntry(
+                            last_seq_no + SeqNo::from(i as u32),
+                            VecDeque::new(),
+                        ));
                     }
                 }
 
@@ -50,25 +52,19 @@ impl<M> VTboQueue<M> {
     fn get_entry_for_seq_no(&self, seq_no: &SeqNo) -> Option<&SeqMessageEntry<M>> {
         match seq_no.index(self.current_seq_no) {
             Either::Left(_) => unreachable!(),
-            Either::Right(index) => {
-                self.message_queue.get(index)
-            }
+            Either::Right(index) => self.message_queue.get(index),
         }
     }
 
     fn get_entry_for_seq_no_mut(&mut self, seq_no: &SeqNo) -> Option<&mut SeqMessageEntry<M>> {
         match seq_no.index(self.current_seq_no) {
             Either::Left(_) => unreachable!(),
-            Either::Right(index) => {
-                self.message_queue.get_mut(index)
-            }
+            Either::Right(index) => self.message_queue.get_mut(index),
         }
     }
-
 }
 
-impl<M> Orderable for VTboQueue<M>
-{
+impl<M> Orderable for VTboQueue<M> {
     fn sequence_number(&self) -> SeqNo {
         self.current_seq_no
     }
@@ -77,17 +73,17 @@ impl<M> Orderable for VTboQueue<M>
 impl<M> TTboQueue<M> for VTboQueue<M> {
     fn push(&mut self, message: M) -> Result<(), InvalidSeqNo>
     where
-        M: Orderable
+        M: Orderable,
     {
         match message.sequence_number().index(self.current_seq_no) {
             Either::Left(_) => return Err(InvalidSeqNo::Small),
             Either::Right(_) => {}
         };
-        
+
         self.get_or_insert_entry_for_seq_no(message.sequence_number())
             .1
             .push_back(message);
-        
+
         Ok(())
     }
 
@@ -102,7 +98,7 @@ impl<M> TTboQueue<M> for VTboQueue<M> {
 
     fn advance_seq(&mut self) {
         self.message_queue.pop_front();
-        
+
         self.current_seq_no = self.current_seq_no.next();
     }
 
@@ -112,7 +108,6 @@ impl<M> TTboQueue<M> for VTboQueue<M> {
                 self.current_seq_no = seq_no;
             }
             Either::Right(right) => {
-
                 // we want to delete all entries with seq no < seq_no, which are the first `right` entries in the queue
                 let to_delete = std::cmp::min(right, self.message_queue.len());
 
@@ -123,7 +118,6 @@ impl<M> TTboQueue<M> for VTboQueue<M> {
                 self.current_seq_no = seq_no;
             }
         }
-
     }
 
     fn clear(&mut self) {
@@ -139,8 +133,8 @@ impl<M> TTboQueue<M> for VTboQueue<M> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ordering::tbo_queue::test::*;
     use super::*;
+    use crate::ordering::tbo_queue::test::*;
 
     #[test]
     fn test_vec_can_not_pop_until_adv() {

@@ -1,5 +1,5 @@
-use crate::ordering::{InvalidSeqNo, Orderable, SeqNo};
 use crate::ordering::tbo_queue::TTboQueue;
+use crate::ordering::{InvalidSeqNo, Orderable, SeqNo};
 
 pub struct Message(SeqNo, u32);
 
@@ -9,8 +9,10 @@ impl Orderable for Message {
     }
 }
 
-fn prepare_scenario<Q>(queue:&mut Q, sequence_nos: usize, msgs_per_seq: usize) where Q: TTboQueue<Message> {
-
+fn prepare_scenario<Q>(queue: &mut Q, sequence_nos: usize, msgs_per_seq: usize)
+where
+    Q: TTboQueue<Message>,
+{
     for i in 0..sequence_nos {
         for j in 0..msgs_per_seq {
             let message = Message(SeqNo::from(i as u32), j as u32);
@@ -19,8 +21,10 @@ fn prepare_scenario<Q>(queue:&mut Q, sequence_nos: usize, msgs_per_seq: usize) w
     }
 }
 
-pub fn test_tbo_queue_can_not_pop_until_adv<Q>() where Q: TTboQueue<Message> {
-
+pub fn test_tbo_queue_can_not_pop_until_adv<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     prepare_scenario(&mut queue, 1, 1);
@@ -36,8 +40,10 @@ pub fn test_tbo_queue_can_not_pop_until_adv<Q>() where Q: TTboQueue<Message> {
     assert!(queue.is_empty());
 }
 
-pub fn test_tbo_queue_can_pop_after_adv<Q>() where Q: TTboQueue<Message> {
-
+pub fn test_tbo_queue_can_pop_after_adv<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     prepare_scenario(&mut queue, 2, 1);
@@ -64,13 +70,13 @@ pub fn test_tbo_queue_can_pop_after_adv<Q>() where Q: TTboQueue<Message> {
     assert!(queue.is_empty());
 }
 
-pub fn test_adv_skips_old_messages<Q>() where Q: TTboQueue<Message> {
+pub fn test_adv_skips_old_messages<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
-    let messages = vec![
-        Message(SeqNo::ZERO, 0),
-        Message(SeqNo::ONE, 0),
-    ];
+    let messages = vec![Message(SeqNo::ZERO, 0), Message(SeqNo::ONE, 0)];
 
     messages.into_iter().for_each(|m| {
         queue.push(m).unwrap();
@@ -88,7 +94,10 @@ pub fn test_adv_skips_old_messages<Q>() where Q: TTboQueue<Message> {
     assert_eq!(SeqNo::ONE, peek.map(Orderable::sequence_number).unwrap());
 }
 
-pub fn test_clear_queue<Q>() where Q: TTboQueue<Message> {
+pub fn test_clear_queue<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     prepare_scenario(&mut queue, 10, 10);
@@ -103,7 +112,10 @@ pub fn test_clear_queue<Q>() where Q: TTboQueue<Message> {
 
 /// Test that messages with sequence numbers less than the current sequence number
 /// cannot be inserted and return InvalidSeqNo::Small error
-pub fn test_reject_old_messages<Q>() where Q: TTboQueue<Message> {
+pub fn test_reject_old_messages<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Push message at seq 0
@@ -119,14 +131,17 @@ pub fn test_reject_old_messages<Q>() where Q: TTboQueue<Message> {
 
     assert!(result.is_err());
     match result {
-        Err(InvalidSeqNo::Small) => {},
+        Err(InvalidSeqNo::Small) => {}
         _ => panic!("Expected InvalidSeqNo::Small for old message"),
     }
 }
 
 /// Test install_seq behavior: it should discard old messages
 /// and set new current sequence number
-pub fn test_install_seq_discards_old_messages<Q>() where Q: TTboQueue<Message> {
+pub fn test_install_seq_discards_old_messages<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Push messages for seq 0, 1, 2, 3, 4
@@ -150,7 +165,10 @@ pub fn test_install_seq_discards_old_messages<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test that install_seq with same sequence number doesn't change state
-pub fn test_install_seq_with_current_seq_no_change<Q>() where Q: TTboQueue<Message> {
+pub fn test_install_seq_with_current_seq_no_change<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     prepare_scenario(&mut queue, 3, 1);
@@ -167,7 +185,10 @@ pub fn test_install_seq_with_current_seq_no_change<Q>() where Q: TTboQueue<Messa
 }
 
 /// Test that is_empty is consistent with peek
-pub fn test_is_empty_consistent_with_peek<Q>() where Q: TTboQueue<Message> {
+pub fn test_is_empty_consistent_with_peek<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Empty queue
@@ -191,7 +212,10 @@ pub fn test_is_empty_consistent_with_peek<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test that is_empty is consistent with pop
-pub fn test_is_empty_consistent_with_pop<Q>() where Q: TTboQueue<Message> {
+pub fn test_is_empty_consistent_with_pop<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Empty queue
@@ -212,7 +236,10 @@ pub fn test_is_empty_consistent_with_pop<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test FIFO ordering for multiple messages with the same sequence number
-pub fn test_fifo_ordering_same_sequence<Q>() where Q: TTboQueue<Message> {
+pub fn test_fifo_ordering_same_sequence<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Push 5 messages all with seq 0
@@ -231,7 +258,10 @@ pub fn test_fifo_ordering_same_sequence<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test out-of-order insertion with multiple messages per sequence
-pub fn test_out_of_order_insertion<Q>() where Q: TTboQueue<Message> {
+pub fn test_out_of_order_insertion<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Push seq 2 first
@@ -264,7 +294,10 @@ pub fn test_out_of_order_insertion<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test that peek doesn't remove the message
-pub fn test_peek_does_not_remove<Q>() where Q: TTboQueue<Message> {
+pub fn test_peek_does_not_remove<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     queue.push(Message(SeqNo::ZERO, 42)).unwrap();
@@ -282,12 +315,17 @@ pub fn test_peek_does_not_remove<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test multiple advance_seq calls
-pub fn test_multiple_advance_seq<Q>() where Q: TTboQueue<Message> {
+pub fn test_multiple_advance_seq<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Push messages for seq 0-9
     for i in 0..10 {
-        queue.push(Message(SeqNo::from(i as u32), i as u32)).unwrap();
+        queue
+            .push(Message(SeqNo::from(i as u32), i as u32))
+            .unwrap();
     }
 
     // Pop and advance multiple times
@@ -302,7 +340,10 @@ pub fn test_multiple_advance_seq<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test that clearing preserves the current sequence number
-pub fn test_clear_preserves_sequence_number<Q>() where Q: TTboQueue<Message> {
+pub fn test_clear_preserves_sequence_number<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     prepare_scenario(&mut queue, 5, 2);
@@ -328,7 +369,10 @@ pub fn test_clear_preserves_sequence_number<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test interleaving push and pop operations
-pub fn test_interleaved_push_pop<Q>() where Q: TTboQueue<Message> {
+pub fn test_interleaved_push_pop<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Push seq 0
@@ -350,7 +394,10 @@ pub fn test_interleaved_push_pop<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test that multiple pops on same sequence work correctly
-pub fn test_multiple_pops_same_sequence<Q>() where Q: TTboQueue<Message> {
+pub fn test_multiple_pops_same_sequence<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Push 3 messages at seq 0
@@ -368,7 +415,10 @@ pub fn test_multiple_pops_same_sequence<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test peek on empty current sequence after advance
-pub fn test_peek_empty_after_advance<Q>() where Q: TTboQueue<Message> {
+pub fn test_peek_empty_after_advance<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     queue.push(Message(SeqNo::ZERO, 0)).unwrap();
@@ -388,7 +438,10 @@ pub fn test_peek_empty_after_advance<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test install_seq after some messages have been consumed
-pub fn test_install_seq_after_consumption<Q>() where Q: TTboQueue<Message> {
+pub fn test_install_seq_after_consumption<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     prepare_scenario(&mut queue, 10, 1);
@@ -416,7 +469,10 @@ pub fn test_install_seq_after_consumption<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test that pushing same seq number multiple times works
-pub fn test_push_same_sequence_multiple_times<Q>() where Q: TTboQueue<Message> {
+pub fn test_push_same_sequence_multiple_times<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Push 10 messages all at seq 0
@@ -432,7 +488,10 @@ pub fn test_push_same_sequence_multiple_times<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test with gaps in sequence numbers
-pub fn test_gaps_in_sequence_numbers<Q>() where Q: TTboQueue<Message> {
+pub fn test_gaps_in_sequence_numbers<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     // Push seq 0, 2, 4 (skipping 1, 3)
@@ -457,7 +516,10 @@ pub fn test_gaps_in_sequence_numbers<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test clear on empty queue
-pub fn test_clear_empty_queue<Q>() where Q: TTboQueue<Message> {
+pub fn test_clear_empty_queue<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     assert!(queue.is_empty());
@@ -469,7 +531,10 @@ pub fn test_clear_empty_queue<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test that after clear, we can push new messages
-pub fn test_push_after_clear<Q>() where Q: TTboQueue<Message> {
+pub fn test_push_after_clear<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     queue.push(Message(SeqNo::ZERO, 0)).unwrap();
@@ -483,7 +548,10 @@ pub fn test_push_after_clear<Q>() where Q: TTboQueue<Message> {
 }
 
 /// Test install_seq to a future sequence
-pub fn test_install_seq_far_future<Q>() where Q: TTboQueue<Message> {
+pub fn test_install_seq_far_future<Q>()
+where
+    Q: TTboQueue<Message>,
+{
     let mut queue = Q::default();
 
     queue.push(Message(SeqNo::ZERO, 0)).unwrap();
@@ -499,4 +567,3 @@ pub fn test_install_seq_far_future<Q>() where Q: TTboQueue<Message> {
     queue.push(Message(far_seq, 99)).unwrap();
     assert_eq!(99, queue.pop().unwrap().1);
 }
-
