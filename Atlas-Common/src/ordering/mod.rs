@@ -27,6 +27,7 @@ pub struct SeqNo(i32);
 ///Can be translated
 pub struct ThreadSafeSeqNo(AtomicI32);
 
+#[derive(Debug)]
 pub enum InvalidSeqNo {
     Small,
     Big,
