@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 #![allow(clippy::non_canonical_partial_ord_impl)]
 
-mod singular_tbo_queue;
+pub mod singular_tbo_queue;
 pub mod tbo_queue;
 
 use std::cmp::{Ordering, PartialEq, PartialOrd};
@@ -14,6 +14,7 @@ use either::{Either, Left, Right};
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub const PERIOD: u32 = 100000000;
 
@@ -27,9 +28,11 @@ pub struct SeqNo(i32);
 ///Can be translated
 pub struct ThreadSafeSeqNo(AtomicI32);
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum InvalidSeqNo {
+    #[error("Sequence number is too small")]
     Small,
+    #[error("Sequence number is too big")]
     Big,
 }
 
