@@ -16,8 +16,8 @@ where
     preemptive_state: S,
 
     pending_permanent_update: VecDeque<PendingPermanentUpdate<A, S>>,
-    
-    channel_handles: PreemptiveChannels<A, S>
+
+    channel_handles: PreemptiveChannels<A, S>,
 }
 
 pub(super) struct PendingPermanentUpdate<A, S>(UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>)
@@ -49,7 +49,7 @@ where
     pub fn install_confirmed_state(&mut self, confirmed_state: S, confirmed_seq_no: SeqNo) {
         self.preemptive_state = confirmed_state;
         self.current_state_seq_no = confirmed_seq_no;
-        
+
         // Remove any pending permanent updates that are now stale.
         while let Some(pending_permanent_update) = self.pending_permanent_update.front() {
             if pending_permanent_update.0.seq_no() <= confirmed_seq_no {

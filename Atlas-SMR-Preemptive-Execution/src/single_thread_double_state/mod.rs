@@ -1,6 +1,10 @@
 use std::ops::DerefMut;
 use std::sync::Arc;
 
+use crate::{
+    exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle},
+    single_thread_double_state::duplicate_state::DuplicateState,
+};
 use atlas_common::channel::{
     self,
     sync::{ChannelSyncRx, ChannelSyncTx},
@@ -15,15 +19,11 @@ use atlas_smr_core::execution::executors::monolithic_state::MonStateInstallHandl
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_execution::ExecutorReplier;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use crate::{
-    exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle},
-    single_thread_double_state::duplicate_state::DuplicateState,
-};
 
-mod duplicate_state;
-mod state_management;
-mod preemptive_worker;
 mod confirmed_worker;
+mod duplicate_state;
+mod preemptive_worker;
+mod state_management;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
@@ -131,7 +131,6 @@ where
                 PreemptiveExecutionRequest::ExecuteUnordered(_) => {}
                 PreemptiveExecutionRequest::Read(_) => {}
             }
-            
         }
         // Worker loop implementation goes here
     }
