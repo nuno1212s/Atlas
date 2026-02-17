@@ -100,9 +100,9 @@ where
         self.current_seq_no = self.current_seq_no.next();
     }
 
-    fn install_seq(&mut self, seq_no: SeqNo) {
+    fn install_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo> {
         if seq_no < self.current_seq_no {
-            self.current_seq_no = seq_no;
+            Err(InvalidSeqNo::Small)
         } else {
             self.current_seq_no = seq_no;
 
@@ -115,6 +115,8 @@ where
             for key in to_remove {
                 self.message_queue.remove(&key);
             }
+
+            Ok(())
         }
     }
 

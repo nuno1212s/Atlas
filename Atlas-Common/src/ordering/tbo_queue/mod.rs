@@ -11,6 +11,11 @@ mod test;
 /// messages based on their sequence numbers.
 /// It allows for out-of-order insertion of messages
 /// but ensures that messages are processed in the correct order when they are popped from the queue.
+///
+/// These queues only move forward in sequence numbers,
+/// so messages with sequence numbers that are too old to be popped
+/// will be rejected when pushed into the queue
+/// or discarded when the sequence number is advanced or installed.
 pub trait TTboQueue<M>: Orderable + Default {
     /// Push a new message into the TBO queue. Will only be popped
     /// when its sequence number matches the current sequence number of the queue.
@@ -44,7 +49,7 @@ pub trait TTboQueue<M>: Orderable + Default {
     /// Installs a new sequence number for the queue, which may be used to skip over
     /// a range of sequence numbers. Any messages with sequence numbers that are now too old to be popped
     /// will be discarded.
-    fn install_seq(&mut self, seq_no: SeqNo);
+    fn install_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo>;
 
     /// Clears all messages from the queue, does not change the current sequence number.
     fn clear(&mut self);

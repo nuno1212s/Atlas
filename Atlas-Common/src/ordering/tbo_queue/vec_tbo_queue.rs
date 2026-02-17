@@ -108,11 +108,9 @@ impl<M> TTboQueue<M> for VTboQueue<M> {
         self.current_seq_no = self.current_seq_no.next();
     }
 
-    fn install_seq(&mut self, seq_no: SeqNo) {
+    fn install_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo> {
         match seq_no.index(self.current_seq_no) {
-            Either::Left(_) => {
-                self.current_seq_no = seq_no;
-            }
+            Either::Left(_) => Err(InvalidSeqNo::Small),
             Either::Right(right) => {
                 // we want to delete all entries with seq no < seq_no, which are the first `right` entries in the queue
                 let to_delete = std::cmp::min(right, self.message_queue.len());
@@ -122,6 +120,8 @@ impl<M> TTboQueue<M> for VTboQueue<M> {
                 }
 
                 self.current_seq_no = seq_no;
+
+                Ok(())
             }
         }
     }
