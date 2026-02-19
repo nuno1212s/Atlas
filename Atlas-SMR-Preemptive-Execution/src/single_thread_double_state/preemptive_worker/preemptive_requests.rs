@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use crate::single_thread_double_state::preemptive_worker::comm_handles::PreemptiveChannels;
 use atlas_common::ordering::singular_tbo_queue::TSingleTboQueue;
 use atlas_common::ordering::singular_tbo_queue::vec_single_tbo_queue::VSingleTBOQueue;
@@ -61,14 +59,8 @@ where
         self.preemptive_state = confirmed_state;
         self.current_state_seq_no = confirmed_seq_no;
 
-        // Remove any pending permanent updates that are now stale.
-        while let Some(pending_permanent_update) = self.pending_permanent_update.peek() {
-            if pending_permanent_update.0.seq_no() <= confirmed_seq_no {
-                self.pending_permanent_update.pop();
-            } else {
-                break;
-            }
-        }
+        self.pending_permanent_update = VSingleTBOQueue::new();
+        self.pending_permanent_update.install_seq(confirmed_seq_no).expect("Failed to install sequence number for pending permanent update queue");
     }
 
     pub fn handle_preemptive_update(
@@ -104,7 +96,11 @@ where
         // We can only confirm the next pending permanent update in order.
         if let Some(pending_permanent_update) = self.pending_permanent_update.peek() {
             if pending_permanent_update.0.seq_no() == sequence_no {
-                self.pending_permanent_update.pop().unwrap()
+                let result = self.pending_permanent_update.pop().unwrap();
+
+                self.pending_permanent_update.advance_seq();
+
+                result
             } else {
                 panic!(
                     "Confirmed update batch sequence number does not match the next pending permanent update"

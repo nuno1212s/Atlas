@@ -42,9 +42,7 @@ impl<M> VTboQueue<M> {
                     }
                 }
 
-                let entry = &mut self.message_queue[index];
-
-                entry
+                &mut self.message_queue[index]
             }
         }
     }
