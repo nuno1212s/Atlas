@@ -60,7 +60,9 @@ where
         self.current_state_seq_no = confirmed_seq_no;
 
         self.pending_permanent_update = VSingleTBOQueue::new();
-        self.pending_permanent_update.install_seq(confirmed_seq_no).expect("Failed to install sequence number for pending permanent update queue");
+        self.pending_permanent_update
+            .install_seq(confirmed_seq_no)
+            .expect("Failed to install sequence number for pending permanent update queue");
     }
 
     pub fn handle_preemptive_update(
