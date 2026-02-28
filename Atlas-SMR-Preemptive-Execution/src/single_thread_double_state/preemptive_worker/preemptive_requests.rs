@@ -46,10 +46,10 @@ impl<S, A> PreemptiveRequestPipeline<S, A>
 where
     A: Application<S>,
 {
-    pub fn new(handle: PreemptiveChannels<A, S>, initial_state: S) -> Self {
+    pub fn new(handle: PreemptiveChannels<A, S>, initial_state: (SeqNo, S)) -> Self {
         Self {
-            current_state_seq_no: SeqNo::ZERO,
-            preemptive_state: initial_state,
+            current_state_seq_no: initial_state.0,
+            preemptive_state: initial_state.1,
             pending_permanent_update: VSingleTBOQueue::new(),
             channel_handles: handle,
         }

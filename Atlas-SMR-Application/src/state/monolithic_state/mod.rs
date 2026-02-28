@@ -1,7 +1,7 @@
 use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::error::*;
 
-use atlas_common::ordering::SeqNo;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::NonSyncSerMsg;
 use std::io::{Read, Write};
 use std::mem::size_of;
@@ -26,6 +26,7 @@ pub struct InstallStateMessage<S>
 where
     S: MonolithicState,
 {
+    seq: SeqNo,
     state: S,
 }
 
@@ -62,8 +63,8 @@ impl<S> InstallStateMessage<S>
 where
     S: MonolithicState,
 {
-    pub fn new(state: S) -> Self {
-        InstallStateMessage { state }
+    pub fn new(seq_no: SeqNo, state: S) -> Self {
+        InstallStateMessage { seq: seq_no, state }
     }
 
     pub fn state(&self) -> &S {
@@ -72,6 +73,15 @@ where
 
     pub fn into_state(self) -> S {
         self.state
+    }
+}
+
+impl<S> Orderable for InstallStateMessage<S>
+where
+    S: MonolithicState,
+{
+    fn sequence_number(&self) -> SeqNo {
+        self.seq
     }
 }
 
