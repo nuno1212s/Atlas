@@ -1,3 +1,4 @@
+use getset::Getters;
 use crate::single_thread_double_state::state_management::{
     ConfirmedToPreemptiveMsg, PreemptiveStateMessage, PreemptiveToConfirmedMsg,
 };
@@ -8,12 +9,16 @@ use atlas_smr_application::app::{Application, Request};
 use thiserror::Error;
 use tracing::error;
 
+#[derive(Getters)]
 pub(super) struct PreemptiveChannels<A, S>
 where
     A: Application<S>,
 {
+    #[get = "pub"]
     work_rx: ChannelSyncRx<PreemptiveStateMessage<A, S>>,
+    #[get = "pub"]
     confirmed_worker_tx: ChannelSyncTx<PreemptiveToConfirmedMsg<A, S>>,
+    #[get = "pub"]
     confirmed_worker_rx: ChannelSyncRx<ConfirmedToPreemptiveMsg<S>>,
 }
 
@@ -58,6 +63,19 @@ where
                 Ok((confirmed_seq_no, confirmed_state))
             }
             Err(err) => Err(RequestLatestStateError::ReceiveFailed(err)),
+        }
+    }
+}
+
+impl<A, S> Clone for PreemptiveChannels<A, S>
+where
+    A: Application<S>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            work_rx: self.work_rx.clone(),
+            confirmed_worker_tx: self.confirmed_worker_tx.clone(),
+            confirmed_worker_rx: self.confirmed_worker_rx.clone(),
         }
     }
 }
