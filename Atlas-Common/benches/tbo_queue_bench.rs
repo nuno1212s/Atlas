@@ -5,10 +5,15 @@ use atlas_common::ordering::Orderable;
 use atlas_common::ordering::SeqNo;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::fmt::Display;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, OnceLock};
 
 #[derive(Clone, Debug, Copy)]
 struct BenchSeq(usize, usize);
+
+/// 128 byte message payload to make the benchmarks more realistic.
+const MSG_SIZE: usize = 128;
+
+const MSG_CONTAINER: [u8; MSG_SIZE] = [1u8; MSG_SIZE];
 
 impl Display for BenchSeq {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -20,7 +25,7 @@ impl Display for BenchSeq {
 #[derive(Clone)]
 struct BenchMsg {
     seq: SeqNo,
-    payload: Arc<Vec<u8>>,
+    _p: [u8; MSG_SIZE],
 }
 
 impl Orderable for BenchMsg {
@@ -30,10 +35,10 @@ impl Orderable for BenchMsg {
 }
 
 impl BenchMsg {
-    fn new(seq: SeqNo, size: usize) -> Self {
+    fn new(seq: SeqNo) -> Self {
         BenchMsg {
             seq,
-            payload: Arc::new(vec![0u8; size]),
+            _p: MSG_CONTAINER,
         }
     }
 }
@@ -65,22 +70,18 @@ fn bench_push<F, G, T, M>(
             let total_messages = size * msg_per_seq;
             group.throughput(Throughput::Elements(total_messages as u64));
             let seq = BenchSeq(size, msg_per_seq);
-            group.bench_with_input(
-                BenchmarkId::from_parameter(seq.clone()),
-                &seq,
-                |b, &num_seqs| {
-                    b.iter_batched(
-                        &factory,
-                        |mut q| {
-                            for i in 0..total_messages {
-                                let m = gen(i, msg_per_seq);
-                                let _ = q.push(m);
-                            }
-                        },
-                        criterion::BatchSize::LargeInput,
-                    )
-                },
-            );
+            group.bench_with_input(BenchmarkId::from_parameter(seq), &seq, |b, &num_seqs| {
+                b.iter_batched(
+                    &factory,
+                    |mut q| {
+                        for i in 0..total_messages {
+                            let m = gen(i, num_seqs.1);
+                            let _ = q.push(m);
+                        }
+                    },
+                    criterion::BatchSize::LargeInput,
+                )
+            });
         }
     }
 
@@ -113,7 +114,7 @@ fn bench_pop<F, G, T, M>(
                         // prepare a queue with total_messages (size * msg_per_seq)
                         let mut q = factory();
                         for i in 0..total_messages {
-                            let _ = q.push(gen(i, msg_per_seq));
+                            let _ = q.push(gen(i, num_seqs.1));
                         }
                         q
                     },
@@ -155,6 +156,7 @@ fn bench_peek<F, G, T, M>(
     for &size in sizes {
         for &msg_per_seq in msg_per_seq {
             let total_messages = size * msg_per_seq;
+
             group.throughput(Throughput::Elements(total_messages as u64));
             let seq = BenchSeq(size, msg_per_seq);
             group.bench_with_input(BenchmarkId::from_parameter(seq), &seq, |b, &num_seqs| {
@@ -162,7 +164,7 @@ fn bench_peek<F, G, T, M>(
                     || {
                         let mut q = factory();
                         for i in 0..total_messages {
-                            let _ = q.push(gen(i, msg_per_seq));
+                            let _ = q.push(gen(i, num_seqs.1));
                         }
                         q
                     },
@@ -228,7 +230,8 @@ fn bench_advance_install_clear<F, G, T, M>(
                 q
             },
             |mut q| {
-                q.install_seq(SeqNo::from(500u32));
+                q.install_seq(SeqNo::from(500u32))
+                    .expect("install_seq should succeed");
             },
             criterion::BatchSize::SmallInput,
         )
@@ -266,8 +269,7 @@ where
 
     let factory = || Q::default();
 
-    let gen =
-        |i: usize, msg_per_seq: usize| BenchMsg::new(SeqNo::from((i / msg_per_seq) as u32), 128);
+    let gen = |i: usize, msg_per_seq: usize| BenchMsg::new(SeqNo::from((i / msg_per_seq) as u32));
 
     bench_push(c, name, factory, gen, &seq_sizes, &msg_per_seq);
     bench_pop(c, name, factory, gen, &seq_sizes, &msg_per_seq);

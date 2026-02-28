@@ -3,42 +3,33 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::execution::requests::{ReplyBatch, UpdateBatch};
 use atlas_smr_application::app::{Application, Reply, Request};
 
-pub(super) struct ConfirmedRequestPipeline<A, S>
-where
-    A: Application<S>,
-{
-    comm_handle: ConfirmedChannels<A, S>,
-
+pub struct ConfirmedRequestPipeline<S> {
     current_confirmed_seq_no: SeqNo,
     confirmed_state: S,
 }
 
-impl<A, S> Orderable for ConfirmedRequestPipeline<A, S>
-where
-    A: Application<S>,
-{
+impl<S> Orderable for ConfirmedRequestPipeline<S> {
     fn sequence_number(&self) -> SeqNo {
         self.current_confirmed_seq_no
     }
 }
 
-impl<A, S> ConfirmedRequestPipeline<A, S>
-where
-    A: Application<S>,
-{
-    pub fn new(initial_state: S, handle: ConfirmedChannels<A, S>) -> Self {
+impl<S> ConfirmedRequestPipeline<S> {
+    pub fn new(seq: SeqNo, initial_state: S) -> Self {
         Self {
-            comm_handle: handle,
-            current_confirmed_seq_no: SeqNo::ZERO,
+            current_confirmed_seq_no: seq,
             confirmed_state: initial_state,
         }
     }
 
-    pub fn execute_update(
+    pub fn execute_update<A>(
         &mut self,
         application: &A,
         update_batch: UpdateBatch<Request<A, S>>,
-    ) -> ReplyBatch<Reply<A, S>> {
+    ) -> ReplyBatch<Reply<A, S>>
+    where
+        A: Application<S>,
+    {
         let update_seq = update_batch.seq_no();
 
         let reply_batch = application.update_batch(&mut self.confirmed_state, update_batch);
@@ -52,5 +43,10 @@ where
         S: Clone,
     {
         (self.sequence_number(), self.confirmed_state.clone())
+    }
+
+    pub fn install_state_message(&mut self, seq_no: SeqNo, state: S) {
+        self.current_confirmed_seq_no = seq_no;
+        self.confirmed_state = state;
     }
 }
