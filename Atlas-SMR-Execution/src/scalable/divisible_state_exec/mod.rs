@@ -21,7 +21,8 @@ use crate::metric::EXECUTION_LATENCY_TIME_ID;
 use crate::scalable::{
     sc_execute_op_batch, sc_execute_unordered_op_batch, CRUDState, THREAD_POOL_THREADS,
 };
-use crate::{DVStateInstallHandle, ExecutorReplier};
+use crate::DVStateInstallHandle;
+use crate::repliers::ExecutorReplier;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;

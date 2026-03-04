@@ -2,13 +2,18 @@ use std::sync::Arc;
 
 use crate::exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle};
 use crate::single_thread_double_state::confirmed_worker::confirmed_requests::ConfirmedRequestPipeline;
-use crate::single_thread_double_state::state_management::{PreemptiveStateManagementHandle, PreemptiveStateMessage, PreemptiveToConfirmedMsg};
+use crate::single_thread_double_state::state_management::{
+    PreemptiveStateManagementHandle, PreemptiveStateMessage, PreemptiveToConfirmedMsg,
+};
 use atlas_common::channel::{
     self,
     sync::{ChannelSyncRx, ChannelSyncTx},
 };
 use atlas_common::error::Result;
+use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::SeqNo;
+use atlas_common::quiet_unwrap;
+use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_smr_application::{
     app::{Application, Request},
     state::monolithic_state::{AppStateMessage, InstallStateMessage, MonolithicState},
@@ -16,7 +21,7 @@ use atlas_smr_application::{
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::executors::monolithic_state::MonStateInstallHandle;
 use atlas_smr_core::execution::reply::ReplyNode;
-use atlas_smr_execution::ExecutorReplier;
+use atlas_smr_execution::repliers::ExecutorReplier;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
 mod confirmed_worker;
@@ -48,7 +53,7 @@ where
 
 impl<S, A, NT> PreemptiveDuplicateStateMonolithicExecutor<S, A, NT>
 where
-    S: MonolithicState + 'static,
+    S: MonolithicState + 'static + Sync + Send,
     A: Application<S> + 'static + Send + Clone,
 {
     pub fn init_handle() -> PreemptiveExecutorHandle<Request<A, S>> {
@@ -94,11 +99,13 @@ where
         let (checkpoint_tx, checkpoint_rx) =
             channel::sync::new_bounded_sync(STATE_BUFFER, Some("ST Monolithic Executor AppState"));
 
-        let preemptive_state_handle = preemptive_worker::initialize_preemptive_execution::<A, S>(
-            SeqNo::ZERO,
-            state,
-            service.clone(),
-        );
+        let preemptive_state_handle =
+            preemptive_worker::initialize_preemptive_execution::<A, S, NT, T>(
+                SeqNo::ZERO,
+                state,
+                service.clone(),
+                send_node.clone(),
+            );
 
         let mut executor = Self {
             application: service,
@@ -127,44 +134,62 @@ where
         while let Ok(exec_req) = self.work_rx.recv() {
             match exec_req {
                 PreemptiveExecutionRequest::PollStateChannel => {}
-                PreemptiveExecutionRequest::CatchUp(confirmed_batches) => {}
-                PreemptiveExecutionRequest::UpdateBatch(confirmed_update, time_sent) => {}
-                PreemptiveExecutionRequest::UpdateFinalizedAndGetAppstateBatch(_, _) => {}
+                PreemptiveExecutionRequest::CatchUp(confirmed_batches) => {
+                    self.handle_catch_up::<T>(confirmed_batches);
+                }
+                PreemptiveExecutionRequest::UpdateBatch(_, _) => {
+                    todo!("Handle directly sent update batches");
+                }
+                PreemptiveExecutionRequest::UpdateFinalizedAndGetAppstateBatch(_, _) => {
+                    todo!("Handle directly sent update batches with appstate retrieval");
+                }
                 PreemptiveExecutionRequest::PreemptiveUpdate(reqs, time) => {
-                    self.preemptive_state.preemptive_execution_handle()
-                        .send(PreemptiveStateMessage::PreemptiveUpdate(reqs));
+                    quiet_unwrap!(
+                        self.preemptive_state
+                            .preemptive_execution_handle()
+                            .send(PreemptiveStateMessage::PreemptiveUpdate(reqs))
+                    );
                 }
                 PreemptiveExecutionRequest::UpdateFinalized(seq_no) => {
-                        self.preemptive_state.preemptive_execution_handle()
-                            .send(PreemptiveStateMessage::ConfirmedUpdate(seq_no));
+                    quiet_unwrap!(
+                        self.preemptive_state
+                            .preemptive_execution_handle()
+                            .send(PreemptiveStateMessage::ConfirmedUpdate(seq_no))
+                    );
                 }
                 PreemptiveExecutionRequest::UpdateFinalizedAndGetAppstate(seq_no) => {
-                    self.preemptive_state.preemptive_execution_handle()
-                        .send(PreemptiveStateMessage::ConfirmedUpdate(seq_no));
+                    quiet_unwrap!(
+                        self.preemptive_state
+                            .preemptive_execution_handle()
+                            .send(PreemptiveStateMessage::ConfirmedUpdate(seq_no))
+                    );
                 }
-                PreemptiveExecutionRequest::ExecuteUnordered(_) => {}
+                PreemptiveExecutionRequest::ExecuteUnordered(unordered_batch) => {
+                    // Unordered batches should be executed on the confirmed state
+                    // As we only want to return confirmed information which can not be rolled back
+                    self.handle_unordered_batch::<T>(unordered_batch);
+                }
                 PreemptiveExecutionRequest::Read(_) => {}
             }
         }
-
-        // Worker loop implementation goes here
     }
 
-    fn poll_confirmed_updates<T>(&mut self)
+    fn poll_confirmed_updates(&mut self)
     where
-        T: ExecutorReplier + 'static,
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     {
         while let Ok(update_msg) = self.preemptive_state.confirmed_updates_rx().recv() {
             match update_msg {
                 PreemptiveToConfirmedMsg::UpdateConfirmed(confirmed_update) => {
-                    self.confirmed_state.execute_update(&self.application, confirmed_update);
+                    self.confirmed_state
+                        .execute_update(&self.application, confirmed_update);
                 }
-                PreemptiveToConfirmedMsg::RequestStateCopy(seq_no) => {
+                PreemptiveToConfirmedMsg::RequestStateCopy(_) => {
                     let (seq_no, state) = self.confirmed_state.take_state_snapshot();
 
-                    self.preemptive_state.preemptive_execution_handle()
-                        .send(PreemptiveStateMessage::ConfirmedStateReceived(seq_no, state));
+                    quiet_unwrap!(self.preemptive_state.preemptive_execution_handle().send(
+                        PreemptiveStateMessage::ConfirmedStateReceived(seq_no, state)
+                    ));
                 }
             }
         }
@@ -172,5 +197,47 @@ where
 
     fn poll_state_channel(&mut self) {
         while let Ok(state) = self.state_rx.recv() {}
+    }
+
+    fn handle_catch_up<T>(&mut self, confirmed_batches: MaybeVec<UpdateBatch<Request<A, S>>>)
+    where
+        T: ExecutorReplier + 'static,
+        NT: ReplyNode<SMRReply<A::AppData>> + 'static,
+    {
+        for batch in confirmed_batches {
+            let seq = batch.seq_no();
+
+            let batch_replies = self
+                .confirmed_state
+                .execute_update(&self.application, batch);
+
+            T::execution_finished::<A::AppData, NT>(
+                self.send_node.clone(),
+                Some(seq),
+                batch_replies,
+            );
+        }
+
+        let (seq_no, state) = self.confirmed_state.take_state_snapshot();
+
+        quiet_unwrap!(self.preemptive_state.preemptive_execution_handle().send(
+            PreemptiveStateMessage::ConfirmedStateReceived(seq_no, state)
+        ));
+    }
+
+    fn handle_unordered_batch<T>(&self, unordered_batch: UnorderedUpdateBatch<Request<A, S>>)
+    where
+        T: ExecutorReplier + 'static,
+        NT: ReplyNode<SMRReply<A::AppData>> + 'static,
+    {
+        // Unordered batches should be executed on the confirmed state
+        // As we only want to return confirmed information which can not be rolled bac
+        let replies = self.confirmed_state.execute_read(
+            &self.application,
+            unordered_batch,
+            &self.read_thread_pool,
+        );
+
+        T::execution_finished::<A::AppData, NT>(self.send_node.clone(), None, replies);
     }
 }

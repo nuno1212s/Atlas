@@ -176,6 +176,12 @@ impl<R> Default for ReplyBatch<R> {
     }
 }
 
+impl<R> From<Vec<UpdateReply<R>>> for ReplyBatch<R> {
+    fn from(replies: Vec<UpdateReply<R>>) -> Self {
+        Self { replies }
+    }
+}
+
 #[derive(Default)]
 pub struct UnorderedUpdateBatch<O> {
     requests: Vec<Update<O>>,

@@ -3,6 +3,7 @@ use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Context;
+use tracing::error;
 use atlas_common::channel::oneshot::OneShotTx;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
@@ -22,10 +23,9 @@ use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::{DecLog, DecLogMetadata, TDecisionLogPersistenceHelper};
 use atlas_smr_application::state::divisible_state::DivisibleState;
-use tracing::error;
 
 use crate::stateful_logs::divisible_state::DivisibleStateMessage;
-use crate::{CallbackType, ChannelMsg, InstallState, PWMessage, ResponseMessage, serialize};
+use crate::{serialize, CallbackType, ChannelMsg, InstallState, PWMessage, ResponseMessage};
 
 pub(super) mod divisible_state_worker;
 pub(super) mod monolithic_worker;

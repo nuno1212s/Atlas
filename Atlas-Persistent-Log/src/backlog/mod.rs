@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
 
 use anyhow::Context;
-use log::{error, warn};
 use thiserror::Error;
-
+use tracing::{error, warn};
 use crate::execution_handle::TLoggedDecisionsHandle;
 use crate::ResponseMessage;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};

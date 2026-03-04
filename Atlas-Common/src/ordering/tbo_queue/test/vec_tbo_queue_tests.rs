@@ -1,7 +1,7 @@
-use crate::ordering::tbo_queue::test::Message;
-use crate::ordering::tbo_queue::vec_tbo_queue::VTboQueue;
+ use crate::ordering::tbo_queue::test::Message;
+ use crate::ordering::tbo_queue::vec_tbo_queue::VTboQueue;
 
-#[test]
+ #[test]
 fn test_tbo_queue_can_not_pop_until_adv() {
     super::test_tbo_queue_can_not_pop_until_adv::<VTboQueue<Message>>();
 }
