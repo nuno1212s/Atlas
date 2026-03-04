@@ -1,4 +1,3 @@
-use getset::Getters;
 use crate::single_thread_double_state::state_management::{
     ConfirmedToPreemptiveMsg, PreemptiveStateMessage, PreemptiveToConfirmedMsg,
 };
@@ -6,6 +5,7 @@ use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::UpdateBatch;
 use atlas_smr_application::app::{Application, Request};
+use getset::Getters;
 use thiserror::Error;
 use tracing::error;
 

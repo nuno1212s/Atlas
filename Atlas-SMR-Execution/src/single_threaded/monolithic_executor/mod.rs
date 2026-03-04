@@ -19,9 +19,9 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 
 use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
+use crate::repliers::ExecutorReplier;
 use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 use tracing::{info, instrument};
-use crate::repliers::ExecutorReplier;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;

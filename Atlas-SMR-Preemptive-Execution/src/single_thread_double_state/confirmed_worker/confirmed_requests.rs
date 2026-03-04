@@ -1,8 +1,8 @@
-use rayon::ThreadPool;
-use rayon::prelude::*;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch, UpdateReply};
 use atlas_smr_application::app::{Application, Reply, Request};
+use rayon::ThreadPool;
+use rayon::prelude::*;
 
 pub struct ConfirmedRequestPipeline<S> {
     current_confirmed_seq_no: SeqNo,
@@ -43,7 +43,7 @@ impl<S> ConfirmedRequestPipeline<S> {
         &self,
         application: &A,
         update_batch: UnorderedUpdateBatch<Request<A, S>>,
-        thread_pool: &ThreadPool
+        thread_pool: &ThreadPool,
     ) -> ReplyBatch<Reply<A, S>>
     where
         A: Application<S>,

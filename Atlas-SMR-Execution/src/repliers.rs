@@ -1,16 +1,18 @@
-use std::sync::Arc;
-use std::time::Instant;
+use crate::metric::{REPLIES_SENT_TIME_ID, REPLYING_TO_REQUEST};
 use atlas_common::ordering::SeqNo;
 use atlas_common::threadpool;
 use atlas_core::execution::requests::{ReplyBatch, UpdateInfo};
 use atlas_core::messages::{create_rq_correlation_id_from_parts, ReplyMessage};
 use atlas_core::metric::{RQ_CLIENT_TRACKING_ID, RQ_CLIENT_TRACK_GLOBAL_ID};
-use atlas_metrics::metrics::{metric_correlation_id_ended, metric_correlation_time_end, metric_duration};
+use atlas_metrics::metrics::{
+    metric_correlation_id_ended, metric_correlation_time_end, metric_duration,
+};
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::execution::reply::{ReplyNode, RequestType};
 use atlas_smr_core::SMRReply;
+use std::sync::Arc;
+use std::time::Instant;
 use tracing::error;
-use crate::metric::{REPLIES_SENT_TIME_ID, REPLYING_TO_REQUEST};
 
 pub trait ExecutorReplier: Send {
     fn execution_finished<D, NT>(node: Arc<NT>, seq: Option<SeqNo>, batch: ReplyBatch<D::Reply>)
