@@ -16,7 +16,6 @@ use atlas_smr_core::networking::client::SMRClientNetworkNode;
 use atlas_smr_core::serialize::SMRSysMsg;
 use dashmap::DashMap;
 use std::sync::{Arc, Mutex};
-use tracing::error;
 
 pub type CleanUpTask<D: ApplicationData> = dyn Fn((SeqNo, Result<D::Reply>)) + Send + Sync;
 

@@ -1,8 +1,4 @@
 use anyhow::Context;
-use std::ops::Deref;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use tracing::error;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::TryRecvError;
 use atlas_common::crypto::hash::Digest;
@@ -20,6 +16,10 @@ use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::TDecisionLogPersistenceHelper;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
 use atlas_smr_core::state_transfer::Checkpoint;
+use std::ops::Deref;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use tracing::error;
 
 use crate::serialize::{deserialize_mon_state, make_seq, read_seq, serialize_mon_state};
 use crate::stateful_logs::monolithic_state::MonolithicStateMessage;

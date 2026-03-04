@@ -6,7 +6,6 @@ use crate::exec_handle::ExecutorHandle;
 use atlas_common::error::*;
 use atlas_common::phantom::FPhantom;
 use atlas_smr_application::app::{Application, Request};
-use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::divisible_state::DivisibleState;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
 use atlas_smr_core::execution::executors::divisible_state::{
@@ -19,15 +18,15 @@ use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_core::execution::TExecutor;
 use atlas_smr_core::SMRReply;
 use crud_states::CRUDApplication;
-use std::sync::Arc;
 use repliers::ReplicaReplier;
+use std::sync::Arc;
 
 pub mod crud_states;
 mod exec_handle;
 pub mod metric;
+pub mod repliers;
 pub mod scalable;
 pub mod single_threaded;
-pub mod repliers;
 
 pub struct SingleThreadedMonExecutor<NT>(FPhantom<NT>);
 

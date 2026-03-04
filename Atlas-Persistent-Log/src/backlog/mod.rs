@@ -1,10 +1,8 @@
 use std::collections::BTreeMap;
 
-use anyhow::Context;
-use thiserror::Error;
-use tracing::{error, warn};
 use crate::execution_handle::TLoggedDecisionsHandle;
 use crate::ResponseMessage;
+use anyhow::Context;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
@@ -12,6 +10,8 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{channel, Err};
 use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_logging_core::decision_log::DecisionSummaryForPersistence;
+use thiserror::Error;
+use tracing::{error, warn};
 
 ///This is made to handle the backlog when the consensus is working faster than the persistent storage layer.
 /// It holds update batches that are yet to be executed since they are still waiting for the confirmation of the persistent log

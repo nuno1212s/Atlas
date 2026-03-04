@@ -7,7 +7,6 @@ use atlas_core::execution::requests::UpdateBatch;
 use atlas_smr_application::app::{Application, Reply, Request};
 use either::Either;
 
-
 pub(super) struct PendingPermanentUpdate<A, S>(UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>)
 where
     A: Application<S>;
@@ -25,10 +24,13 @@ impl<A, S> PendingPermanentUpdate<A, S>
 where
     A: Application<S>,
 {
-    pub fn new(update_batch: UpdateBatch<Request<A, S>>, reply_batch: ReplyBatch<Reply<A, S>>) -> Self {
+    pub fn new(
+        update_batch: UpdateBatch<Request<A, S>>,
+        reply_batch: ReplyBatch<Reply<A, S>>,
+    ) -> Self {
         Self(update_batch, reply_batch)
     }
-    
+
     pub fn into_inner(self) -> (UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>) {
         (self.0, self.1)
     }

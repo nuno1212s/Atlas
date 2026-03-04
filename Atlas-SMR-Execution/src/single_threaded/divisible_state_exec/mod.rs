@@ -14,6 +14,7 @@ use atlas_smr_application::app::{Application, Reply, Request};
 
 use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
 use crate::metric::EXECUTION_LATENCY_TIME_ID;
+use crate::repliers::ExecutorReplier;
 use crate::scalable::sc_execute_unordered_op_batch;
 use crate::single_threaded::{
     st_execute_op_batch, st_execute_unordered_op_batch, UnorderedExecutor,
@@ -23,7 +24,6 @@ use atlas_smr_application::state::divisible_state::{
 };
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_core::SMRReply;
-use crate::repliers::ExecutorReplier;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;

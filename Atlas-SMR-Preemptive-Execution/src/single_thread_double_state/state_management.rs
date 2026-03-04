@@ -1,8 +1,8 @@
-use getset::Getters;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::UpdateBatch;
 use atlas_smr_application::app::{Application, Request};
+use getset::Getters;
 
 /// Messages sent by the work distributor to the preemptive state management thread to trigger updates to the preemptive state.
 pub(super) enum PreemptiveStateMessage<A, S>

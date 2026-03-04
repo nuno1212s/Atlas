@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use crate::crud_states::CRUDApplication;
 use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
+use crate::repliers::ExecutorReplier;
 use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 use tracing::info;
-use crate::repliers::ExecutorReplier;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
