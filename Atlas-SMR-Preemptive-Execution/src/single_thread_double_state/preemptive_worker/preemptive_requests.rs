@@ -7,18 +7,6 @@ use atlas_core::execution::requests::UpdateBatch;
 use atlas_smr_application::app::{Application, Reply, Request};
 use either::Either;
 
-pub(super) struct PreemptiveRequestPipeline<S, A>
-where
-    A: Application<S>,
-{
-    current_state_seq_no: SeqNo,
-
-    preemptive_state: S,
-
-    pending_permanent_update: VSingleTBOQueue<PendingPermanentUpdate<A, S>>,
-
-    channel_handles: PreemptiveChannels<A, S>,
-}
 
 pub(super) struct PendingPermanentUpdate<A, S>(UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>)
 where
@@ -31,6 +19,32 @@ where
     fn sequence_number(&self) -> SeqNo {
         self.0.sequence_number()
     }
+}
+
+impl<A, S> PendingPermanentUpdate<A, S>
+where
+    A: Application<S>,
+{
+    pub fn new(update_batch: UpdateBatch<Request<A, S>>, reply_batch: ReplyBatch<Reply<A, S>>) -> Self {
+        Self(update_batch, reply_batch)
+    }
+    
+    pub fn into_inner(self) -> (UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>) {
+        (self.0, self.1)
+    }
+}
+
+pub(super) struct PreemptiveRequestPipeline<S, A>
+where
+    A: Application<S>,
+{
+    current_state_seq_no: SeqNo,
+
+    preemptive_state: S,
+
+    pending_permanent_update: VSingleTBOQueue<PendingPermanentUpdate<A, S>>,
+
+    channel_handles: PreemptiveChannels<A, S>,
 }
 
 impl<S, A> Orderable for PreemptiveRequestPipeline<S, A>

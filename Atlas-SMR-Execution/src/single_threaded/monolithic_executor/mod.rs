@@ -3,7 +3,7 @@ use crate::scalable::sc_execute_unordered_op_batch;
 use crate::single_threaded::{
     st_execute_op_batch, st_execute_unordered_op_batch, UnorderedExecutor,
 };
-use crate::{ExecutorReplier, MonStateInstallHandle};
+use crate::MonStateInstallHandle;
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
@@ -21,6 +21,7 @@ use std::sync::Arc;
 use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
 use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 use tracing::{info, instrument};
+use crate::repliers::ExecutorReplier;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;

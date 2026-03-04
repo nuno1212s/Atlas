@@ -17,7 +17,7 @@ macro_rules! quiet_unwrap {
         match $err {
             Ok(value) => value,
             Err(err) => {
-                error!("{} ({:?})", err, err);
+                tracing::error!("{} ({:?})", err, err);
 
                 return;
             }
@@ -27,7 +27,7 @@ macro_rules! quiet_unwrap {
         match $err {
             Ok(value) => value,
             Err(err) => {
-                error!("{} ({:?})", err, err);
+                tracing::error!("{} ({:?})", err, err);
 
                 return $ret;
             }

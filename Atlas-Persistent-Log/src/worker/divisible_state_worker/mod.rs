@@ -20,10 +20,10 @@ use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::TDecisionLogPersistenceHelper;
 use atlas_smr_application::state::divisible_state::{DivisibleState, StatePart};
-use log::error;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tracing::error;
 
 #[derive(Clone)]
 pub struct PersistentDivStateStub<S: DivisibleState> {

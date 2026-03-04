@@ -1,6 +1,6 @@
 use crate::metric::EXECUTION_LATENCY_TIME_ID;
 use crate::scalable::{sc_execute_op_batch, sc_execute_unordered_op_batch, CRUDState};
-use crate::{ExecutorReplier, MonStateInstallHandle};
+use crate::MonStateInstallHandle;
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
@@ -19,6 +19,7 @@ use crate::crud_states::CRUDApplication;
 use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
 use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 use tracing::info;
+use crate::repliers::ExecutorReplier;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;

@@ -2,7 +2,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 use tracing::instrument;
 
-use crate::{DVStateInstallHandle, ExecutorReplier};
+use crate::DVStateInstallHandle;
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
@@ -23,6 +23,7 @@ use atlas_smr_application::state::divisible_state::{
 };
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_core::SMRReply;
+use crate::repliers::ExecutorReplier;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;

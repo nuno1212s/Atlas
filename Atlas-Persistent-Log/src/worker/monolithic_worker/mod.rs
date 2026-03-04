@@ -1,9 +1,8 @@
 use anyhow::Context;
-use log::error;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-
+use tracing::error;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::TryRecvError;
 use atlas_common::crypto::hash::Digest;
