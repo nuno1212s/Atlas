@@ -15,7 +15,7 @@ use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::Application;
 use atlas_smr_application::state::divisible_state::DivisibleState;
 use atlas_smr_core::execution::executors::divisible_state::TDivisibleStateExecutor;
-use atlas_smr_core::execution::{TExecutor, WrappedExecHandle};
+use atlas_smr_core::execution::{TExecutor, SMRExecWrapper};
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::DivisibleStateLog;
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
@@ -70,7 +70,7 @@ where
         VT,
         NT,
         PL,
-        WrappedExecHandle<SE::ExecutionHandle>,
+        SMRExecWrapper<SE::ExecutionHandle>,
     >,
 }
 
@@ -114,14 +114,14 @@ where
             OP,
             DL,
             PL,
-            WrappedExecHandle<SE::ExecutionHandle>,
+            SMRExecWrapper<SE::ExecutionHandle>,
             NT::ProtocolNode,
         >,
         DL: DecisionLogInitializer<
             SMRReq<A::AppData>,
             OP,
             PL,
-            WrappedExecHandle<SE::ExecutionHandle>,
+            SMRExecWrapper<SE::ExecutionHandle>,
         >,
         ST: DivisibleStateTransferInitializer<S, NT::StateTransferNode, PL>,
     {
@@ -135,7 +135,7 @@ where
 
         let executor_handle = SE::init_handle();
 
-        let wrapped_executor = WrappedExecHandle(executor_handle.clone());
+        let wrapped_executor = SMRExecWrapper(executor_handle.clone());
 
         let inner_replica = Replica::bootstrap(replica_config, wrapped_executor, handle).await?;
 
@@ -156,7 +156,7 @@ where
                 VT,
                 NT,
                 PL,
-                WrappedExecHandle<SE::ExecutionHandle>,
+                SMRExecWrapper<SE::ExecutionHandle>,
             > as PermissionedProtocolHandling<A::AppData, VT, OP, NT>>::View,
             S,
             NT::StateTransferNode,

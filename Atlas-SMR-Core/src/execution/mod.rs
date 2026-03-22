@@ -33,10 +33,20 @@ where
     fn init_handle() -> Self::ExecutionHandle;
 }
 
-#[derive(Clone)]
-pub struct WrappedExecHandle<E>(pub E);
+/// This wrapper takes care of translating the requests that come ordered
+/// from the [atlas_core::ordering_protocol::OrderingProtocol] into the
+/// type that our execution module desires.
+/// In this case, we will translate it into a [UpdateBatch]
+///
+/// TODO: We should collapse these types into a single
+/// One so we don't have to translate them
+pub type SMRExec<E, A, S>
+= SMRExecWrapper<<E as TExecutor<A, S>>::ExecutionHandle>;
 
-impl<E> WrappedExecHandle<E> {
+#[derive(Clone)]
+pub struct SMRExecWrapper<E>(pub E);
+
+impl<E> SMRExecWrapper<E> {
     pub fn transform_update_batch<RQ>(
         decision: DecisionRequestBatch<SMRRawReq<RQ>>,
     ) -> UpdateBatch<RQ> {
@@ -59,7 +69,7 @@ impl<E> WrappedExecHandle<E> {
     }
 }
 
-impl<E, RQ> TExecutorDecisionHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
+impl<E, RQ> TExecutorDecisionHandle<SMRRawReq<RQ>> for SMRExecWrapper<E>
 where
     E: TExecutionHandle<RQ> + Send + 'static,
 {
@@ -81,7 +91,7 @@ where
     }
 }
 
-impl<E, RQ> TDeterministicExecutorDecisionHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
+impl<E, RQ> TDeterministicExecutorDecisionHandle<SMRRawReq<RQ>> for SMRExecWrapper<E>
 where
     E: TDeterministicExecutionHandle<RQ> + Send + 'static,
 {
@@ -90,7 +100,7 @@ where
     }
 }
 
-impl<E, RQ> TExecutorStateHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
+impl<E, RQ> TExecutorStateHandle<SMRRawReq<RQ>> for SMRExecWrapper<E>
 where
     E: TExecutionHandle<RQ> + Send + 'static,
 {
@@ -99,7 +109,7 @@ where
     }
 }
 
-impl<E, RQ> TDeterministicExecutorStateHandle<SMRRawReq<RQ>> for WrappedExecHandle<E>
+impl<E, RQ> TDeterministicExecutorStateHandle<SMRRawReq<RQ>> for SMRExecWrapper<E>
 where
     E: TDeterministicExecutionHandle<RQ> + Send + 'static,
 {
@@ -112,7 +122,7 @@ where
     }
 }
 
-impl<E> Deref for WrappedExecHandle<E> {
+impl<E> Deref for SMRExecWrapper<E> {
     type Target = E;
 
     fn deref(&self) -> &Self::Target {
