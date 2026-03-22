@@ -1,4 +1,3 @@
-#![feature(btree_extract_if)]
 #![allow(dead_code)]
 
 extern crate core;

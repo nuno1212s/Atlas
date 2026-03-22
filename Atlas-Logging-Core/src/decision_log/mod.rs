@@ -200,10 +200,10 @@ where
 
     /// Decompose a decision log into its parts, but only by references
     fn decompose_decision_log_ref(
-        dec_log: &DecLog<RQ, OPM, POP, LS>,
+        dec_log: &'_ DecLog<RQ, OPM, POP, LS>,
     ) -> (
-        &LogMetadataType<RQ, OPM, POP, LS>,
-        RefProofVecType<RQ, OPM, POP>,
+        &'_ LogMetadataType<RQ, OPM, POP, LS>,
+        RefProofVecType<'_, RQ, OPM, POP>,
     );
 }
 

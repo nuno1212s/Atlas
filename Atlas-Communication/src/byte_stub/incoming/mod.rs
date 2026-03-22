@@ -18,7 +18,7 @@ use enum_map::EnumMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
-use tracing::{error, info};
+use tracing::{info};
 
 pub(crate) mod pooled_stub;
 pub(crate) mod unpooled_stub;

@@ -19,7 +19,7 @@ use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::Application;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
 use atlas_smr_core::execution::executors::monolithic_state::TMonolithicStateExecutor;
-use atlas_smr_core::execution::{TExecutor, WrappedExecHandle};
+use atlas_smr_core::execution::{TExecutor, SMRExecWrapper};
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::MonolithicStateLog;
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
@@ -75,7 +75,7 @@ where
         VT,
         NT,
         PL,
-        WrappedExecHandle<ME::ExecutionHandle>,
+        SMRExecWrapper<ME::ExecutionHandle>,
     >,
 }
 
@@ -118,14 +118,14 @@ where
             OP,
             DL,
             PL,
-            WrappedExecHandle<ME::ExecutionHandle>,
+            SMRExecWrapper<ME::ExecutionHandle>,
             NT::ProtocolNode,
         >,
         DL: DecisionLogInitializer<
             SMRReq<A::AppData>,
             OP,
             PL,
-            WrappedExecHandle<ME::ExecutionHandle>,
+            SMRExecWrapper<ME::ExecutionHandle>,
         >,
         ST: MonolithicStateTransferInitializer<S, NT::StateTransferNode, PL>,
     {
@@ -137,7 +137,7 @@ where
 
         let executor_handle = ME::init_handle();
 
-        let wrapped_handle = WrappedExecHandle(executor_handle.clone());
+        let wrapped_handle = SMRExecWrapper(executor_handle.clone());
 
         let (handle, inner_handle) = init_state_transfer_handles();
 
@@ -152,7 +152,7 @@ where
             VT,
             NT,
             PL,
-            WrappedExecHandle<ME::ExecutionHandle>,
+            SMRExecWrapper<ME::ExecutionHandle>,
         >::bootstrap(replica_config, wrapped_handle.clone(), handle)
         .await?;
 
@@ -173,7 +173,7 @@ where
                 VT,
                 NT,
                 PL,
-                WrappedExecHandle<ME::ExecutionHandle>,
+                SMRExecWrapper<ME::ExecutionHandle>,
             > as PermissionedProtocolHandling<A::AppData, VT, OP, NT>>::View,
             S,
             NT::StateTransferNode,

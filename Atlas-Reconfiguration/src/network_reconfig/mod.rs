@@ -1,8 +1,9 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::IntoFuture;
 use std::sync::{Arc, RwLock};
 
-use futures::future::join_all;
+use futures::future::{join_all};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
@@ -254,7 +255,8 @@ impl NetworkInfo {
             results.push(rx);
         }
 
-        let results = join_all(results.into_iter()).await;
+        let results = join_all(results.into_iter()
+            .map(OneShotRx::into_future)).await;
 
         for join_result in results {
             if let Some(reason) = join_result.unwrap() {

@@ -123,7 +123,7 @@ crossbeam-channel = { version = "0.5", optional = true }
 rocksdb = { version = "0", optional = true }
 redb = { version = "*", optional = true }
 sled = { version = "*", optional = true }
-oneshot = "0"
+oneshot = { version = "*", features = ["std", "async"] }
 anyhow = "1"
 thiserror = "2"
 getset = "0"
