@@ -91,7 +91,9 @@ pub unsafe fn init(c: InitConfig) -> Result<Option<InitGuard>> {
         c.async_threads, c.threadpool_threads
     );
 
-    socket::init()?;
+    unsafe {
+        socket::init()?;
+    }
     INITIALIZED.set();
     Ok(Some(InitGuard))
 }
@@ -108,8 +110,10 @@ impl Drop for InitGuard {
 #[instrument]
 unsafe fn drop() -> Result<()> {
     INITIALIZED.unset();
-    threadpool::drop()?;
-    async_runtime::drop()?;
-    socket::drop()?;
+    unsafe {
+        threadpool::drop()?;
+        async_runtime::drop()?;
+        socket::drop()?;
+    }
     Ok(())
 }

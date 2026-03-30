@@ -2,7 +2,7 @@
 name = "atlas-smr-execution"
 version = "0.1.0"
 description = "The Atlas SMR execution layer. Responsible for receiving decisions from the ordering protocol and executing them on the application defined by the developer"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

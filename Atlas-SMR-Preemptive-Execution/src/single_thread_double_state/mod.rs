@@ -23,7 +23,7 @@ use atlas_smr_core::execution::executors::monolithic_state::MonStateInstallHandl
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_execution::repliers::ExecutorReplier;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use tracing::error;
+use crate::single_thread_double_state::preemptive_worker::comm_handles::PreemptiveWorkMessage;
 
 mod confirmed_worker;
 mod duplicate_state;
@@ -43,12 +43,13 @@ where
     S: MonolithicState + 'static,
     A: Application<S> + 'static,
 {
-    application: A,
+    application: Arc<A>,
 
     run_mode: RunMode,
 
     confirmed_state: ConfirmedRequestPipeline<S>,
-    preemptive_state: PreemptiveStateManagementHandle<A, S>,
+    confirmed_state: ,
+    preemptive_state: PreemptiveStateManagementHandle<Request<A, S>, S>,
 
     read_thread_pool: ThreadPool,
 
@@ -59,20 +60,24 @@ where
     send_node: Arc<NT>,
 }
 
+pub fn init_handle<A, S>() -> PreemptiveExecutorHandle<Request<A, S>>
+where
+    S: MonolithicState,
+    A: Application<S>,
+{
+    let (tx, rx) = channel::sync::new_bounded_sync(
+        EXECUTING_BUFFER,
+        Some("ST Preemptive Duplicate State Executor Work Channel"),
+    );
+
+    PreemptiveExecutorHandle::new(tx, rx)
+}
+
 impl<S, A, NT> PreemptiveDuplicateStateMonolithicExecutor<S, A, NT>
 where
     S: MonolithicState + 'static + Sync + Send,
-    A: Application<S> + 'static + Send + Clone,
+    A: Application<S> + 'static,
 {
-    pub fn init_handle() -> PreemptiveExecutorHandle<Request<A, S>> {
-        let (tx, rx) = channel::sync::new_bounded_sync(
-            EXECUTING_BUFFER,
-            Some("ST Preemptive Duplicate State Executor Work Channel"),
-        );
-
-        PreemptiveExecutorHandle::new(tx, rx)
-    }
-
     pub fn init<T>(
         handle: ChannelSyncRx<PreemptiveExecutionRequest<Request<A, S>>>,
         initial_state: Option<(S, Vec<Request<A, S>>)>,
@@ -83,9 +88,11 @@ where
         T: ExecutorReplier + 'static,
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     {
+        let wrapped_application = Arc::new(service);
+
         let state = if let Some((mut state, requests)) = initial_state {
             for request in requests {
-                service.update(&mut state, request.clone());
+                wrapped_application.update(&mut state, request.clone());
             }
 
             state
@@ -111,12 +118,12 @@ where
             preemptive_worker::initialize_preemptive_execution::<A, S, NT, T>(
                 SeqNo::ZERO,
                 state,
-                service.clone(),
+                wrapped_application.clone(),
                 send_node.clone(),
             );
 
         let mut executor = Self {
-            application: service,
+            application: wrapped_application,
             run_mode: RunMode::Normal,
             confirmed_state,
             preemptive_state: preemptive_state_handle,
@@ -190,43 +197,44 @@ where
             PreemptiveExecutionRequest::PreemptiveUpdate(reqs, time) => {
                 quiet_unwrap!(
                     self.preemptive_state
-                        .preemptive_execution_handle()
-                        .send(PreemptiveStateMessage::PreemptiveUpdate(reqs))
+                    .preemptive_exec_handle()
+                    .send(PreemptiveWorkMessage::PreemptiveUpdate(reqs))
                 );
             }
             PreemptiveExecutionRequest::UpdateFinalized(seq_no) => {
                 quiet_unwrap!(
                     self.preemptive_state
-                        .preemptive_execution_handle()
-                        .send(PreemptiveStateMessage::ConfirmedUpdate(seq_no))
+                        .preemptive_exec_handle()
+                        .send(PreemptiveWorkMessage::ConfirmedUpdate(seq_no))
                 );
             }
             PreemptiveExecutionRequest::UpdateFinalizedAndGetAppstate(seq_no) => {
                 quiet_unwrap!(
                     self.preemptive_state
-                        .preemptive_execution_handle()
-                        .send(PreemptiveStateMessage::ConfirmedUpdate(seq_no))
+                        .preemptive_exec_handle()
+                        .send(PreemptiveWorkMessage::ConfirmedUpdate(seq_no))
                 );
+
+                todo!("Now we need to get the app state and send it to the executor")
             }
             PreemptiveExecutionRequest::ExecuteUnordered(unordered_batch) => {
                 // Unordered batches should be executed on the confirmed state
                 // As we only want to return confirmed information which can not be rolled back
                 self.handle_unordered_batch::<T>(unordered_batch);
             }
-            PreemptiveExecutionRequest::Read(_) => {}
         }
     }
 
-    fn handle_confirmed_update(&mut self, update_msg: PreemptiveToConfirmedMsg<A, S>) {
+    fn handle_confirmed_update(&mut self, update_msg: PreemptiveToConfirmedMsg<Request<A, S>>) {
         match update_msg {
             PreemptiveToConfirmedMsg::UpdateConfirmed(confirmed_update) => {
                 self.confirmed_state
-                    .execute_update(&self.application, confirmed_update);
+                    .execute_update(&*self.application, confirmed_update);
             }
             PreemptiveToConfirmedMsg::RequestStateCopy(_) => {
                 let (seq_no, state) = self.confirmed_state.take_state_snapshot();
 
-                quiet_unwrap!(self.preemptive_state.preemptive_execution_handle().send(
+                quiet_unwrap!(self.preemptive_state.preemptive_state_handle().send(
                     PreemptiveStateMessage::ConfirmedStateReceived(seq_no, state)
                 ));
             }
@@ -242,7 +250,7 @@ where
 
         quiet_unwrap!(
             self.preemptive_state
-                .preemptive_execution_handle()
+                .preemptive_state_handle()
                 .send(PreemptiveStateMessage::ConfirmedStateReceived(seq, s))
         );
 
@@ -259,7 +267,7 @@ where
 
             let batch_replies = self
                 .confirmed_state
-                .execute_update(&self.application, batch);
+                .execute_update(&*self.application, batch);
 
             T::execution_finished::<A::AppData, NT>(
                 self.send_node.clone(),
@@ -270,7 +278,7 @@ where
 
         let (seq_no, state) = self.confirmed_state.take_state_snapshot();
 
-        quiet_unwrap!(self.preemptive_state.preemptive_execution_handle().send(
+        quiet_unwrap!(self.preemptive_state.preemptive_state_handle().send(
             PreemptiveStateMessage::ConfirmedStateReceived(seq_no, state)
         ));
     }
@@ -283,7 +291,7 @@ where
         // Unordered batches should be executed on the confirmed state
         // As we only want to return confirmed information which can not be rolled bac
         let replies = self.confirmed_state.execute_read(
-            &self.application,
+            &*self.application,
             unordered_batch,
             &self.read_thread_pool,
         );

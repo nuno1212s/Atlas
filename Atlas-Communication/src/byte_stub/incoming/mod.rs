@@ -59,7 +59,7 @@ where
     M: Send,
 {
     Unpooled(unpooled_stub::UnpooledStubManagement<StoredMessage<M>>),
-    Pooled(Arc<pooled_stub::ConnectedPeersGroup<StoredMessage<M>>>),
+    Pooled(Arc<ConnectedPeersGroup<StoredMessage<M>>>),
 }
 
 /// The input lookup table for a given peer

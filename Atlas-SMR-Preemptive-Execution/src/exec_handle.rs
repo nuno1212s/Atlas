@@ -1,7 +1,6 @@
 use anyhow::Context;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::maybe_vec::MaybeVec;
-use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_smr_application::TExecutionHandle;
@@ -23,14 +22,18 @@ pub enum PreemptiveExecutionRequest<O> {
     /// A preemptive update batch to be executed.
     /// The Instant represents the time at which the update was originally queued for execution.
     PreemptiveUpdate(UpdateBatch<O>, Instant),
-
+    /// A preemptive update that has been finalized. We can now
+    /// Send the replies to the clients and permanently apply the update
+    /// to our state
     UpdateFinalized(SeqNo),
-
+    /// Similarly to the [PreemptiveExecutionRequest::UpdateFinalized(_)] branch
+    /// But with the added action of also taking a snapshot of the app state
+    /// (After the update has been performed) and
     UpdateFinalizedAndGetAppstate(SeqNo),
-
+    /// Execute an unordered update on the confirmed state (this will not
+    /// take into account any pending preemptive updates, only updates which
+    /// have been effectivized)
     ExecuteUnordered(UnorderedUpdateBatch<O>),
-
-    Read(NodeId),
 }
 
 pub struct PreemptiveExecutorHandle<RQ> {

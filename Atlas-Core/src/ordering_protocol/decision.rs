@@ -186,6 +186,7 @@ where
     ///
     /// # Errors
     /// Returns an error if the sequence numbers of the decisions do not match
+    #[must_use]
     pub fn merge_decisions(&mut self, other: Self) -> error::Result<()>
     where
         DAD: PartialEq,
@@ -321,6 +322,15 @@ impl<MD, DAD, P, O> DecisionPart<MD, DAD, P, O> {
 
         MaybeVec::Mult(vec![partial, metadata])
     }
+
+    fn rank(d: &DecisionPart<MD, DAD, P, O>) -> u8 {
+        match d {
+            DecisionPart::DecisionMetadata(_) => 0,
+            DecisionPart::PartialDecisionInformation(_) => 1,
+            DecisionPart::DecisionRequests(_) => 2,
+            DecisionPart::DecisionDone => 3,
+        }
+    }
 }
 
 impl<MD, DAD, P, O> PartialEq<Self> for DecisionPart<MD, DAD, P, O>
@@ -371,16 +381,7 @@ where
     DAD: PartialEq,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        fn rank<MD, DAD, P, O>(d: &DecisionPart<MD, DAD, P, O>) -> u8 {
-            match d {
-                DecisionPart::DecisionMetadata(_) => 0,
-                DecisionPart::PartialDecisionInformation(_) => 1,
-                DecisionPart::DecisionRequests(_) => 2,
-                DecisionPart::DecisionDone => 3,
-            }
-        }
-
-        Some(rank(self).cmp(&rank(other)))
+        Some(Self::rank(self).cmp(&Self::rank(other)))
     }
 }
 
@@ -391,7 +392,7 @@ where
     DAD: PartialEq,
 {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
+        Self::rank(self).cmp(&Self::rank(other))
     }
 }
 
