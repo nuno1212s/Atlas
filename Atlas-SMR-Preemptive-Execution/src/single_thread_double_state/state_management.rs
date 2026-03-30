@@ -3,23 +3,18 @@ use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::UpdateBatch;
 use atlas_smr_application::app::{Application, Request};
 use getset::Getters;
+use crate::single_thread_double_state::preemptive_worker::comm_handles::PreemptiveWorkMessage;
 
 /// Messages sent by the work distributor to the preemptive state management thread to trigger updates to the preemptive state.
-pub(super) enum PreemptiveStateMessage<A, S>
-where
-    A: Application<S>,
+pub(super) enum PreemptiveStateMessage<S>
 {
-    ConfirmedStateReceived(SeqNo, S),
-    PreemptiveUpdate(UpdateBatch<Request<A, S>>),
-    ConfirmedUpdate(SeqNo),
+    ConfirmedStateReceived(SeqNo, S)
 }
 
 /// messages that the preemptive state management thread sends to the confirmed state management thread.
-pub(super) enum PreemptiveToConfirmedMsg<A, S>
-where
-    A: Application<S>,
+pub(super) enum PreemptiveToConfirmedMsg<R>
 {
-    UpdateConfirmed(UpdateBatch<Request<A, S>>),
+    UpdateConfirmed(UpdateBatch<R>),
     RequestStateCopy(SeqNo),
 }
 
@@ -27,29 +22,29 @@ where
 pub(super) struct ConfirmedToPreemptiveMsg<S>(pub SeqNo, pub S);
 
 #[derive(Getters)]
-pub struct PreemptiveStateManagementHandle<A, S>
-where
-    A: Application<S>,
+pub struct PreemptiveStateManagementHandle<R, S>
 {
     #[get = "pub"]
-    preemptive_execution_handle: ChannelSyncTx<PreemptiveStateMessage<A, S>>,
+    preemptive_state_handle: ChannelSyncTx<PreemptiveStateMessage<S>>,
     #[get = "pub"]
-    confirmed_updates_rx: ChannelSyncRx<PreemptiveToConfirmedMsg<A, S>>,
+    preemptive_exec_handle: ChannelSyncTx<PreemptiveWorkMessage<R>>,
+    #[get = "pub"]
+    confirmed_updates_rx: ChannelSyncRx<PreemptiveToConfirmedMsg<R>>,
     #[get = "pub"]
     confirmed_states_tx: ChannelSyncTx<ConfirmedToPreemptiveMsg<S>>,
 }
 
-impl<A, S> PreemptiveStateManagementHandle<A, S>
-where
-    A: Application<S>,
+impl<R, S> PreemptiveStateManagementHandle<R, S>
 {
     pub fn new(
-        preemptive_execution_handle: ChannelSyncTx<PreemptiveStateMessage<A, S>>,
-        confirmed_updates_rx: ChannelSyncRx<PreemptiveToConfirmedMsg<A, S>>,
+        preemptive_state_handle: ChannelSyncTx<PreemptiveStateMessage<S>>,
+        preemptive_exec_handle: ChannelSyncTx<PreemptiveWorkMessage<R>>,
+        confirmed_updates_rx: ChannelSyncRx<PreemptiveToConfirmedMsg<R>>,
         confirmed_states_tx: ChannelSyncTx<ConfirmedToPreemptiveMsg<S>>,
     ) -> Self {
         Self {
-            preemptive_execution_handle,
+            preemptive_state_handle,
+            preemptive_exec_handle,
             confirmed_updates_rx,
             confirmed_states_tx,
         }
