@@ -6,16 +6,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, SystemTimeError};
 
-use atlas_common::channel::sync::ChannelSyncRx;
-use atlas_common::channel::TryRecvError;
-use atlas_common::collections::HashMap;
-use atlas_common::node_id::NodeId;
-use thiserror::Error;
-use tracing::error;
-use atlas_common::{quiet_opt_unwrap};
 use crate::timeouts::{
     Timeout, TimeoutAck, TimeoutIdentification, TimeoutRequest, TimeoutWorkerResponder,
 };
+use atlas_common::channel::TryRecvError;
+use atlas_common::channel::sync::ChannelSyncRx;
+use atlas_common::collections::HashMap;
+use atlas_common::node_id::NodeId;
+use atlas_common::quiet_opt_unwrap;
+use thiserror::Error;
+use tracing::error;
 
 #[derive(Debug)]
 pub enum WorkerMessage {
@@ -276,7 +276,10 @@ where
                 break;
             }
 
-            let (_, requests) = quiet_opt_unwrap!(self.pending_timeout_heap.pop_first(), Err(TimeoutError::MapPopFailed));
+            let (_, requests) = quiet_opt_unwrap!(
+                self.pending_timeout_heap.pop_first(),
+                Err(TimeoutError::MapPopFailed)
+            );
 
             requests
                 .iter()
@@ -334,8 +337,7 @@ where
             .retain(|k, _v| !cmp_mod_name(&mod_name, k.mod_id()));
 
         self.pending_timeout_heap.iter_mut().for_each(|(_, v)| {
-            v.retain(|_k, rq|
-                !cmp_mod_name(rq.borrow().request().id().mod_id(), &mod_name))
+            v.retain(|_k, rq| !cmp_mod_name(rq.borrow().request().id().mod_id(), &mod_name))
         });
 
         Ok(())
@@ -475,5 +477,5 @@ pub enum TimeoutError {
     #[error("Failed to notify of timeouts {0}")]
     Notifier(#[from] anyhow::Error),
     #[error("Failed to obtain timeouts from map")]
-    MapPopFailed
+    MapPopFailed,
 }

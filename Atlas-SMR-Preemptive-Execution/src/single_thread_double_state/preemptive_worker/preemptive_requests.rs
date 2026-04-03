@@ -1,4 +1,4 @@
-use crate::single_thread_double_state::preemptive_worker::comm_handles::PreemptiveChannels;
+use crate::single_thread_double_state::preemptive_worker::comm_handles::PreemptiveWorkerChannels;
 use atlas_common::ordering::singular_tbo_queue::TSingleTboQueue;
 use atlas_common::ordering::singular_tbo_queue::vec_single_tbo_queue::VSingleTBOQueue;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -46,7 +46,7 @@ where
 
     pending_permanent_update: VSingleTBOQueue<PendingPermanentUpdate<A, S>>,
 
-    channel_handles: PreemptiveChannels<Request<A, S>, S>,
+    channel_handles: PreemptiveWorkerChannels<Request<A, S>, S>,
 }
 
 impl<S, A> Orderable for PreemptiveRequestPipeline<S, A>
@@ -62,7 +62,10 @@ impl<S, A> PreemptiveRequestPipeline<S, A>
 where
     A: Application<S>,
 {
-    pub fn new(handle: PreemptiveChannels<Request<A, S>, S>, initial_state: (SeqNo, S)) -> Self {
+    pub fn new(
+        handle: PreemptiveWorkerChannels<Request<A, S>, S>,
+        initial_state: (SeqNo, S),
+    ) -> Self {
         Self {
             current_state_seq_no: initial_state.0,
             preemptive_state: initial_state.1,

@@ -91,7 +91,6 @@ impl RecvError {
     }
 }
 
-
 #[derive(Error)]
 pub enum TrySendReturnError<T> {
     #[error("[Channel: {}] Channel has disconnected", .1.as_deref().unwrap_or(UNNAMED_CHANNEL))]

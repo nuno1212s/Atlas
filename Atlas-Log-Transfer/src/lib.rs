@@ -18,8 +18,8 @@ use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::ordering_protocol::loggable::{PProof, TLoggableOrderProtocol};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 
-use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 use atlas_core::timeouts::TimeoutID;
+use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 use atlas_logging_core::decision_log::serialize::OrderProtocolLog;
 use atlas_logging_core::decision_log::{DecLog, TDecisionLog};
 use atlas_logging_core::log_transfer::networking::LogTransferSendNode;
@@ -121,10 +121,10 @@ where
     where
         V: NetworkView,
         NT: LogTransferSendNode<
-            D,
-            OP::Serialization,
-            LTMsg<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-        >,
+                D,
+                OP::Serialization,
+                LTMsg<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
+            >,
     {
         let next_seq = self.next_seq();
         let message = LTMessage::new(next_seq, LogTransferMessageKind::RequestLog);
@@ -145,10 +145,10 @@ where
     where
         PL: PersistentDecisionLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
         NT: LogTransferSendNode<
-            D,
-            OP::Serialization,
-            LTMsg<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-        >,
+                D,
+                OP::Serialization,
+                LTMsg<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
+            >,
     {
         let log = decision_log.current_log()?;
 
@@ -184,10 +184,10 @@ where
     where
         PL: PersistentDecisionLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
         NT: LogTransferSendNode<
-            D,
-            OP::Serialization,
-            LTMsg<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-        >,
+                D,
+                OP::Serialization,
+                LTMsg<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
+            >,
     {
         match message.kind() {
             LogTransferMessageKind::RequestProofs(log_parts) => {
@@ -231,10 +231,10 @@ where
     where
         PL: PersistentDecisionLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
         NT: LogTransferSendNode<
-            D,
-            OP::Serialization,
-            LTMsg<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-        >,
+                D,
+                OP::Serialization,
+                LTMsg<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
+            >,
     {
         let start = Instant::now();
 
@@ -275,10 +275,10 @@ where
     DL: TDecisionLog<RQ, OP>,
     PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
     NT: LogTransferSendNode<
-        RQ,
-        OP::Serialization,
-        LTMsg<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-    >,
+            RQ,
+            OP::Serialization,
+            LTMsg<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
+        >,
 {
     fn initialize(
         config: Self::Config,
@@ -288,12 +288,7 @@ where
     ) -> Result<Self>
     where
         Self: Sized,
-        PL: PersistentDecisionLog<
-            RQ,
-            OP::Serialization,
-            OP::PersistableTypes,
-            DL::LogSerialization,
-        >,
+        PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
         NT: LogTransferSendNode<RQ, OP::Serialization, Self::Serialization>,
     {
         let LogTransferConfig { timeout_duration } = config;
@@ -324,10 +319,10 @@ where
     DL: TDecisionLog<RQ, OP>,
     PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
     NT: LogTransferSendNode<
-        RQ,
-        OP::Serialization,
-        LTMsg<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-    >,
+            RQ,
+            OP::Serialization,
+            LTMsg<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
+        >,
 {
     fn mod_name() -> Arc<str> {
         MOD_NAME.clone()
@@ -347,10 +342,10 @@ where
     DL: TDecisionLog<RQ, OP>,
     PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
     NT: LogTransferSendNode<
-        RQ,
-        OP::Serialization,
-        LTMsg<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-    >,
+            RQ,
+            OP::Serialization,
+            LTMsg<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
+        >,
 {
     type Serialization = LTMsg<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>;
     type Config = LogTransferConfig;
@@ -537,7 +532,12 @@ where
                                 }
                             } else {
                                 //TODO: Handle forgeries?
-                                error!("{:?} // Node {:?} has attempt to forge a proof for a log space {:?}", self.node.id(), header.from(), (first_seq, last_seq))
+                                error!(
+                                    "{:?} // Node {:?} has attempt to forge a proof for a log space {:?}",
+                                    self.node.id(),
+                                    header.from(),
+                                    (first_seq, last_seq)
+                                )
                             }
                         } else {
                             //TODO: Vote for seq no zero?
@@ -607,8 +607,13 @@ where
 
                         if data.first_seq <= first_log_seq {
                             if last_log_seq >= data.last_seq {
-                                info!("{:?} // Received log with sequence number {:?} and first sequence number {:?} from {:?}. Accepting log.",
-                                        self.node.id(), log.sequence_number(), log.first_seq(), header.from());
+                                info!(
+                                    "{:?} // Received log with sequence number {:?} and first sequence number {:?} from {:?}. Accepting log.",
+                                    self.node.id(),
+                                    log.sequence_number(),
+                                    log.first_seq(),
+                                    header.from()
+                                );
 
                                 let requests_to_execute = decision_log.install_log(log)?;
 
@@ -620,10 +625,20 @@ where
                                     requests_to_execute,
                                 ));
                             } else {
-                                error!("{:?} // Received log with sequence number {:?} but expected {:?} or higher", self.node.id(), log.sequence_number(), last_log_seq);
+                                error!(
+                                    "{:?} // Received log with sequence number {:?} but expected {:?} or higher",
+                                    self.node.id(),
+                                    log.sequence_number(),
+                                    last_log_seq
+                                );
                             }
                         } else {
-                            error!("{:?} // Received log with first sequence number {:?} but expected {:?} or lower", self.node.id(), log.first_seq(), first_log_seq);
+                            error!(
+                                "{:?} // Received log with first sequence number {:?} but expected {:?} or lower",
+                                self.node.id(),
+                                log.first_seq(),
+                                first_log_seq
+                            );
                         }
                     }
                     _ => {

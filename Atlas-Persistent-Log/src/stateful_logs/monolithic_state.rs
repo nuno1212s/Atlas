@@ -23,19 +23,19 @@ use atlas_logging_core::decision_log::{
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
-use atlas_smr_core::persistent_log::MonolithicStateLog;
-use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
-use atlas_smr_core::state_transfer::Checkpoint;
 use atlas_smr_core::SMRReq;
+use atlas_smr_core::persistent_log::MonolithicStateLog;
+use atlas_smr_core::state_transfer::Checkpoint;
+use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 
 use crate::execution_handle::TLoggedDecisionsHandle;
 use crate::worker::monolithic_worker::{
-    read_mon_state, MonStatePersistentLogWorker, PersistentMonolithicStateHandle,
-    PersistentMonolithicStateStub,
+    MonStatePersistentLogWorker, PersistentMonolithicStateHandle, PersistentMonolithicStateStub,
+    read_mon_state,
 };
 use crate::worker::{
-    PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, COLUMN_FAMILY_OTHER,
-    COLUMN_FAMILY_PROOFS,
+    COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, PersistentLogWorker, PersistentLogWorkerHandle,
+    PersistentLogWriteStub,
 };
 use crate::{PersistentLog, PersistentLogMode, PersistentLogModeTrait};
 

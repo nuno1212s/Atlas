@@ -6,8 +6,8 @@ pub mod executors {
 pub mod reply;
 pub mod state_management;
 
-use crate::execution::state_management::{TDeterministicExecutorStateHandle, TExecutorStateHandle};
 use crate::SMRRawReq;
+use crate::execution::state_management::{TDeterministicExecutorStateHandle, TExecutorStateHandle};
 use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::Orderable;
@@ -18,9 +18,9 @@ use atlas_core::execution::requests::{
 use atlas_core::execution::{TDeterministicExecutorDecisionHandle, TExecutorDecisionHandle};
 use atlas_core::messages::SessionBased;
 use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
+use atlas_smr_application::TExecutionHandle;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::deterministic_execution::TDeterministicExecutionHandle;
-use atlas_smr_application::TExecutionHandle;
 use std::ops::Deref;
 
 pub trait TExecutor<A, S>
@@ -40,8 +40,7 @@ where
 ///
 /// TODO: We should collapse these types into a single
 /// One so we don't have to translate them
-pub type SMRExec<E, A, S>
-= SMRExecWrapper<<E as TExecutor<A, S>>::ExecutionHandle>;
+pub type SMRExec<E, A, S> = SMRExecWrapper<<E as TExecutor<A, S>>::ExecutionHandle>;
 
 #[derive(Clone)]
 pub struct SMRExecWrapper<E>(pub E);

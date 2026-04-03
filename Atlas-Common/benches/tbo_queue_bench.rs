@@ -1,9 +1,9 @@
-use atlas_common::ordering::tbo_queue::btree_tbo_queue::TboQueue;
-use atlas_common::ordering::tbo_queue::vec_tbo_queue::VTboQueue;
-use atlas_common::ordering::tbo_queue::TTboQueue;
 use atlas_common::ordering::Orderable;
 use atlas_common::ordering::SeqNo;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use atlas_common::ordering::tbo_queue::TTboQueue;
+use atlas_common::ordering::tbo_queue::btree_tbo_queue::TboQueue;
+use atlas_common::ordering::tbo_queue::vec_tbo_queue::VTboQueue;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::fmt::Display;
 use std::sync::{Arc, LazyLock, OnceLock};
 
@@ -54,7 +54,7 @@ fn bench_push<F, G, T, M>(
     c: &mut Criterion,
     id: &str,
     factory: F,
-    gen: G,
+    generator: G,
     sizes: &[usize],
     msg_per_seqs: &[usize],
 ) where
@@ -75,7 +75,7 @@ fn bench_push<F, G, T, M>(
                     &factory,
                     |mut q| {
                         for i in 0..total_messages {
-                            let m = gen(i, num_seqs.1);
+                            let m = generator(i, num_seqs.1);
                             let _ = q.push(m);
                         }
                     },
@@ -92,7 +92,7 @@ fn bench_pop<F, G, T, M>(
     c: &mut Criterion,
     id: &str,
     factory: F,
-    gen: G,
+    generator: G,
     sizes: &[usize],
     msg_per_seqs: &[usize],
 ) where
@@ -114,7 +114,7 @@ fn bench_pop<F, G, T, M>(
                         // prepare a queue with total_messages (size * msg_per_seq)
                         let mut q = factory();
                         for i in 0..total_messages {
-                            let _ = q.push(gen(i, num_seqs.1));
+                            let _ = q.push(generator(i, num_seqs.1));
                         }
                         q
                     },
@@ -142,7 +142,7 @@ fn bench_peek<F, G, T, M>(
     c: &mut Criterion,
     id: &str,
     factory: F,
-    gen: G,
+    generator: G,
     sizes: &[usize],
     msg_per_seq: &[usize],
 ) where
@@ -164,7 +164,7 @@ fn bench_peek<F, G, T, M>(
                     || {
                         let mut q = factory();
                         for i in 0..total_messages {
-                            let _ = q.push(gen(i, num_seqs.1));
+                            let _ = q.push(generator(i, num_seqs.1));
                         }
                         q
                     },
@@ -192,7 +192,7 @@ fn bench_advance_install_clear<F, G, T, M>(
     c: &mut Criterion,
     id: &str,
     factory: F,
-    gen: G,
+    generator: G,
     msg_per_seq: usize,
 ) where
     F: Fn() -> T + Send + Sync + 'static,
@@ -207,7 +207,7 @@ fn bench_advance_install_clear<F, G, T, M>(
             || {
                 let mut q = factory();
                 for i in 0..1000usize {
-                    let _ = q.push(gen(i, msg_per_seq));
+                    let _ = q.push(generator(i, msg_per_seq));
                 }
                 q
             },
@@ -225,12 +225,12 @@ fn bench_advance_install_clear<F, G, T, M>(
             || {
                 let mut q = factory();
                 for i in 0..1000usize {
-                    let _ = q.push(gen(i, msg_per_seq));
+                    let _ = q.push(generator(i, msg_per_seq));
                 }
                 q
             },
             |mut q| {
-                q.install_seq(SeqNo::from(500u32))
+                q.advance_to_seq(SeqNo::from(500u32))
                     .expect("install_seq should succeed");
             },
             criterion::BatchSize::SmallInput,
@@ -242,7 +242,7 @@ fn bench_advance_install_clear<F, G, T, M>(
             || {
                 let mut q = factory();
                 for i in 0..10000usize {
-                    let _ = q.push(gen(i, msg_per_seq));
+                    let _ = q.push(generator(i, msg_per_seq));
                 }
                 q
             },
@@ -269,14 +269,15 @@ where
 
     let factory = || Q::default();
 
-    let gen = |i: usize, msg_per_seq: usize| BenchMsg::new(SeqNo::from((i / msg_per_seq) as u32));
+    let generator =
+        |i: usize, msg_per_seq: usize| BenchMsg::new(SeqNo::from((i / msg_per_seq) as u32));
 
-    bench_push(c, name, factory, gen, &seq_sizes, &msg_per_seq);
-    bench_pop(c, name, factory, gen, &seq_sizes, &msg_per_seq);
-    bench_peek(c, name, factory, gen, &seq_sizes, &msg_per_seq);
+    bench_push(c, name, factory, generator, &seq_sizes, &msg_per_seq);
+    bench_pop(c, name, factory, generator, &seq_sizes, &msg_per_seq);
+    bench_peek(c, name, factory, generator, &seq_sizes, &msg_per_seq);
 
     for &msg_per_seq in &msg_per_seq {
-        bench_advance_install_clear(c, name, factory, gen, msg_per_seq);
+        bench_advance_install_clear(c, name, factory, generator, msg_per_seq);
     }
 }
 

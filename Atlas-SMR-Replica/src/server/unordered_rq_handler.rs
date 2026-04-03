@@ -4,8 +4,8 @@ use atlas_common::quiet_unwrap;
 use atlas_core::execution::TExecutorDecisionHandle;
 use atlas_metrics::metrics::metric_increment;
 use atlas_smr_application::serialize::ApplicationData;
-use atlas_smr_core::request_pre_processing::UnorderedRqHandles;
 use atlas_smr_core::SMRReq;
+use atlas_smr_core::request_pre_processing::UnorderedRqHandles;
 
 pub(super) fn start_unordered_rq_thread<O: ApplicationData>(
     unordered_rqs: UnorderedRqHandles<SMRReq<O>>,

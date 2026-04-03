@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use rayon::prelude::*;
 use rayon::ThreadPool;
+use rayon::prelude::*;
 
 use crate::crud_states::{AccessType, CRUDApplication, CRUDState};
 use crate::metric::{
@@ -12,7 +12,7 @@ use crate::metric::{
     UNORDERED_OPS_PER_SECOND_ID,
 };
 use crate::scalable::execution_unit::{
-    progress_collision_state, CollisionState, ExecutionResult, ExecutionUnit,
+    CollisionState, ExecutionResult, ExecutionUnit, progress_collision_state,
 };
 use atlas_common::channel;
 use atlas_common::ordering::{Orderable, SeqNo};

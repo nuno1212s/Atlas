@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use either::Either;
 use itertools::Itertools;
 use thiserror::Error;
@@ -34,7 +34,7 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::phantom::FPhantom;
-use atlas_common::{channel, exhaust_and_consume, unwrap_channel, Err};
+use atlas_common::{Err, channel, exhaust_and_consume, unwrap_channel};
 use atlas_communication::message::StoredMessage;
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkReconfigurationCommunication,
@@ -68,23 +68,23 @@ use atlas_core::request_pre_processing::{
     RequestClientPreProcessing, RequestPreProcessing, RequestPreProcessorTimeout,
 };
 use atlas_core::timeouts::timeout::ModTimeout;
-use atlas_core::timeouts::{initialize_timeouts, Timeout, TimeoutIdentification, TimeoutsHandle};
+use atlas_core::timeouts::{Timeout, TimeoutIdentification, TimeoutsHandle, initialize_timeouts};
 use atlas_logging_core::decision_log::{DecisionLogInitializer, TDecisionLog};
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::{metric_correlation_id_passed, metric_duration, metric_increment};
 use atlas_persistent_log::{NoPersistentLog, PersistentLogModeTrait};
 use atlas_smr_application::serialize::ApplicationData;
+use atlas_smr_core::SMRReq;
 use atlas_smr_core::execution::state_management::{
     TDeterministicExecutorStateHandle, TExecutorStateHandle,
 };
 use atlas_smr_core::message::SystemMessage;
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::request_pre_processing::{
-    initialize_request_pre_processor, OrderedRqHandles, RequestPreProcessor, UnorderedRqHandles,
+    OrderedRqHandles, RequestPreProcessor, UnorderedRqHandles, initialize_request_pre_processor,
 };
 use atlas_smr_core::serialize::ServiceMessage;
 use atlas_smr_core::state_transfer::{STResult, StateTransferProtocol};
-use atlas_smr_core::SMRReq;
 use reconfig::MockView;
 
 pub(super) mod decision_log;
@@ -228,14 +228,14 @@ where
     VT: ViewTransferProtocol<OP>,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send,
     NT: SMRReplicaNetworkNode<
-        RP::InformationProvider,
-        RP::Serialization,
-        D,
-        OP::Serialization,
-        LT::Serialization,
-        VT::Serialization,
-        ST::Serialization,
-    >,
+            RP::InformationProvider,
+            RP::Serialization,
+            D,
+            OP::Serialization,
+            LT::Serialization,
+            VT::Serialization,
+            ST::Serialization,
+        >,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
 {
     async fn bootstrap(
@@ -247,10 +247,10 @@ where
     ) -> Result<Self>
     where
         OP: NetworkedOrderProtocolInitializer<
-            SMRReq<D>,
-            RequestPreProcessor<SMRReq<D>>,
-            NT::ProtocolNode,
-        >,
+                SMRReq<D>,
+                RequestPreProcessor<SMRReq<D>>,
+                NT::ProtocolNode,
+            >,
         VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
         LT: LogTransferProtocolInitializer<SMRReq<D>, OP, DL, PL, EX, NT::ProtocolNode>,
         DL: DecisionLogInitializer<SMRReq<D>, OP, PL, EX>,
@@ -510,10 +510,10 @@ where
     ) -> Result<OP>
     where
         OP: NetworkedOrderProtocolInitializer<
-            SMRReq<D>,
-            RequestPreProcessor<SMRReq<D>>,
-            NT::ProtocolNode,
-        >,
+                SMRReq<D>,
+                RequestPreProcessor<SMRReq<D>>,
+                NT::ProtocolNode,
+            >,
     {
         info!("Initializing the request pre processor handles");
 
@@ -855,14 +855,20 @@ where
                 self.executor_handle.poll_state_channel()?;
             }
             STResult::StateTransferFinished(seq_no) => {
-                info!("{:?} // State transfer finished. Registering result and comparing with log transfer result", self.node.id());
+                info!(
+                    "{:?} // State transfer finished. Registering result and comparing with log transfer result",
+                    self.node.id()
+                );
 
                 self.executor_handle.poll_state_channel()?;
 
                 self.handle_state_transfer_done(seq_no)?;
             }
             STResult::StateTransferNotNeeded(curr_seq) => {
-                info!("{:?} // State transfer not needed. Registering result and comparing with log transfer result", self.node.id());
+                info!(
+                    "{:?} // State transfer not needed. Registering result and comparing with log transfer result",
+                    self.node.id()
+                );
 
                 self.handle_state_transfer_done(curr_seq)?;
             }
@@ -885,7 +891,9 @@ where
 
         self.transfer_states = match prev_state {
             TransferPhase::NotRunning => {
-                return Err(anyhow!("How can we have finished the log transfer result when we are not running transfer protocols"));
+                return Err(anyhow!(
+                    "How can we have finished the log transfer result when we are not running transfer protocols"
+                ));
             }
             TransferPhase::RunningTransferProtocols {
                 log_transfer,
@@ -921,7 +929,9 @@ where
 
         self.transfer_states = match prev_state {
             TransferPhase::NotRunning => {
-                return Err(anyhow!("How can we have finished the state transfer protocol when we are not running transfer protocols"));
+                return Err(anyhow!(
+                    "How can we have finished the state transfer protocol when we are not running transfer protocols"
+                ));
             }
             TransferPhase::RunningTransferProtocols {
                 log_transfer,
@@ -1082,7 +1092,9 @@ where
                 // and there is probably new information that we need to know about from the ordering protocol.
                 //TODO: Here we want to check if we are currently attempting to join and if we are then take appropriate actions
                 if new_quorum.contains(&self.id()) {
-                    unreachable!("We are a part of the quorum and we have received a quorum updated message? This information should come from the ordering protocol instead");
+                    unreachable!(
+                        "We are a part of the quorum and we have received a quorum updated message? This information should come from the ordering protocol instead"
+                    );
                 } else {
                     // We are not a part of the quorum, so we need to start the state transfer protocol
                     // In order to receive any new information about the ordering protocol status (Like new views)
@@ -1320,7 +1332,13 @@ where
                             || state_transfer_seq.next() > *final_seq)
                             && (*state_transfer_seq != SeqNo::ZERO && *initial_seq != SeqNo::ZERO)
                         {
-                            error!("{:?} // Log transfer protocol and state transfer protocol are not in sync. Received {:?} state and {:?} - {:?} log", self.id(), *state_transfer_seq, * initial_seq, * final_seq);
+                            error!(
+                                "{:?} // Log transfer protocol and state transfer protocol are not in sync. Received {:?} state and {:?} - {:?} log",
+                                self.id(),
+                                *state_transfer_seq,
+                                *initial_seq,
+                                *final_seq
+                            );
 
                             self.run_transfer_protocols()?;
 
@@ -1332,7 +1350,13 @@ where
                                 to_execute_seq = state_transfer_seq.next();
                             }
 
-                            info!("{:?} // State transfer protocol and log transfer protocol are in sync. Received {:?} state and {:?} - {:?} log", self.id(), *state_transfer_seq, * initial_seq, * final_seq);
+                            info!(
+                                "{:?} // State transfer protocol and log transfer protocol are in sync. Received {:?} state and {:?} - {:?} log",
+                                self.id(),
+                                *state_transfer_seq,
+                                *initial_seq,
+                                *final_seq
+                            );
 
                             // We now have to report to the decision log that he can send the executions to the execution
                             let decision_log_work = DLWorkMessage::init_log_transfer_message(
@@ -1461,7 +1485,10 @@ where
     }
 
     fn reply_to_attempt_quorum_join(&mut self, failed: bool) -> Result<()> {
-        info!("{:?} // Sending attempt quorum join response to reconfiguration protocol. Has failed: {failed:?}", self.id());
+        info!(
+            "{:?} // Sending attempt quorum join response to reconfiguration protocol. Has failed: {failed:?}",
+            self.id()
+        );
 
         if failed {
             self.reconf_tx
@@ -1487,7 +1514,11 @@ where
         node_id: NodeId,
         failed_reason: Either<Vec<NodeId>, AlterationFailReason>,
     ) -> Result<()> {
-        info!("{:?} // Sending quorum entrance response to reconfiguration protocol with success: {:?}", self.id(), failed_reason);
+        info!(
+            "{:?} // Sending quorum entrance response to reconfiguration protocol with success: {:?}",
+            self.id(),
+            failed_reason
+        );
 
         match failed_reason {
             Either::Left(quorum) => {

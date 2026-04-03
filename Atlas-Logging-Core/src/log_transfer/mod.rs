@@ -8,8 +8,8 @@ use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 
 use crate::decision_log::{LoggedDecision, TDecisionLog};
-use crate::log_transfer::networking::serialize::LogTransferMessage;
 use crate::log_transfer::networking::LogTransferSendNode;
+use crate::log_transfer::networking::serialize::LogTransferMessage;
 use crate::persistent_log::PersistentDecisionLog;
 use atlas_core::ordering_protocol::loggable::TLoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
@@ -124,12 +124,7 @@ where
     ) -> Result<Self>
     where
         Self: Sized,
-        PL: PersistentDecisionLog<
-            RQ,
-            OP::Serialization,
-            OP::PersistableTypes,
-            DL::LogSerialization,
-        >,
+        PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
         NT: LogTransferSendNode<RQ, OP::Serialization, Self::Serialization>;
 }
 

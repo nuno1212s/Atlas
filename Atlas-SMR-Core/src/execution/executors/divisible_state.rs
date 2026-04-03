@@ -1,6 +1,6 @@
-use crate::execution::reply::ReplyNode;
-use crate::execution::TExecutor;
 use crate::SMRReply;
+use crate::execution::TExecutor;
+use crate::execution::reply::ReplyNode;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::state::divisible_state;

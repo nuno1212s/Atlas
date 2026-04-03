@@ -1,9 +1,9 @@
+use crate::MonStateInstallHandle;
 use crate::metric::EXECUTION_LATENCY_TIME_ID;
 use crate::scalable::sc_execute_unordered_op_batch;
 use crate::single_threaded::{
-    st_execute_op_batch, st_execute_unordered_op_batch, UnorderedExecutor,
+    UnorderedExecutor, st_execute_op_batch, st_execute_unordered_op_batch,
 };
-use crate::MonStateInstallHandle;
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
@@ -13,8 +13,8 @@ use atlas_smr_application::app::{Application, Reply, Request};
 use atlas_smr_application::state::monolithic_state::{
     AppStateMessage, InstallStateMessage, MonolithicState,
 };
-use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_core::SMRReply;
+use atlas_smr_core::execution::reply::ReplyNode;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 

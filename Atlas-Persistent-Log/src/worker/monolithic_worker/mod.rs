@@ -1,6 +1,6 @@
 use anyhow::Context;
-use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::TryRecvError;
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
@@ -8,23 +8,23 @@ use atlas_common::ordering::Orderable;
 use atlas_common::persistentdb::KVDB;
 use atlas_common::quiet_unwrap;
 use atlas_common::serialization_helper::SerMsg;
-use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::OrderProtocolLogHelper;
+use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
-use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::TDecisionLogPersistenceHelper;
+use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
 use atlas_smr_core::state_transfer::Checkpoint;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::error;
 
+use crate::ResponseMessage;
 use crate::serialize::{deserialize_mon_state, make_seq, read_seq, serialize_mon_state};
 use crate::stateful_logs::monolithic_state::MonolithicStateMessage;
-use crate::worker::{PersistentLogWorker, COLUMN_FAMILY_STATE};
-use crate::ResponseMessage;
+use crate::worker::{COLUMN_FAMILY_STATE, PersistentLogWorker};
 
 #[derive(Clone)]
 pub struct PersistentMonolithicStateStub<S: MonolithicState> {

@@ -4,13 +4,13 @@ use std::time::Instant;
 
 use either::Either;
 use thiserror::Error;
-use tracing::{debug, error, info, instrument, trace, Level};
+use tracing::{Level, debug, error, info, instrument, trace};
 
+use atlas_common::Err;
 use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
-use atlas_common::Err;
 use atlas_core::execution::TExecutorDecisionHandle;
 use atlas_core::messages::ClientRqInfo;
 use atlas_core::ordering_protocol::decision::{
@@ -125,11 +125,11 @@ where
     RQ: SerMsg + 'static,
     OP: TLoggableOrderProtocol<RQ>,
     PL: PersistentDecisionLog<
-        RQ,
-        OP::Serialization,
-        OP::PersistableTypes,
-        LogSerialization<RQ, OP::Serialization, OP::PersistableTypes>,
-    >,
+            RQ,
+            OP::Serialization,
+            OP::PersistableTypes,
+            LogSerialization<RQ, OP::Serialization, OP::PersistableTypes>,
+        >,
     EX: Send,
 {
     #[instrument(skip_all, level = "debug")]
@@ -140,11 +140,11 @@ where
     ) -> Result<Self>
     where
         PL: PersistentDecisionLog<
-            RQ,
-            OP::Serialization,
-            OP::PersistableTypes,
-            Self::LogSerialization,
-        >,
+                RQ,
+                OP::Serialization,
+                OP::PersistableTypes,
+                Self::LogSerialization,
+            >,
         EX: TExecutorDecisionHandle<RQ>,
         Self: Sized,
     {
@@ -180,11 +180,11 @@ where
     RQ: SerMsg + 'static,
     OP: TLoggableOrderProtocol<RQ>,
     PL: PersistentDecisionLog<
-        RQ,
-        OP::Serialization,
-        OP::PersistableTypes,
-        LogSerialization<RQ, OP::Serialization, OP::PersistableTypes>,
-    >,
+            RQ,
+            OP::Serialization,
+            OP::PersistableTypes,
+            LogSerialization<RQ, OP::Serialization, OP::PersistableTypes>,
+        >,
     EX: Send,
 {
     #[instrument(skip_all, level = Level::DEBUG, fields(batch_count = batches.len()))]
@@ -273,11 +273,11 @@ where
     RQ: SerMsg + 'static,
     OP: TLoggableOrderProtocol<RQ>,
     PL: PersistentDecisionLog<
-        RQ,
-        OP::Serialization,
-        OP::PersistableTypes,
-        LogSerialization<RQ, OP::Serialization, OP::PersistableTypes>,
-    >,
+            RQ,
+            OP::Serialization,
+            OP::PersistableTypes,
+            LogSerialization<RQ, OP::Serialization, OP::PersistableTypes>,
+        >,
     EX: Send,
 {
     type LogSerialization = LogSerialization<RQ, OP::Serialization, OP::PersistableTypes>;
@@ -290,7 +290,9 @@ where {
 
         match seq.index(last_exec) {
             Either::Left(_) | Either::Right(0) => {
-                unreachable!("We are trying to clear a sequence number that has already been decided? How can that be cleared?")
+                unreachable!(
+                    "We are trying to clear a sequence number that has already been decided? How can that be cleared?"
+                )
             }
             Either::Right(_) => {
                 self.deciding_log.clear_decision_at(seq);

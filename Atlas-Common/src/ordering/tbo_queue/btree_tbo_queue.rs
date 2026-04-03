@@ -100,7 +100,7 @@ where
         self.current_seq_no = self.current_seq_no.next();
     }
 
-    fn install_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo> {
+    fn advance_to_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo> {
         if seq_no < self.current_seq_no {
             Err(InvalidSeqNo::Small)
         } else {
@@ -122,5 +122,10 @@ where
 
     fn clear(&mut self) {
         self.message_queue.clear();
+    }
+
+    fn reset_with_seq(&mut self, seq: SeqNo) {
+        self.message_queue.clear();
+        self.current_seq_no = seq;
     }
 }

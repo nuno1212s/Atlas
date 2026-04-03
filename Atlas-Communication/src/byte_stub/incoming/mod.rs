@@ -2,7 +2,7 @@ use crate::byte_stub::incoming::pooled_stub::{ConnectedPeersGroup, PooledStubOut
 use crate::byte_stub::peer_conn_manager::ModuleStubEndPoint;
 use crate::byte_stub::peer_conn_manager::PeerStubEndpoints;
 use crate::byte_stub::stub_endpoint::StubEndpoint;
-use crate::byte_stub::{from_arr, BlankError, NodeIncomingStub};
+use crate::byte_stub::{BlankError, NodeIncomingStub, from_arr};
 
 use crate::config::{ClientPoolConfig, UnpooledConnection};
 use crate::lookup_table::{LookupTable, MessageInputStubs, MessageModule};
@@ -15,10 +15,10 @@ use atlas_common::error::*;
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::{channel, quiet_unwrap};
 use enum_map::EnumMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use strum::IntoEnumIterator;
-use tracing::{info};
+use tracing::info;
 
 pub(crate) mod pooled_stub;
 pub(crate) mod unpooled_stub;

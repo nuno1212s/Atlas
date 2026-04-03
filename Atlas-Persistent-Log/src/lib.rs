@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use atlas_common::channel;
-use atlas_common::channel::oneshot::{new_oneshot_channel, OneShotTx};
+use atlas_common::channel::oneshot::{OneShotTx, new_oneshot_channel};
 use atlas_common::channel::sync::ChannelSyncTx;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
@@ -34,8 +34,8 @@ use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use crate::backlog::{ConsensusBackLogHandle, ConsensusBacklog};
 use crate::execution_handle::TLoggedDecisionsHandle;
 use crate::worker::{
-    write_latest_seq_no, PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub,
-    COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS,
+    COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, PersistentLogWorker, PersistentLogWorkerHandle,
+    PersistentLogWriteStub, write_latest_seq_no,
 };
 
 pub mod backlog;

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tracing::error;
 
@@ -18,15 +18,15 @@ use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolI
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::Application;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
+use atlas_smr_core::SMRReq;
 use atlas_smr_core::execution::executors::monolithic_state::TMonolithicStateExecutor;
-use atlas_smr_core::execution::{TExecutor, SMRExecWrapper};
+use atlas_smr_core::execution::{SMRExecWrapper, TExecutor};
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::MonolithicStateLog;
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
 use atlas_smr_core::state_transfer::monolithic_state::{
     MonolithicStateTransfer, MonolithicStateTransferInitializer,
 };
-use atlas_smr_core::SMRReq;
 
 use crate::config::MonolithicStateReplicaConfig;
 use crate::metric::RUN_LATENCY_TIME_ID;
@@ -64,19 +64,8 @@ where
 {
     p: FPhantom<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
-    inner_replica: Replica<
-        RP,
-        S,
-        A::AppData,
-        OP,
-        DL,
-        ST,
-        LT,
-        VT,
-        NT,
-        PL,
-        SMRExecWrapper<ME::ExecutionHandle>,
-    >,
+    inner_replica:
+        Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL, SMRExecWrapper<ME::ExecutionHandle>>,
 }
 
 impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
@@ -108,25 +97,20 @@ where
     ) -> Result<Self>
     where
         OP: NetworkedOrderProtocolInitializer<
-            SMRReq<A::AppData>,
-            RequestPreProcessor<SMRReq<A::AppData>>,
-            NT::ProtocolNode,
-        >,
+                SMRReq<A::AppData>,
+                RequestPreProcessor<SMRReq<A::AppData>>,
+                NT::ProtocolNode,
+            >,
         VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
         LT: LogTransferProtocolInitializer<
-            SMRReq<A::AppData>,
-            OP,
-            DL,
-            PL,
-            SMRExecWrapper<ME::ExecutionHandle>,
-            NT::ProtocolNode,
-        >,
-        DL: DecisionLogInitializer<
-            SMRReq<A::AppData>,
-            OP,
-            PL,
-            SMRExecWrapper<ME::ExecutionHandle>,
-        >,
+                SMRReq<A::AppData>,
+                OP,
+                DL,
+                PL,
+                SMRExecWrapper<ME::ExecutionHandle>,
+                NT::ProtocolNode,
+            >,
+        DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, SMRExecWrapper<ME::ExecutionHandle>>,
         ST: MonolithicStateTransferInitializer<S, NT::StateTransferNode, PL>,
     {
         let MonolithicStateReplicaConfig {

@@ -4,8 +4,8 @@ use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
-use atlas_smr_application::deterministic_execution::TDeterministicExecutionHandle;
 use atlas_smr_application::TExecutionHandle;
+use atlas_smr_application::deterministic_execution::TDeterministicExecutionHandle;
 use std::time::Instant;
 
 pub enum ExecutionRequest<O> {

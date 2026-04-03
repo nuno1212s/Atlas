@@ -1,9 +1,9 @@
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
+use atlas_core::ordering_protocol::OrderingProtocol;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::permissioned::{VTMsg, ViewTransferProtocol};
-use atlas_core::ordering_protocol::OrderingProtocol;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::SMRReq;
 
