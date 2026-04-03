@@ -166,11 +166,11 @@ where
     ) -> Result<Self>
     where
         PL: PersistentDecisionLog<
-            RQ,
-            OP::Serialization,
-            OP::PersistableTypes,
-            Self::LogSerialization,
-        >,
+                RQ,
+                OP::Serialization,
+                OP::PersistableTypes,
+                Self::LogSerialization,
+            >,
         EX: TExecutorDecisionHandle<RQ>,
         Self: Sized;
 }

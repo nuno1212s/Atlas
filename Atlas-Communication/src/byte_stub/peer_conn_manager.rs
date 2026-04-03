@@ -1,10 +1,10 @@
 use crate::byte_stub::connections::active_connections::ActiveConnections;
 use crate::byte_stub::incoming::{PeerIncomingConnection, PeerStubController, PeerStubLookupTable};
-use crate::byte_stub::outgoing::loopback::LoopbackOutgoingStub;
 use crate::byte_stub::outgoing::PeerOutgoingConnection;
+use crate::byte_stub::outgoing::loopback::LoopbackOutgoingStub;
 use crate::byte_stub::peer_conn::PeerConnection;
 use crate::byte_stub::stub_endpoint::StubEndpoint;
-use crate::byte_stub::{from_arr, BlankError, ByteNetworkStub, NodeStubController};
+use crate::byte_stub::{BlankError, ByteNetworkStub, NodeStubController, from_arr};
 use crate::lookup_table::{LookupTable, MessageModule};
 use crate::network_information::PendingConnectionManagement;
 use crate::reconfiguration::NetworkInformationProvider;
@@ -15,8 +15,8 @@ use atlas_common::prng::ThreadSafePrng;
 use enum_map::EnumMap;
 use getset::CopyGetters;
 use getset::Getters;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use strum::IntoEnumIterator;
 use tracing::info;
 

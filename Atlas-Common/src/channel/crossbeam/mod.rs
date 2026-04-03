@@ -82,11 +82,7 @@ impl<T> ChannelSyncTx<T> {
     }
 
     #[inline]
-    pub fn send_timeout(
-        &self,
-        value: T,
-        timeout: Duration,
-    ) -> Result<(), TrySendError> {
+    pub fn send_timeout(&self, value: T, timeout: Duration) -> Result<(), TrySendError> {
         match self.inner.send_timeout(value, timeout) {
             Ok(_) => Ok(()),
             Err(err) => match err {

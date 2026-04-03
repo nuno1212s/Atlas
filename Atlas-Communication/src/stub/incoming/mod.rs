@@ -1,6 +1,6 @@
+use crate::byte_stub::ByteNetworkStub;
 use crate::byte_stub::connections::NetworkConnectionController;
 use crate::byte_stub::stub_endpoint::StubEndpoint;
-use crate::byte_stub::ByteNetworkStub;
 use crate::reconfiguration::NetworkInformationProvider;
 use crate::serialization::Serializable;
 use crate::stub::{

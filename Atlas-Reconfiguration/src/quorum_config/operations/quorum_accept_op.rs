@@ -2,9 +2,9 @@ use either::Either;
 use thiserror::Error;
 use tracing::{info, warn};
 
+use atlas_common::Err;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::Err;
 use atlas_communication::message::Header;
 use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
 
@@ -16,8 +16,8 @@ use crate::quorum_config::network::QuorumConfigNetworkNode;
 use crate::quorum_config::operations::{
     Operation, OperationExecutionCandidateError, OperationResponse,
 };
-use crate::quorum_config::{get_f_for_n, get_quorum_for_n, QuorumCert, QuorumCertPart};
 use crate::quorum_config::{InternalNode, NodeStatusType, QuorumView};
+use crate::quorum_config::{QuorumCert, QuorumCertPart, get_f_for_n, get_quorum_for_n};
 
 /// The operation to accept a new node into the quorum
 pub struct QuorumAcceptNodeOperation {
@@ -96,8 +96,12 @@ impl QuorumAcceptNodeOperation {
             {
                 Either::Right(0) => {
                     if current_view != request {
-                        warn!("The join request made by {:?} is not valid as the provided quorum view does not match our own. {:?} vs {:?}", 
-                        header.from(), current_view, request,);
+                        warn!(
+                            "The join request made by {:?} is not valid as the provided quorum view does not match our own. {:?} vs {:?}",
+                            header.from(),
+                            current_view,
+                            request,
+                        );
 
                         response = QuorumJoinResponse::Rejected(
                             QuorumRejectionReason::ViewDoesNotMatch(current_view),
@@ -126,8 +130,12 @@ impl QuorumAcceptNodeOperation {
                     }
                 }
                 Either::Right(_) => {
-                    warn!("The join request made by {:?} is not valid as it's sequence number is too old. {:?} vs {:?}",
-                    header.from(), current_view.sequence_number(), request.sequence_number(),);
+                    warn!(
+                        "The join request made by {:?} is not valid as it's sequence number is too old. {:?} vs {:?}",
+                        header.from(),
+                        current_view.sequence_number(),
+                        request.sequence_number(),
+                    );
 
                     response =
                         QuorumJoinResponse::Rejected(QuorumRejectionReason::SeqNoTooAdvanced(
@@ -138,8 +146,12 @@ impl QuorumAcceptNodeOperation {
                     Ok(OperationResponse::CompletedFailed)
                 }
                 Either::Left(_) => {
-                    warn!("The join request made by {:?} is not valid as it's sequence number is too old. {:?} vs {:?}",
-                    header.from(), current_view.sequence_number(), request.sequence_number(),);
+                    warn!(
+                        "The join request made by {:?} is not valid as it's sequence number is too old. {:?} vs {:?}",
+                        header.from(),
+                        current_view.sequence_number(),
+                        request.sequence_number(),
+                    );
 
                     response = QuorumJoinResponse::Rejected(QuorumRejectionReason::SeqNoTooOld(
                         request.sequence_number(),
@@ -150,8 +162,11 @@ impl QuorumAcceptNodeOperation {
                 }
             };
         } else {
-            warn!("Received a join request from {:?} but we have already accepted node {:?} into the quorum. Ignoring the request.",
-                header.from(), self.entering_node);
+            warn!(
+                "Received a join request from {:?} but we have already accepted node {:?} into the quorum. Ignoring the request.",
+                header.from(),
+                self.entering_node
+            );
 
             response = QuorumJoinResponse::Rejected(QuorumRejectionReason::AlreadyAccepting);
 
@@ -210,37 +225,65 @@ impl QuorumAcceptNodeOperation {
                 self.received_locked_qc = Some(message.clone());
 
                 if self.entering_node != header.from() {
-                    warn!("We have received a locked QC message from node {:?} while we were in the process of accepting {:?}.\
-                    Since we were still in locked phase, we have moved to the new entering node", header.from(), self.entering_node);
+                    warn!(
+                        "We have received a locked QC message from node {:?} while we were in the process of accepting {:?}.\
+                    Since we were still in locked phase, we have moved to the new entering node",
+                        header.from(),
+                        self.entering_node
+                    );
 
                     self.entering_node = header.from();
                 }
 
-                let accepted_qc = QuorumCommitResponse::Accepted(QuorumCommitAcceptResponse::init(view_cpy, message));
+                let accepted_qc = QuorumCommitResponse::Accepted(QuorumCommitAcceptResponse::init(
+                    view_cpy, message,
+                ));
 
-                let op_message_type = OperationMessage::QuorumReconfiguration(QuorumJoinReconfMessages::CommitQuorumResponse(accepted_qc));
+                let op_message_type = OperationMessage::QuorumReconfiguration(
+                    QuorumJoinReconfMessages::CommitQuorumResponse(accepted_qc),
+                );
 
                 network.send_quorum_config_message(op_message_type, header.from())?;
             }
             OperationPhase::CommittedQC(view) => {
                 match message.sequence_number().index(view.sequence_number()) {
                     Either::Left(_) => {
-                        info!("We have received a locked QC while we are already in the committing phase with seq no older than our current one.\
-                        {:?} vs {:?}, ignoring the message (from node {:?})", message.sequence_number(), view.sequence_number(), header.from());
+                        info!(
+                            "We have received a locked QC while we are already in the committing phase with seq no older than our current one.\
+                        {:?} vs {:?}, ignoring the message (from node {:?})",
+                            message.sequence_number(),
+                            view.sequence_number(),
+                            header.from()
+                        );
                     }
                     Either::Right(0) => {
                         if self.entering_node != header.from() {
-                            warn!("We have received a locked QC while we are already in the committing phase with seq no equal to our current one.\
-                        {:?} vs {:?}, ignoring the message (from node {:?} vs already received {:?}).", message.sequence_number(), view.sequence_number(),
-                                header.from(), self.entering_node);
+                            warn!(
+                                "We have received a locked QC while we are already in the committing phase with seq no equal to our current one.\
+                        {:?} vs {:?}, ignoring the message (from node {:?} vs already received {:?}).",
+                                message.sequence_number(),
+                                view.sequence_number(),
+                                header.from(),
+                                self.entering_node
+                            );
                         } else {
-                            info!("We have received a locked QC while we are already in the committing phase with seq no equal to our current one.\
-                        {:?} vs {:?}. Probably a duplicate, ignoring (sent by {:?}).", message.sequence_number(), view.sequence_number(), header.from());
+                            info!(
+                                "We have received a locked QC while we are already in the committing phase with seq no equal to our current one.\
+                        {:?} vs {:?}. Probably a duplicate, ignoring (sent by {:?}).",
+                                message.sequence_number(),
+                                view.sequence_number(),
+                                header.from()
+                            );
                         }
                     }
                     Either::Right(_) => {
-                        info!("We have received a locked QC while we are already in the committing phase with seq no newer than our current one.\
-                        {:?} vs {:?}, moving to the new locked QC (from node {:?})", message.sequence_number(), view.sequence_number(), header.from());
+                        info!(
+                            "We have received a locked QC while we are already in the committing phase with seq no newer than our current one.\
+                        {:?} vs {:?}, moving to the new locked QC (from node {:?})",
+                            message.sequence_number(),
+                            view.sequence_number(),
+                            header.from()
+                        );
 
                         self.phase = OperationPhase::CommittedQC(message.quorum().clone());
                         self.received_locked_qc = Some(message);
@@ -250,10 +293,17 @@ impl QuorumAcceptNodeOperation {
                 }
             }
             OperationPhase::Done(view) => {
-                info!("We have received a locked QC message while we are already done with the accept operation.\
-                {:?} vs {:?}, ignoring the message (from node {:?})", message.sequence_number(), view.sequence_number(), header.from());
+                info!(
+                    "We have received a locked QC message while we are already done with the accept operation.\
+                {:?} vs {:?}, ignoring the message (from node {:?})",
+                    message.sequence_number(),
+                    view.sequence_number(),
+                    header.from()
+                );
             }
-            OperationPhase::Waiting => panic!("We have received a locked QC message while we are still waiting for the join request to be received"),
+            OperationPhase::Waiting => panic!(
+                "We have received a locked QC message while we are still waiting for the join request to be received"
+            ),
         }
 
         Ok(OperationResponse::Processing)
@@ -294,8 +344,12 @@ impl QuorumAcceptNodeOperation {
                 self.received_committed_qc = Some(message);
 
                 if self.entering_node != header.from() {
-                    warn!("We have received a commit QC message from node {:?} while we were in the process of accepting {:?}.\
-                    Since we were still in locked phase, we have moved to the new entering node", header.from(), self.entering_node);
+                    warn!(
+                        "We have received a commit QC message from node {:?} while we were in the process of accepting {:?}.\
+                    Since we were still in locked phase, we have moved to the new entering node",
+                        header.from(),
+                        self.entering_node
+                    );
 
                     self.entering_node = header.from();
                 }
@@ -303,7 +357,9 @@ impl QuorumAcceptNodeOperation {
                 return Ok(OperationResponse::Completed);
             }
             OperationPhase::Done(_view) => {}
-            OperationPhase::Waiting => panic!("We have received a commit QC message while we are still waiting for the join request to be received"),
+            OperationPhase::Waiting => panic!(
+                "We have received a commit QC message while we are still waiting for the join request to be received"
+            ),
         }
 
         Ok(OperationResponse::Processing)
@@ -411,9 +467,13 @@ pub enum QuorumAcceptOpError {
     CannotRunAcceptWhileNotInQuorum,
     #[error("Clients are not allowed to perform this operation")]
     ClientsNotPermitted,
-    #[error("Should not receive joined quorum message in accept operation, as it should already be ready")]
+    #[error(
+        "Should not receive joined quorum message in accept operation, as it should already be ready"
+    )]
     ReceivedJoinQuorumMessage,
-    #[error("Received a locked quorum response while we are part of the quorum, which should not be possible")]
+    #[error(
+        "Received a locked quorum response while we are part of the quorum, which should not be possible"
+    )]
     ReceivedLockedQuorumResponseWhilePartOfQuorum,
     #[error("Received a commit quorum message while we are not part of the quorum")]
     ReceivedCommitQuorumResponseWhileNotCommitted,
@@ -449,8 +509,11 @@ where
             // Then we must assume we are the ones in the wrong, since the QC
             // Contains 2f + 1 votes.
 
-            warn!("We have received a quorum certificate that is ahead of our current situation. {:?} vs current {:?}",
-            qc.sequence_number(), current_quorum.sequence_number());
+            warn!(
+                "We have received a quorum certificate that is ahead of our current situation. {:?} vs current {:?}",
+                qc.sequence_number(),
+                current_quorum.sequence_number()
+            );
         }
     }
 
@@ -471,6 +534,8 @@ pub enum HandleQCError {
     NotEnoughVotes(usize, usize),
     #[error("Not all votes on the received certificate match the same quorum view")]
     NotAllMatch,
-    #[error("The sequence number indicated by the request is too old as our quorum is already ahead {0:?} vs {1:?}")]
+    #[error(
+        "The sequence number indicated by the request is too old as our quorum is already ahead {0:?} vs {1:?}"
+    )]
     TooOld(SeqNo, SeqNo),
 }

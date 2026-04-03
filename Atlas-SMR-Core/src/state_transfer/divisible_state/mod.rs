@@ -6,8 +6,8 @@ use atlas_core::timeouts::timeout::TimeoutModHandle;
 use atlas_smr_application::state::divisible_state::{DivisibleState, InstallStateMessage};
 
 use crate::persistent_log::DivisibleStateLog;
-use crate::state_transfer::networking::StateTransferSendNode;
 use crate::state_transfer::StateTransferProtocol;
+use crate::state_transfer::networking::StateTransferSendNode;
 
 pub trait DivisibleStateTransfer<S>: StateTransferProtocol<S>
 where
@@ -18,7 +18,7 @@ where
 
     /// Handle having received a state from the application
     fn handle_state_desc_received_from_app(&mut self, descriptor: S::StateDescriptor)
-        -> Result<()>;
+    -> Result<()>;
 
     fn handle_state_part_received_from_app(&mut self, parts: Vec<S::StatePart>) -> Result<()>;
 

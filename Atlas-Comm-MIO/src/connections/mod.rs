@@ -2,8 +2,8 @@
 
 use anyhow::Context;
 use crossbeam_skiplist::SkipMap;
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use getset::{CopyGetters, Getters};
 use mio::{Token, Waker};
 use std::error::Error;
@@ -26,7 +26,7 @@ use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::{TryRecvError, TrySendReturnError};
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::socket::{MioSocket, SecureSocket, SecureSocketSync, SyncListener};
-use atlas_common::{quiet_unwrap, Err};
+use atlas_common::{Err, quiet_unwrap};
 use atlas_communication::byte_stub;
 use atlas_communication::byte_stub::connections::NetworkConnectionController;
 use atlas_communication::byte_stub::{DispatchError, NodeIncomingStub, NodeStubController};
@@ -307,7 +307,9 @@ where
                             .map_err(HandleConnectionError::GenerateStubError)?
                     }
                     Some(_) => {
-                        unreachable!("We should never have a stub for a node that we don't have a connection to")
+                        unreachable!(
+                            "We should never have a stub for a node that we don't have a connection to"
+                        )
                     }
                 };
 
@@ -342,8 +344,10 @@ where
         // So now we have to multiply the limit because of this
         if current_connections + 1 > concurrency_level * 2 {
             // We have too many connections to this node. We need to close this one.
-            warn!("{:?} // Too many connections to {:?}. Closing connection {:?}. Connection count {} vs max {}", self.own_id, node, conn_id,
-            current_connections, concurrency_level);
+            warn!(
+                "{:?} // Too many connections to {:?}. Closing connection {:?}. Connection count {} vs max {}",
+                self.own_id, node, conn_id, current_connections, concurrency_level
+            );
 
             if let Err(err) = socket.shutdown(Shutdown::Both) {
                 error!(

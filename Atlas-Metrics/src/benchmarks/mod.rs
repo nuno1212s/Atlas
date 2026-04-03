@@ -1,7 +1,7 @@
 use atlas_common::node_id::NodeId;
 use chrono::{DateTime, Utc};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 pub struct CommStats {

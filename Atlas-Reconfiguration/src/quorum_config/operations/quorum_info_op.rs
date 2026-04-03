@@ -4,9 +4,9 @@ use crate::quorum_config::operations::{
     Operation, OperationExecutionCandidateError, OperationResponse,
 };
 use crate::quorum_config::{InternalNode, QuorumView};
+use atlas_common::Err;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
-use atlas_common::Err;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
 use std::collections::{BTreeMap, BTreeSet};
@@ -145,12 +145,19 @@ impl Operation for ObtainQuorumInfoOP {
 
         match message {
             QuorumObtainInfoOpMessage::RequestInformationMessage => {
-                unreachable!("Received request information message while we are the ones requesting information")
+                unreachable!(
+                    "Received request information message while we are the ones requesting information"
+                )
             }
             QuorumObtainInfoOpMessage::QuorumInformationResponse(quorum) => match &mut self.state {
                 OperationState::Waiting => {}
                 OperationState::ReceivingInfo(received) if self.received.insert(header.from()) => {
-                    debug!("Received quorum information from node {:?} with information {:?}, digest {:?}", header.from(), quorum, header.digest());
+                    debug!(
+                        "Received quorum information from node {:?} with information {:?}, digest {:?}",
+                        header.from(),
+                        quorum,
+                        header.digest()
+                    );
                     *received += 1;
 
                     let digest = *header.digest();
@@ -168,13 +175,17 @@ impl Operation for ObtainQuorumInfoOP {
                             .count()
                             > 0
                         {
-                            info!("Received enough responses, and enough matching quorum views, finishing operation");
+                            info!(
+                                "Received enough responses, and enough matching quorum views, finishing operation"
+                            );
 
                             self.state = OperationState::Done;
 
                             return Ok(OperationResponse::Completed);
                         } else {
-                            info!("Received enough responses, but not enough matching quorum views, waiting for more");
+                            info!(
+                                "Received enough responses, but not enough matching quorum views, waiting for more"
+                            );
                         }
                     }
                 }
@@ -225,6 +236,8 @@ impl Operation for ObtainQuorumInfoOP {
 pub enum QuorumObtainInfoError {
     #[error("Failed to obtain quorum information: No messages received")]
     FailedNoMessagesReceived,
-    #[error("Failed to obtain quorum information: Not enough matching messages, needed {0}, received {1}, digest {2:?}")]
+    #[error(
+        "Failed to obtain quorum information: Not enough matching messages, needed {0}, received {1}, digest {2:?}"
+    )]
     FailedNotEnoughMatching(usize, usize, Digest),
 }

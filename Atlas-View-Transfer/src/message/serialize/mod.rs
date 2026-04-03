@@ -3,10 +3,10 @@ use crate::message::ViewTransferMessage;
 use atlas_communication::message::Header;
 use atlas_communication::reconfiguration::NetworkInformationProvider;
 
+use atlas_core::ordering_protocol::View;
 use atlas_core::ordering_protocol::networking::serialize::{
     PermissionedOrderingProtocolMessage, ViewTransferProtocolMessage,
 };
-use atlas_core::ordering_protocol::View;
 use std::marker::PhantomData;
 use std::sync::Arc;
 

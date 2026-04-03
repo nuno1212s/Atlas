@@ -3,7 +3,7 @@ use atlas_common::ordering::SeqNo;
 use atlas_communication::message::Header;
 
 use crate::messages::{ClientRqInfo, SessionBased};
-use crate::request_pre_processing::{operation_key_raw, WorkPartitioner};
+use crate::request_pre_processing::{WorkPartitioner, operation_key_raw};
 
 pub struct WDRoundRobin;
 

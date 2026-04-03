@@ -23,19 +23,19 @@ use atlas_logging_core::decision_log::{
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::divisible_state::DivisibleState;
+use atlas_smr_core::SMRReq;
 use atlas_smr_core::persistent_log::DivisibleStateLog;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
-use atlas_smr_core::SMRReq;
 
 use crate::execution_handle::TLoggedDecisionsHandle;
 use crate::worker::divisible_state_worker::{
     DivStatePersistentLogWorker, PersistentDivStateHandle, PersistentDivStateStub,
 };
 use crate::worker::{
-    PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, COLUMN_FAMILY_OTHER,
-    COLUMN_FAMILY_PROOFS,
+    COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, PersistentLogWorker, PersistentLogWorkerHandle,
+    PersistentLogWriteStub,
 };
-use crate::{worker, PersistentLog, PersistentLogMode, PersistentLogModeTrait};
+use crate::{PersistentLog, PersistentLogMode, PersistentLogModeTrait, worker};
 
 /// The message containing the information necessary to persist the most recently received
 /// State parts

@@ -6,9 +6,7 @@
 
 #[macro_export]
 macro_rules! Err {
-    ($err:expr $(,)?) => {{
-        Err(From::from($err))
-    }};
+    ($err:expr $(,)?) => {{ Err(From::from($err)) }};
 }
 
 #[macro_export]

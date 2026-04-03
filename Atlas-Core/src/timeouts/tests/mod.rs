@@ -10,7 +10,7 @@ pub mod timeouts_tests {
     use std::time::Duration;
     use tracing_appender::non_blocking::WorkerGuard;
 
-    use atlas_common::channel::sync::{new_bounded_sync, ChannelSyncRx, ChannelSyncTx};
+    use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx, new_bounded_sync};
     use atlas_common::node_id::NodeId;
     use atlas_common::ordering::SeqNo;
 

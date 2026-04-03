@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::IntoFuture;
 use std::sync::{Arc, RwLock};
 
-use futures::future::{join_all};
+use futures::future::join_all;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
@@ -23,14 +23,14 @@ use atlas_communication::reconfiguration::{
 };
 use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
 use atlas_core::reconfiguration_protocol::NodeConnectionUpdateMessage;
-use atlas_core::timeouts::timeout::TimeoutModHandle;
 use atlas_core::timeouts::TimeoutID;
+use atlas_core::timeouts::timeout::TimeoutModHandle;
 
 use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{
-    signatures, KnownNodesMessage, NetworkJoinCert, NetworkJoinRejectionReason,
-    NetworkJoinResponseMessage, NetworkReconfigMessage, NetworkReconfigMessageType, ReconfData,
-    ReconfigurationMessage,
+    KnownNodesMessage, NetworkJoinCert, NetworkJoinRejectionReason, NetworkJoinResponseMessage,
+    NetworkReconfigMessage, NetworkReconfigMessageType, ReconfData, ReconfigurationMessage,
+    signatures,
 };
 use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 
@@ -163,16 +163,25 @@ impl NetworkInfo {
             let from_pk = self.get_pk_for_node(from);
             if let Some(pk) = from_pk {
                 if !signatures::verify_node_triple_signature(&node, signature, &pk) {
-                    error!("Received a node hello message from node {:?} with invalid signature. Ignoring it",node);
+                    error!(
+                        "Received a node hello message from node {:?} with invalid signature. Ignoring it",
+                        node
+                    );
 
                     return Err(ValidNetworkHelloError::InvalidSignatures);
                 }
             } else {
-                error!("Received a node hello message from node {:?} with certificate from node {:?} which we don't know. Ignoring it",node, from);
+                error!(
+                    "Received a node hello message from node {:?} with certificate from node {:?} which we don't know. Ignoring it",
+                    node, from
+                );
             }
 
             if !self.bootstrap_nodes.contains(from) {
-                error!("Received a node hello message from node {:?} with certificate from node {:?} which is not a bootstrap node. Ignoring it",node, from);
+                error!(
+                    "Received a node hello message from node {:?} with certificate from node {:?} which is not a bootstrap node. Ignoring it",
+                    node, from
+                );
                 return Err(ValidNetworkHelloError::NonBootstrapCertificate);
             }
         }
@@ -185,7 +194,12 @@ impl NetworkInfo {
         }
 
         if certificates.len() < required {
-            error!("Received a node hello message from node {:?} with less certificates than 2n/3 bootstrap nodes {:?} vs required {:?}. Ignoring it", node, certificates.len(), required);
+            error!(
+                "Received a node hello message from node {:?} with less certificates than 2n/3 bootstrap nodes {:?} vs required {:?}. Ignoring it",
+                node,
+                certificates.len(),
+                required
+            );
             return Err(ValidNetworkHelloError::NotEnoughCertificates {
                 required,
                 provided: certificates.len(),
@@ -255,8 +269,7 @@ impl NetworkInfo {
             results.push(rx);
         }
 
-        let results = join_all(results.into_iter()
-            .map(OneShotRx::into_future)).await;
+        let results = join_all(results.into_iter().map(OneShotRx::into_future)).await;
 
         for join_result in results {
             if let Some(reason) = join_result.unwrap() {
@@ -575,7 +588,10 @@ impl GeneralNodeInfo {
 
                 let join_message = ReconfigurationMessage::NetworkReconfig(join_req);
 
-                info!("Received timeout, broadcasting reconfiguration network join message to known nodes {:?}", known_nodes);
+                info!(
+                    "Received timeout, broadcasting reconfiguration network join message to known nodes {:?}",
+                    known_nodes
+                );
 
                 let _ = network_node
                     .outgoing_stub()
@@ -663,7 +679,11 @@ impl GeneralNodeInfo {
                                     signature,
                                     network_information,
                                 ) => {
-                                    info!("We were accepted into the network by the node {:?}, current certificate count {:?}", header.from(), certificates.len());
+                                    info!(
+                                        "We were accepted into the network by the node {:?}, current certificate count {:?}",
+                                        header.from(),
+                                        certificates.len()
+                                    );
 
                                     let _ = timeouts.cancel_timeout(TimeoutID::SeqNoBased(seq));
 
@@ -683,7 +703,11 @@ impl GeneralNodeInfo {
                                                 continue;
                                             }
 
-                                            warn!("{:?} // Connecting to node {:?} as we don't know it yet", self.network_view.node_id(), node_id);
+                                            warn!(
+                                                "{:?} // Connecting to node {:?} as we don't know it yet",
+                                                self.network_view.node_id(),
+                                                node_id
+                                            );
                                             let _ = network_node
                                                 .connections()
                                                 .connect_to_node(node_id.node_id());
@@ -700,7 +724,11 @@ impl GeneralNodeInfo {
                                             .filter(|node| *node != self.network_view.node_id())
                                             .collect::<Vec<_>>();
 
-                                        warn!("We have enough certificates to join the network {}, moving to introduction phase. Broadcasting Hello Request to {:?}", certificates.len(), known_nodes);
+                                        warn!(
+                                            "We have enough certificates to join the network {}, moving to introduction phase. Broadcasting Hello Request to {:?}",
+                                            certificates.len(),
+                                            known_nodes
+                                        );
 
                                         let hello_request =
                                             NetworkReconfigMessageType::NetworkHelloRequest(
@@ -733,7 +761,10 @@ impl GeneralNodeInfo {
                                 }
                             }
                         } else {
-                            warn!("Received a network join response from {:?} but we had already seen it", header.from());
+                            warn!(
+                                "Received a network join response from {:?} but we had already seen it",
+                                header.from()
+                            );
                         }
 
                         NetworkProtocolResponse::Nil
@@ -881,7 +912,10 @@ impl GeneralNodeInfo {
             .is_valid_network_hello(node.clone(), confirmations)
         {
             Ok(_) => {
-                info!("Received a node hello message from node {:?} with enough certificates. Adding it to our known nodes", node);
+                info!(
+                    "Received a node hello message from node {:?} with enough certificates. Adding it to our known nodes",
+                    node
+                );
 
                 let known_nodes = {
                     let read_guard = self.network_view.known_nodes.read().unwrap();
@@ -901,7 +935,10 @@ impl GeneralNodeInfo {
                 );
 
                 if self.network_view.handle_node_introduced(node.clone()) {
-                    info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", node.node_id());
+                    info!(
+                        "Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer",
+                        node.node_id()
+                    );
                 } else {
                     info!(
                         "Node {:?} has joined the network but we had already seen it before",
@@ -963,7 +1000,10 @@ impl GeneralNodeInfo {
 
             let reconfig_message = ReconfigurationMessage::NetworkReconfig(message);
 
-            info!("Responding to network join request a network join response to {:?} with message {:?}", target, reconfig_message);
+            info!(
+                "Responding to network join request a network join response to {:?} with message {:?}",
+                target, reconfig_message
+            );
 
             let _ = network
                 .outgoing_stub()
@@ -972,7 +1012,10 @@ impl GeneralNodeInfo {
             let _ = network_update.send(NodeConnectionUpdateMessage::NodeConnected(triple.clone()));
 
             if network_view.handle_node_introduced(triple.clone()) {
-                info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", triple.node_id());
+                info!(
+                    "Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer",
+                    triple.node_id()
+                );
 
                 let public_key = network_view.get_pk_for_node(&triple.node_id()).unwrap();
 

@@ -1,17 +1,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use getset::{CopyGetters, Getters};
 
+use atlas_common::Err;
 use atlas_common::channel;
-use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::TryRecvError;
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::error::*;
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::peer_addr::PeerAddr;
-use atlas_common::Err;
 
 #[derive(Clone, Getters, CopyGetters, Debug)]
 #[cfg_attr(

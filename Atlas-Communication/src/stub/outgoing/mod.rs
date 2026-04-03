@@ -7,8 +7,8 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 
-use crate::byte_stub::connections::NetworkConnectionController;
 use crate::byte_stub::ByteNetworkStub;
+use crate::byte_stub::connections::NetworkConnectionController;
 use crate::lookup_table::ModMessageWrapped;
 use crate::message::{SerializedMessage, StoredMessage, StoredSerializedMessage};
 use crate::message_outgoing::{send_message_to_targets, send_serialized_message_to_target};

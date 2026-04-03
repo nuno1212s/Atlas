@@ -1,25 +1,47 @@
-use crate::single_thread_double_state::state_management::{ConfirmedToPreemptiveMsg, PreemptiveStateMessage, PreemptiveToConfirmedMsg};
+use crate::single_thread_double_state::state_management::{
+    ConfirmedToPreemptiveMsg, PreemptiveToConfirmedMsg, StateMessage,
+};
+use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::UpdateBatch;
 use getset::Getters;
 use thiserror::Error;
 use tracing::error;
-use atlas_common::channel;
-
 
 /// Messages sent by the orchestrator to the preemptive state management thread to trigger updates to the preemptive state.
 pub enum PreemptiveWorkMessage<R> {
     PreemptiveUpdate(UpdateBatch<R>),
     ConfirmedUpdate(SeqNo),
-    PollStateChannel
+    PollStateChannel,
 }
 
+/// The handle for the outer layer to communicate with the preemptive worker.
 #[derive(Getters)]
-pub(super) struct PreemptiveChannels<R, S>
-{
+pub struct PreemptiveWorkerHandle<R, S> {
     #[get = "pub"]
-    state_rx: ChannelSyncRx<PreemptiveStateMessage<S>>,
+    preemptive_state_handle: ChannelSyncTx<StateMessage<S>>,
+    #[get = "pub"]
+    preemptive_exec_handle: ChannelSyncTx<PreemptiveWorkMessage<R>>,
+}
+
+impl<R, S> PreemptiveWorkerHandle<R, S> {
+    pub fn new(
+        preemptive_state_handle: ChannelSyncTx<StateMessage<S>>,
+        preemptive_exec_handle: ChannelSyncTx<PreemptiveWorkMessage<R>>,
+    ) -> Self {
+        Self {
+            preemptive_state_handle,
+            preemptive_exec_handle,
+        }
+    }
+}
+
+/// Internal channels to be passed to the worker thread.
+#[derive(Getters)]
+pub(super) struct PreemptiveWorkerChannels<R, S> {
+    #[get = "pub"]
+    state_rx: ChannelSyncRx<StateMessage<S>>,
     #[get = "pub"]
     work_rx: ChannelSyncRx<PreemptiveWorkMessage<R>>,
     #[get = "pub"]
@@ -28,10 +50,9 @@ pub(super) struct PreemptiveChannels<R, S>
     confirmed_worker_rx: ChannelSyncRx<ConfirmedToPreemptiveMsg<S>>,
 }
 
-impl<R, S> PreemptiveChannels<R, S>
-{
+impl<R, S> PreemptiveWorkerChannels<R, S> {
     pub fn new(
-        state_rx: ChannelSyncRx<PreemptiveStateMessage<S>>,
+        state_rx: ChannelSyncRx<StateMessage<S>>,
         work_rx: ChannelSyncRx<PreemptiveWorkMessage<R>>,
         confirmed_worker_tx: ChannelSyncTx<PreemptiveToConfirmedMsg<R>>,
         confirmed_worker_rx: ChannelSyncRx<ConfirmedToPreemptiveMsg<S>>,
@@ -73,8 +94,7 @@ impl<R, S> PreemptiveChannels<R, S>
     }
 }
 
-impl<R, S> Clone for PreemptiveChannels<R, S>
-{
+impl<R, S> Clone for PreemptiveWorkerChannels<R, S> {
     fn clone(&self) -> Self {
         Self {
             state_rx: self.state_rx.clone(),

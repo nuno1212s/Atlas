@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod metrics_tests {
     use atlas_common::node_id::NodeId;
-    use atlas_common::{init, InitConfig};
-    use atlas_metrics::metrics::{metric_increment, MetricKind};
-    use atlas_metrics::{initialize_metrics, with_metrics, InfluxDBArgs};
+    use atlas_common::{InitConfig, init};
+    use atlas_metrics::metrics::{MetricKind, metric_increment};
+    use atlas_metrics::{InfluxDBArgs, initialize_metrics, with_metrics};
     use std::time::Duration;
 
     const INFLUX_DB_IP: &str = "localhost:8086";
@@ -40,12 +40,14 @@ mod metrics_tests {
         println!("Connecting to InfluxDB with {influx_args:?}");
 
         initialize_metrics(
-            vec![with_metrics(vec![(
-                TEST_DATA_COLLECTION_POINT_ID,
-                TEST_DATA_COLLECTION_POINT.to_string(),
-                MetricKind::Counter,
-            )
-                .into()])],
+            vec![with_metrics(vec![
+                (
+                    TEST_DATA_COLLECTION_POINT_ID,
+                    TEST_DATA_COLLECTION_POINT.to_string(),
+                    MetricKind::Counter,
+                )
+                    .into(),
+            ])],
             influx_args,
         );
 

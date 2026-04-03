@@ -20,8 +20,8 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::conn_util;
 use crate::conn_util::{
-    interrupted, would_block, ConnCounts, ConnMessage, ConnectionReadWork, ConnectionWriteWork,
-    ReadMessageError, ReadingBuffer, WritingBuffer,
+    ConnCounts, ConnMessage, ConnectionReadWork, ConnectionWriteWork, ReadMessageError,
+    ReadingBuffer, WritingBuffer, interrupted, would_block,
 };
 use crate::connections::{ByteMessageSendStub, Connections, HandleConnectionError};
 use atlas_common::channel::oneshot::OneShotRx;
@@ -29,7 +29,7 @@ use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::peer_addr::PeerAddr;
 use atlas_common::socket::{MioListener, MioSocket, SecureSocket, SecureSocketSync, SyncListener};
-use atlas_common::{channel, prng, quiet_unwrap, socket, Err};
+use atlas_common::{Err, channel, prng, quiet_unwrap, socket};
 use atlas_communication::byte_stub::{NodeIncomingStub, NodeStubController};
 use atlas_communication::lookup_table::MessageModule;
 use atlas_communication::message::{Header, WireMessage};
@@ -180,8 +180,10 @@ where
 
                     if self.currently_accepting.len() >= DEFAULT_ALLOWED_CONCURRENT_JOINS {
                         // Ignore connections that would exceed our default concurrent join limit
-                        warn!(" {:?} // Ignoring connection from {} since we have reached the concurrent join limit",
-                            self.my_id, addr);
+                        warn!(
+                            " {:?} // Ignoring connection from {} since we have reached the concurrent join limit",
+                            self.my_id, addr
+                        );
 
                         socket
                             .shutdown(Shutdown::Both)
@@ -527,13 +529,19 @@ where
                             // Check the general connections first as we add to this before removing from the pending connections
                             return match self.peer_conns.get_connection(&connection_peer_id) {
                                 None => {
-                                    debug!("Received connection ID for token {:?}, from {:?}. No existing connection has been found, initializing.", token, connection_peer_id,);
+                                    debug!(
+                                        "Received connection ID for token {:?}, from {:?}. No existing connection has been found, initializing.",
+                                        token, connection_peer_id,
+                                    );
 
                                     Ok(ConnectionResult::Connected(connection_peer_id, received))
                                 }
                                 Some(conn) => {
-                                    trace!("Received connection ID for token {:?}, from {:?}, node type is: {:?}\
-                                         (None means unknown) Connection already established", token, connection_peer_id, node_type);
+                                    trace!(
+                                        "Received connection ID for token {:?}, from {:?}, node type is: {:?}\
+                                         (None means unknown) Connection already established",
+                                        token, connection_peer_id, node_type
+                                    );
 
                                     // This node is already known to us, we don't have to wait for reconfiguration messages
                                     let channel = conn.to_send.clone();

@@ -5,29 +5,30 @@ use tracing::{debug, error, info, trace};
 
 use crate::execution::reply::RequestType;
 use crate::message::OrderableMessage;
+use atlas_common::channel::TrySendReturnError;
 use atlas_common::channel::mixed::ChannelMixedTx;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
-use atlas_common::channel::TrySendReturnError;
 use atlas_common::collections::HashMap;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::messages::SessionBased;
-use atlas_core::messages::{create_rq_correlation_id, ClientRqInfo};
-use atlas_core::metric::{RQ_CLIENT_TRACKING_ID, RQ_CLIENT_TRACK_GLOBAL_ID};
+use atlas_core::messages::{ClientRqInfo, create_rq_correlation_id};
+use atlas_core::metric::{RQ_CLIENT_TRACK_GLOBAL_ID, RQ_CLIENT_TRACKING_ID};
 use atlas_core::request_pre_processing::{
-    operation_key, operation_key_raw, request_sender_from_key, PreProcessorOutput,
-    PreProcessorOutputSt,
+    PreProcessorOutput, PreProcessorOutputSt, operation_key, operation_key_raw,
+    request_sender_from_key,
 };
-use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_core::timeouts::TimeoutID;
+use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_metrics::metrics::{
     metric_correlation_time_start, metric_duration, metric_increment,
     metric_initialize_correlation_id,
 };
 use atlas_smr_application::serialize::ApplicationData;
 
+use crate::SMRReq;
 use crate::metric::{
     CLIENT_RQ_ENTER_RQ_PRE_PROCESSOR, RQ_PP_ORCHESTRATOR_WORKER_PASSING_TIME_ID,
     RQ_PP_WORKER_DECIDED_PROCESS_TIME_ID, RQ_PP_WORKER_DISCARDED_RQS_ID,
@@ -35,7 +36,6 @@ use crate::metric::{
 };
 use crate::request_pre_processing::PreProcessorOutputMessage;
 use crate::serialize::SMRSysMessage;
-use crate::SMRReq;
 
 const WORKER_QUEUE_SIZE: usize = 1024;
 const WORKER_THREAD_NAME: &str = "RQ-PRE-PROCESSING-WORKER-{}";
@@ -247,8 +247,12 @@ where
                 message.message(),
                 &digest,
             ) {
-                debug!("Discarding request {:?} as it is not the most recent for session {:?} of client {:?}.",
-                message.message().sequence_number(), message.message().session_number(), message.header().from());
+                debug!(
+                    "Discarding request {:?} as it is not the most recent for session {:?} of client {:?}.",
+                    message.message().sequence_number(),
+                    message.message().session_number(),
+                    message.header().from()
+                );
 
                 discarded_requests += 1;
                 continue;

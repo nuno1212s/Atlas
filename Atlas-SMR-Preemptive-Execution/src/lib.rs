@@ -1,5 +1,5 @@
 use crate::exec_handle::PreemptiveExecutorHandle;
-use crate::single_thread_double_state::{PreemptiveDuplicateStateMonolithicExecutor};
+use crate::single_thread_double_state::PreemptiveDuplicateStateMonolithicExecutor;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::state::monolithic_state::MonolithicState;
 use atlas_smr_core::SMRReply;
@@ -12,9 +12,9 @@ use atlas_smr_execution::repliers::ReplicaReplier;
 use std::sync::Arc;
 
 mod exec_handle;
+pub mod metric;
 mod single_thread_double_state;
 mod single_threaded_crud;
-pub mod metric;
 
 pub struct MonolithicPreemptiveExecutor;
 

@@ -62,7 +62,7 @@ where
     /// Ok if there is a current connection to the target or err if not. No other checks are made
     /// on the success of the message dispatch
     fn send_signed(&self, message: OPM::ProtocolMessage, target: NodeId, flush: bool)
-        -> Result<()>;
+    -> Result<()>;
 
     /// Broadcast a message to all of the given targets
     /// Does not block on the message sent. Returns a result that is

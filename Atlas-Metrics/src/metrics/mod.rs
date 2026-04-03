@@ -12,8 +12,8 @@ use tracing::error;
 
 use crate::metrics::correlation_counter::CorrelationCounterTracker;
 use crate::metrics::correlation_ids::{
-    encapsulate_correlation_id, end_correlation_id, pass_correlation_id, register_correlation_id,
-    CorrelationTracker,
+    CorrelationTracker, encapsulate_correlation_id, end_correlation_id, pass_correlation_id,
+    register_correlation_id,
 };
 use crate::metrics::correlation_time::CorrelationTimeTracker;
 use crate::{MetricLevel, MetricRegistry, MetricRegistryInfo};

@@ -10,8 +10,8 @@ use std::time::Instant;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::metric::{
-    DECISION_LOG_PROCESSED_ID, DEC_LOG_PROCESS_TIME_ID, DEC_LOG_WORK_MSG_TIME_ID,
-    DEC_LOG_WORK_QUEUE_SIZE_ID,
+    DEC_LOG_PROCESS_TIME_ID, DEC_LOG_WORK_MSG_TIME_ID, DEC_LOG_WORK_QUEUE_SIZE_ID,
+    DECISION_LOG_PROCESSED_ID,
 };
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
@@ -24,8 +24,8 @@ use atlas_core::execution::{
     TDeterministicExecutorDecisionHandle, TPreemptiveExecutorDecisionHandle,
 };
 use atlas_core::ordering_protocol::decision::{Decision, DecisionPart};
-use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::TLoggableOrderProtocol;
+use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
 use atlas_core::ordering_protocol::{
     DecisionAD, DecisionMetadata, ExecutionResult, ProtocolMessage,
@@ -35,25 +35,25 @@ use atlas_core::timeouts::timeout::TimeoutModHandle;
 use atlas_logging_core::decision_log::{
     DecisionLogInitializer, ExecutionInstructions, LoggedDecision, TDecisionLog,
 };
-use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_logging_core::log_transfer::networking::LogTransferSendNode;
+use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_logging_core::log_transfer::{
     LTResult, LTTimeoutResult, LogTransferProtocol, LogTransferProtocolInitializer,
 };
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
+use atlas_smr_core::SMRRawReq;
 use atlas_smr_core::execution::state_management::{
     TDeterministicExecutorStateHandle, TPreemptiveExecutorStateHandle,
 };
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
-use atlas_smr_core::SMRRawReq;
 
+use crate::server::CHECKPOINT_PERIOD;
 pub(crate) use crate::server::decision_log::messages::{
     DLWorkMessage, DLWorkMessageShort, DLWorkMessageType, DecisionLogWorkMessage,
     LogTransferWorkMessage, ReplicaWorkResponses,
 };
 use crate::server::state_transfer::{StateTransferThreadHandle, StateTransferWorkMessage};
-use crate::server::CHECKPOINT_PERIOD;
 
 const CHANNEL_SIZE: usize = 1024;
 

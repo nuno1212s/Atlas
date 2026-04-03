@@ -49,10 +49,13 @@ pub trait TTboQueue<M>: Orderable + Default {
     /// Installs a new sequence number for the queue, which may be used to skip over
     /// a range of sequence numbers. Any messages with sequence numbers that are now too old to be popped
     /// will be discarded.
-    fn install_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo>;
+    fn advance_to_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo>;
 
     /// Clears all messages from the queue, does not change the current sequence number.
     fn clear(&mut self);
+
+    /// Resets the current queue, clearing all messages and setting the current sequence number to `seq`.
+    fn reset_with_seq(&mut self, seq: SeqNo);
 }
 
 struct SeqMessageEntry<M>(SeqNo, VecDeque<M>);

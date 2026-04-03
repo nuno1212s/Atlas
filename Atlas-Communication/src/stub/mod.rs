@@ -5,14 +5,14 @@ use atlas_common::channel::sync::ChannelSyncRx;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::NetworkManagement;
+use crate::byte_stub::ByteNetworkStub;
 use crate::byte_stub::peer_conn_manager::PeerConnectionManager;
 use crate::byte_stub::stub_endpoint::StubEndpoint;
-use crate::byte_stub::ByteNetworkStub;
 use crate::lookup_table::{EnumLookupTable, MessageModule};
 use crate::message::{SerializedMessage, StoredMessage, StoredSerializedMessage};
 use crate::reconfiguration::NetworkInformationProvider;
 use crate::serialization::Serializable;
-use crate::NetworkManagement;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;

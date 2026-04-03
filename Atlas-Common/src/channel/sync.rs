@@ -95,7 +95,8 @@ impl<T> ChannelSyncTx<T> {
                         channel = self.channel_identifier.as_deref().unwrap_or("Unknown"),
                         capacity = self.inner.capacity(),
                         current_occupation = self.inner.len(),
-                        "Failed to insert into channel. Channel is full and could not directly insert, blocking",);
+                        "Failed to insert into channel. Channel is full and could not directly insert, blocking",
+                    );
 
                     value
                 }

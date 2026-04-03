@@ -1,11 +1,11 @@
 use crate::message::OperationMessage;
+use crate::quorum_config::InternalNode;
 use crate::quorum_config::network::QuorumConfigNetworkNode;
 use crate::quorum_config::operations::{
     Operation, OperationExecutionCandidateError, OperationResponse,
 };
-use crate::quorum_config::InternalNode;
-use atlas_common::node_id::NodeType;
 use atlas_common::Err;
+use atlas_common::node_id::NodeType;
 use atlas_communication::message::Header;
 use atlas_core::reconfiguration_protocol::{
     QuorumReconfigurationMessage, QuorumReconfigurationResponse,

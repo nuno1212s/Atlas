@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
-use crate::execution_handle::TLoggedDecisionsHandle;
 use crate::ResponseMessage;
+use crate::execution_handle::TLoggedDecisionsHandle;
 use anyhow::Context;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{channel, Err};
+use atlas_common::{Err, channel};
 use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_logging_core::decision_log::DecisionSummaryForPersistence;
 use thiserror::Error;

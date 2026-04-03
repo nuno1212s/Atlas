@@ -9,9 +9,9 @@ use std::task::{Context, Poll};
 
 use dsrust::queues::mqueue::MQueue;
 
+use crate::Err;
 use crate::channel::{RecvError, RecvMultError, SendReturnError};
 use crate::error::*;
-use crate::Err;
 use futures::future::FusedFuture;
 
 #[cfg(feature = "channel_custom_dump_lfb")]

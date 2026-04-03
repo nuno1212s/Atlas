@@ -14,9 +14,9 @@ use atlas_core::ordering_protocol::networking::serialize::{
 };
 use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_smr_application::serialize::ApplicationData;
+use atlas_smr_core::SMRReq;
 use atlas_smr_core::message::SystemMessage;
 use atlas_smr_core::serialize::Service;
-use atlas_smr_core::SMRReq;
 
 /// Store information of the current followers of the quorum
 /// This information will be used to calculate which replicas have to send the

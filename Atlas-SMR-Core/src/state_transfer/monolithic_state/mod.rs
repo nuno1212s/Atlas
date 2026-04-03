@@ -21,7 +21,7 @@ where
     /// you should also notify the ordering protocol that the state has been received
     /// and processed, so he is now safe to delete the state (Maybe this should be handled by the replica?)
     fn handle_state_received_from_app(&mut self, state: Arc<ReadOnly<Checkpoint<S>>>)
-        -> Result<()>;
+    -> Result<()>;
 }
 
 pub trait MonolithicStateTransferInitializer<S, NT, PL>: MonolithicStateTransfer<S>

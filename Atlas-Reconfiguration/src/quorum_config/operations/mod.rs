@@ -6,13 +6,13 @@ use atlas_communication::message::Header;
 use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
 
 use crate::message::OperationMessage;
+use crate::quorum_config::InternalNode;
 use crate::quorum_config::network::QuorumConfigNetworkNode;
 use crate::quorum_config::operations::client_notify_quorum_op::NotifyClientOperation;
 use crate::quorum_config::operations::notify_stable_quorum::NotifyQuorumOperation;
 use crate::quorum_config::operations::quorum_accept_op::QuorumAcceptNodeOperation;
 use crate::quorum_config::operations::quorum_info_op::ObtainQuorumInfoOP;
 use crate::quorum_config::operations::quorum_join_op::EnterQuorumOperation;
-use crate::quorum_config::InternalNode;
 
 pub(crate) mod client_notify_quorum_op;
 pub(crate) mod notify_stable_quorum;

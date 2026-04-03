@@ -8,12 +8,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
+use atlas_common::Err;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::collections::HashMap;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::Err;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration::NodeInfo;
 use atlas_core::reconfiguration_protocol::{
@@ -22,6 +22,7 @@ use atlas_core::reconfiguration_protocol::{
 };
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 
+use crate::QuorumProtocolResponse;
 use crate::message::{
     CommittedQC, LockedQC, OperationMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse,
     QuorumJoinReconfMessages, QuorumObtainInfoOpMessage,
@@ -33,7 +34,6 @@ use crate::quorum_config::operations::quorum_accept_op::QuorumAcceptNodeOperatio
 use crate::quorum_config::operations::quorum_info_op::ObtainQuorumInfoOP;
 use crate::quorum_config::operations::quorum_join_op::EnterQuorumOperation;
 use crate::quorum_config::operations::{Operation, OperationObj, OperationResponse};
-use crate::QuorumProtocolResponse;
 
 pub mod network;
 
@@ -373,7 +373,9 @@ impl OnGoingOperations {
                                 Ok(QuorumProtocolResponse::DoneInitialSetup)
                             }
                             ObtainQuorumInfoOP::OP_NAME => {
-                                info!("We have obtained the quorum information, calling client notify operation.");
+                                info!(
+                                    "We have obtained the quorum information, calling client notify operation."
+                                );
 
                                 self.launch_client_notify_op(node)?;
 
@@ -385,7 +387,9 @@ impl OnGoingOperations {
                     NodeStatusType::QuorumNode { current_state, .. } => {
                         if let ReplicaState::ObtainingInfo = current_state {
                             if is_part_of_quorum {
-                                info!("We have obtained the quorum information, and we are part of the quorum, calling initial setup done");
+                                info!(
+                                    "We have obtained the quorum information, and we are part of the quorum, calling initial setup done"
+                                );
 
                                 *current_state = ReplicaState::Member;
 
@@ -416,7 +420,10 @@ impl OnGoingOperations {
                 if self.awaiting_reconfig_response.is_none() {
                     self.awaiting_reconfig_response = Some(operation_name);
                 } else {
-                    error!("The operation {} is already awaiting a response, but another operation is trying to await a response", operation_name);
+                    error!(
+                        "The operation {} is already awaiting a response, but another operation is trying to await a response",
+                        operation_name
+                    );
                 }
             }
             OperationResponse::NoLongerAwaitingResponseProtocol => {
@@ -458,7 +465,10 @@ impl OnGoingOperations {
                             op.handle_quorum_response(node, network, response)?,
                         ));
                     } else {
-                        error!("We have a registered awaiting reconfig response, but we do not have an operation of that type ({:?})", target);
+                        error!(
+                            "We have a registered awaiting reconfig response, but we do not have an operation of that type ({:?})",
+                            target
+                        );
                     }
                 } else {
                     error!(
@@ -473,7 +483,9 @@ impl OnGoingOperations {
             NodeStatusType::ClientNode { current_state, .. } => {
                 if let ClientState::Awaiting = current_state {
                     if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
-                        info!("Launching quorum info operation as we have not yet obtained the quorum info");
+                        info!(
+                            "Launching quorum info operation as we have not yet obtained the quorum info"
+                        );
 
                         *current_state = ClientState::ObtainingInfo;
 
@@ -484,7 +496,9 @@ impl OnGoingOperations {
             NodeStatusType::QuorumNode { current_state, .. } => {
                 if let ReplicaState::Awaiting = current_state {
                     if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
-                        info!("Launching quorum info operation as we have not yet obtained the quorum info");
+                        info!(
+                            "Launching quorum info operation as we have not yet obtained the quorum info"
+                        );
 
                         *current_state = ReplicaState::ObtainingInfo;
 
@@ -552,7 +566,9 @@ impl OnGoingOperations {
                         response = op.handle_received_message(node, network, header, message)?;
                         op_name = op.op_name();
                     } else {
-                        warn!("Received a quorum information response message, but we are not awaiting one (No on going operation). Ignoring it.");
+                        warn!(
+                            "Received a quorum information response message, but we are not awaiting one (No on going operation). Ignoring it."
+                        );
 
                         return Ok(QuorumProtocolResponse::Nil);
                     }
@@ -591,7 +607,9 @@ impl OnGoingOperations {
                         match reconf_message {
                             QuorumJoinReconfMessages::RequestJoinQuorum(_) => match current_state {
                                 ReplicaState::Member => {
-                                    info!("Received a request to join the quorum while we do not have any ongoing accept operations, launching an accept operation");
+                                    info!(
+                                        "Received a request to join the quorum while we do not have any ongoing accept operations, launching an accept operation"
+                                    );
 
                                     let node_accept =
                                         QuorumAcceptNodeOperation::initialize(header.from());
@@ -603,7 +621,9 @@ impl OnGoingOperations {
                                     return self.handle_message(node, network, header, message);
                                 }
                                 _ => {
-                                    warn!("Received a request to join the quorum, but we are not a member of the quorum");
+                                    warn!(
+                                        "Received a request to join the quorum, but we are not a member of the quorum"
+                                    );
                                 }
                             },
                             _ => error!(

@@ -92,11 +92,11 @@ where
     ) -> Result<Arc<Self>>
     where
         BN: ByteNetworkControllerInit<
-            NI,
-            PeerConnectionManager<NI, CN, R, O, S, A, EnumLookupTable<R, O, S, A>>,
-            CN,
-            PeerIncomingConnection<R, O, S, A, EnumLookupTable<R, O, S, A>>,
-        >,
+                NI,
+                PeerConnectionManager<NI, CN, R, O, S, A, EnumLookupTable<R, O, S, A>>,
+                CN,
+                PeerIncomingConnection<R, O, S, A, EnumLookupTable<R, O, S, A>>,
+            >,
         NI: NetworkInformationProvider + 'static,
         CN: ByteNetworkStub + 'static,
     {

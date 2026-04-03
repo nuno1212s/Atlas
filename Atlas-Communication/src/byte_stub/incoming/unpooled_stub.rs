@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use crate::config::UnpooledConnection;
 use crate::lookup_table::MessageModule;
-use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::TryRecvError;
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::node_id::NodeId;
-use atlas_common::{channel, Err};
+use atlas_common::{Err, channel};
 
 use crate::message::StoredMessage;
 use crate::stub::ModuleIncomingStub;

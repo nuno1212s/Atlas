@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "serialize_serde")]
 use serde_big_array::BigArray;
 
-use crate::crypto::signature::{SignError, VerifyError};
 use crate::Err;
+use crate::crypto::signature::{SignError, VerifyError};
 
 use crate::error::*;
 use ring::rand::SystemRandom;
 use ring::signature::Ed25519KeyPair;
-use ring::{signature as rsig, signature::KeyPair as RKeyPair, signature::ED25519_PUBLIC_KEY_LEN};
+use ring::{signature as rsig, signature::ED25519_PUBLIC_KEY_LEN, signature::KeyPair as RKeyPair};
 
 pub struct KeyPair {
     sk: Ed25519KeyPair,

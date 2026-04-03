@@ -268,15 +268,23 @@ where
                                         }
                                     });
 
-                                    info!("Failed to find view agreement, re running view transfer protocol");
+                                    info!(
+                                        "Failed to find view agreement, re running view transfer protocol"
+                                    );
 
                                     ViewTransferResponse::ReRunProtocol
                                 } else {
-                                    warn!("Received quorum {} of views but we do not have {} matching views for any of them, {:?}", received_views, quorum, received);
+                                    warn!(
+                                        "Received quorum {} of views but we do not have {} matching views for any of them, {:?}",
+                                        received_views, quorum, received
+                                    );
                                     ViewTransferResponse::NoneFound
                                 }
                             } else {
-                                warn!("Received quorum {} of views but we do not have {} matching views for any of them, {:?}", received_views, f, received);
+                                warn!(
+                                    "Received quorum {} of views but we do not have {} matching views for any of them, {:?}",
+                                    received_views, f, received
+                                );
                                 ViewTransferResponse::NoneFound
                             }
                         } else {
@@ -285,7 +293,10 @@ where
                         }
                     }
                     TransferState::Idle => {
-                        info!("Received view message while view transfer state is idle. Message seq {:?}, header: {:?}, message: {:?}", seq, header, view);
+                        info!(
+                            "Received view message while view transfer state is idle. Message seq {:?}, header: {:?}, message: {:?}",
+                            seq, header, view
+                        );
 
                         ViewTransferResponse::Ignored
                     }

@@ -52,7 +52,10 @@ impl CircuitBreaker {
                 if self.is_open() {
                     Err(err)
                 } else {
-                    warn!("Error occurred, but circuit breaker is not open yet. Current failures in row: {}. Error: {:?}", self.current_failures_in_row, err);
+                    warn!(
+                        "Error occurred, but circuit breaker is not open yet. Current failures in row: {}. Error: {:?}",
+                        self.current_failures_in_row, err
+                    );
 
                     self.execute(function)
                 }

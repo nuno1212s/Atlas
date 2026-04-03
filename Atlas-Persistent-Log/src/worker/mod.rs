@@ -25,7 +25,7 @@ use atlas_smr_application::state::divisible_state::DivisibleState;
 use tracing::error;
 
 use crate::stateful_logs::divisible_state::DivisibleStateMessage;
-use crate::{serialize, CallbackType, ChannelMsg, InstallState, PWMessage, ResponseMessage};
+use crate::{CallbackType, ChannelMsg, InstallState, PWMessage, ResponseMessage, serialize};
 
 pub(super) mod divisible_state_worker;
 pub(super) mod monolithic_worker;

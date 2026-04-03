@@ -4,16 +4,16 @@ use crate::conn_util::{ReadingBuffer, WritingBuffer};
 use crate::connections::{ByteMessageSendStub, Connections, PeerConn};
 use crate::epoll::epoll_worker::EpollWorker;
 use atlas_common::channel;
-use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::SendError;
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::node_id::NodeId;
 use atlas_common::socket::MioSocket;
 use atlas_communication::byte_stub::{NodeIncomingStub, NodeStubController};
 use atlas_communication::reconfiguration::NetworkInformationProvider;
 use mio::Token;
 use std::io;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 use tracing::error;
 
@@ -180,6 +180,8 @@ pub enum WorkerError {
     FailedToGetWorkerForConnection(EpollWorkerId, Token),
     #[error("Failed to dispatch message to the channel. {0} for epoll worker {1} and token {2:?}")]
     SendCloseMessageFailed(SendError, EpollWorkerId, Token),
-    #[error("Failed to dispatch init conn message to the channel. {0} for epoll worker {1} and conn id {2}")]
+    #[error(
+        "Failed to dispatch init conn message to the channel. {0} for epoll worker {1} and conn id {2}"
+    )]
     SendInitMessageFailed(SendError, usize, u32),
 }

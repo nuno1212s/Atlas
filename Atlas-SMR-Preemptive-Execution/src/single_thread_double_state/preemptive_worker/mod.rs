@@ -1,14 +1,13 @@
 use crate::single_thread_double_state::RunMode;
+use crate::single_thread_double_state::comm_handles::PreemptiveWorkerSharedChannels;
 use crate::single_thread_double_state::preemptive_worker::comm_handles::{
-    PreemptiveChannels, PreemptiveWorkMessage,
+    PreemptiveWorkMessage, PreemptiveWorkerChannels, PreemptiveWorkerHandle,
 };
 use crate::single_thread_double_state::preemptive_worker::preemptive_requests::PreemptiveRequestPipeline;
-use crate::single_thread_double_state::state_management::{
-    PreemptiveStateManagementHandle, PreemptiveStateMessage, PreemptiveToConfirmedMsg,
-};
-use atlas_common::channel::{sync, RecvError, SendError};
+use crate::single_thread_double_state::state_management::{PreemptiveToConfirmedMsg, StateMessage};
+use atlas_common::channel::{RecvError, SendError, sync};
 use atlas_common::ordering::SeqNo;
-use atlas_common::{quiet_unwrap, unwrap_channel};
+use atlas_common::unwrap_channel;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::ReplyNode;
@@ -28,7 +27,7 @@ where
     A: Application<S>,
 {
     state: PreemptiveRequestPipeline<S, A>,
-    preemptive_channels: PreemptiveChannels<Request<A, S>, S>,
+    preemptive_channels: PreemptiveWorkerChannels<Request<A, S>, S>,
     application: Arc<A>,
     node: Arc<NT>,
     run_mode: RunMode,
@@ -62,7 +61,7 @@ where
         loop {
             let result = match &self.run_mode {
                 RunMode::Normal => self.preemptive_worker_normal_mode::<T>(),
-                RunMode::StateTransfer => self.preemptive_worker_state_transfer_mode()
+                RunMode::StateTransfer => self.preemptive_worker_state_transfer_mode(),
             };
 
             if let Err(err) = result {
@@ -91,7 +90,9 @@ where
 
                         self.preemptive_channels.confirmed_worker_tx().send(PreemptiveToConfirmedMsg::UpdateConfirmed(update_batch))?;
                     },
-                    PreemptiveWorkMessage::PollStateChannel => todo!()
+                    PreemptiveWorkMessage::PollStateChannel => {
+                        self.set_run_mode(RunMode::StateTransfer);
+                    }
                 }
 
                 Ok(())
@@ -103,10 +104,12 @@ where
         sync::sync_select! {
             recv(unwrap_channel!(self.preemptive_channels.state_rx())) -> msg => {
                 match msg.map_err(RecvError::from)? {
-                    PreemptiveStateMessage::ConfirmedStateReceived(seq_no, state) => {
+                    StateMessage::ConfirmedStateReceived(seq_no, state) => {
                         self.state.install_confirmed_state(state, seq_no);
                     }
                 }
+
+                self.set_run_mode(RunMode::Normal);
 
                 Ok(())
             },
@@ -117,6 +120,10 @@ where
             },
         }
     }
+
+    fn set_run_mode(&mut self, run_mode: RunMode) {
+        self.run_mode = run_mode;
+    }
 }
 
 pub fn initialize_preemptive_execution<A, S, NT, T>(
@@ -124,7 +131,8 @@ pub fn initialize_preemptive_execution<A, S, NT, T>(
     state: S,
     application: Arc<A>,
     node: Arc<NT>,
-) -> PreemptiveStateManagementHandle<Request<A, S>, S>
+    shared_channels: PreemptiveWorkerSharedChannels<Request<A, S>, S>,
+) -> PreemptiveWorkerHandle<Request<A, S>, S>
 where
     A: Application<S> + Send + 'static,
     S: Send + 'static,
@@ -141,17 +149,14 @@ where
         Some("Preemptive Worker Work Channel"),
     );
 
-    let (confirmed_worker_tx, confirmed_worker_rx) = sync::new_bounded_sync(
-        PREEMPTIVE_WORKER_CHANNEL_SIZE,
-        Some("Preemptive Worker Confirmed Worker Channel"),
-    );
-    let (preemptive_worker_tx, preemptive_worker_rx) = sync::new_bounded_sync(
-        PREEMPTIVE_WORKER_CHANNEL_SIZE,
-        Some("Preemptive Worker Confirmed Worker Channel"),
-    );
+    let (confirmed_to_preemptive_rx, preemptive_to_confirmed_tx) = shared_channels.into();
 
-    let preemptive_channels =
-        PreemptiveChannels::new(state_rx, work_rx, confirmed_worker_tx, preemptive_worker_rx);
+    let preemptive_channels = PreemptiveWorkerChannels::new(
+        state_rx,
+        work_rx,
+        preemptive_to_confirmed_tx,
+        confirmed_to_preemptive_rx,
+    );
 
     let request_pipeline =
         PreemptiveRequestPipeline::new(preemptive_channels.clone(), (state_seq, state));
@@ -166,12 +171,7 @@ where
 
     preemptive_worker.spawn_and_execute::<T>();
 
-    PreemptiveStateManagementHandle::new(
-        state_tx,
-        work_tx,
-        confirmed_worker_rx,
-        preemptive_worker_tx,
-    )
+    PreemptiveWorkerHandle::new(state_tx, work_tx)
 }
 
 #[derive(Debug, Error)]
@@ -179,5 +179,5 @@ enum ChannelError {
     #[error("Receive error: {0}")]
     RecvError(#[from] RecvError),
     #[error("Send error: {0}")]
-    SendError(#[from] SendError)
+    SendError(#[from] SendError),
 }

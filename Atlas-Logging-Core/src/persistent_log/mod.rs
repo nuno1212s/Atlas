@@ -3,8 +3,8 @@ use crate::decision_log::{DecLog, DecLogMetadata, DecisionSummaryForPersistence}
 use atlas_common::ordering::SeqNo;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
-use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::PProof;
+use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::persistent_log::{OperationMode, OrderingProtocolLog};
 

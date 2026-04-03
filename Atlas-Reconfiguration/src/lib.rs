@@ -23,8 +23,8 @@ use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::reconfiguration_protocol::{
     QuorumJoinCert, ReconfigResponse, ReconfigurationCommunicationHandles, ReconfigurationProtocol,
 };
-use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 use atlas_core::timeouts::TimeoutID;
+use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 
 use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{ReconfData, ReconfigMessage, ReconfigurationMessage};
@@ -107,7 +107,9 @@ where
                 ReconfigurableNodeState::NetworkReconfigurationProtocol,
                 ReconfigurableNodeState::QuorumReconfigurationProtocol,
             ) => {
-                warn!("We have finished the network reconfiguration protocol, running the quorum reconfiguration message");
+                warn!(
+                    "We have finished the network reconfiguration protocol, running the quorum reconfiguration message"
+                );
             }
             (
                 ReconfigurableNodeState::QuorumReconfigurationProtocol,
@@ -275,7 +277,9 @@ where
                     .handle_message(&node_wrap, header, quorum_msg)?
                 {
                     QuorumProtocolResponse::DoneInitialSetup => {
-                        debug!("We have finished the initial setup of the quorum protocol, switching to stable");
+                        debug!(
+                            "We have finished the initial setup of the quorum protocol, switching to stable"
+                        );
 
                         self.switch_state(ReconfigurableNodeState::Stable);
                     }
@@ -306,8 +310,11 @@ where
                     match self.node_state {
                         ReconfigurableNodeState::NetworkReconfigurationProtocol => {
                             if seq != self.seq_gen.curr_seq() {
-                                error!("Received a reconfiguration timeout with a different sequence number than the current one {:?} != {:?}",
-                                                   seq, self.seq_gen.curr_seq());
+                                error!(
+                                    "Received a reconfiguration timeout with a different sequence number than the current one {:?} != {:?}",
+                                    seq,
+                                    self.seq_gen.curr_seq()
+                                );
 
                                 continue;
                             }
@@ -325,7 +332,9 @@ where
                             self.node_type.handle_timeout(&nt_wrap, &self.timeouts);
                         }
                         ReconfigurableNodeState::Stable => {
-                            error!("Received a reconfiguration timeout while we are stable, this does not make sense");
+                            error!(
+                                "Received a reconfiguration timeout while we are stable, this does not make sense"
+                            );
                         }
                     }
 

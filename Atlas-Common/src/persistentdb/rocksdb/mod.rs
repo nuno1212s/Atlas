@@ -4,9 +4,8 @@ use std::path::Path;
 
 use crate::Err;
 use rocksdb::{
-    ColumnFamily, ColumnFamilyDescriptor, CompactOptions, DBIteratorWithThreadMode,
+    ColumnFamily, ColumnFamilyDescriptor, CompactOptions, DB, DBIteratorWithThreadMode,
     DBWithThreadMode, Direction, IteratorMode, Options, SingleThreaded, WriteBatchWithTransaction,
-    DB,
 };
 
 use crate::error::*;

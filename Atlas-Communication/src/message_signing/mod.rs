@@ -1,12 +1,12 @@
-use crate::message::{verify_validity, Buf, Header, MessageErrors, WireMessage};
+use crate::message::{Buf, Header, MessageErrors, WireMessage, verify_validity};
 use crate::reconfiguration::NetworkInformationProvider;
 use crate::reconfiguration::NodeInfo;
 use crate::serialization;
 use crate::serialization::Serializable;
+use atlas_common::Err;
 use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::crypto::signature::{KeyPair, PublicKey, Signature, VerifyError};
 use atlas_common::node_id::NodeId;
-use atlas_common::Err;
 use thiserror::Error;
 
 /// Verify the validity of a message, for any serializable type.

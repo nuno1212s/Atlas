@@ -106,7 +106,7 @@ impl<M> TTboQueue<M> for VTboQueue<M> {
         self.current_seq_no = self.current_seq_no.next();
     }
 
-    fn install_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo> {
+    fn advance_to_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo> {
         match seq_no.index(self.current_seq_no) {
             Either::Left(_) => Err(InvalidSeqNo::Small),
             Either::Right(right) => {
@@ -122,6 +122,11 @@ impl<M> TTboQueue<M> for VTboQueue<M> {
                 Ok(())
             }
         }
+    }
+
+    fn reset_with_seq(&mut self, seq_no: SeqNo) {
+        self.current_seq_no = seq_no;
+        self.clear();
     }
 
     fn clear(&mut self) {

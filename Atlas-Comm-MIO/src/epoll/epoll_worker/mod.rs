@@ -2,15 +2,15 @@
 
 use crate::conn_util;
 use crate::conn_util::{
-    interrupted, would_block, ConnectionReadWork, ConnectionWriteWork, ReadMessageError,
-    ReadingBuffer, WritingBuffer, WritingBufferError,
+    ConnectionReadWork, ConnectionWriteWork, ReadMessageError, ReadingBuffer, WritingBuffer,
+    WritingBufferError, interrupted, would_block,
 };
 use crate::connections::{ByteMessageSendStub, ConnHandle, Connections, MioError, PeerConn};
 use crate::epoll::{EpollWorkerId, EpollWorkerMessage, NewConnection};
+use atlas_common::Err;
 use atlas_common::channel::sync::ChannelSyncRx;
 use atlas_common::node_id::NodeId;
 use atlas_common::socket::MioSocket;
-use atlas_common::Err;
 use atlas_communication::byte_stub::{NodeIncomingStub, NodeStubController};
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
@@ -187,8 +187,10 @@ where
                                     connection.peer_id().unwrap_or(NodeId::from(1234567u32))
                                 };
 
-                                error!("{:?} // Error handling connection event: {:?} for token {:?} (corresponding to conn id {:?})",
-                                            my_id, err, token, peer_id);
+                                error!(
+                                    "{:?} // Error handling connection event: {:?} for token {:?} (corresponding to conn id {:?})",
+                                    my_id, err, token, peer_id
+                                );
 
                                 if let Err(err) = self.delete_connection(token, true) {
                                     error!(
@@ -215,9 +217,11 @@ where
                                 connection.peer_id().unwrap_or(NodeId::from(1234567u32))
                             };
 
-                            error!("Connection broken during handling of connection event {:?}. Deleting connection {:?} to node {:?}.\
+                            error!(
+                                "Connection broken during handling of connection event {:?}. Deleting connection {:?} to node {:?}.\
                             Connection broken at written {:?} bytes, and had {:?} bytes left to write",
-                                    event, token,peer_id, written, to_write);
+                                event, token, peer_id, written, to_write
+                            );
 
                             if let Err(err) = self.delete_connection(token, true) {
                                 error!(
@@ -234,8 +238,13 @@ where
                                 connection.peer_id().unwrap_or(NodeId::from(1234567u32))
                             };
 
-                            error!("{:?} // Error handling connection event: {:?} for token {:?} (corresponding to conn id {:?})",
-                                            self.global_conns.own_id(), err, token, peer_id);
+                            error!(
+                                "{:?} // Error handling connection event: {:?} for token {:?} (corresponding to conn id {:?})",
+                                self.global_conns.own_id(),
+                                err,
+                                token,
+                                peer_id
+                            );
 
                             if let Err(err) = self.delete_connection(token, true) {
                                 error!(

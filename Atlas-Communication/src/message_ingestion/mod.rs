@@ -1,6 +1,6 @@
 use anyhow::Error;
-use atlas_common::node_id::NodeId;
 use atlas_common::Err;
+use atlas_common::node_id::NodeId;
 use atlas_metrics::metrics::{metric_duration, metric_store_count_max};
 use std::time::Instant;
 use thiserror::Error;
@@ -9,7 +9,7 @@ use crate::lookup_table::{MessageModule, PeerStubLookupTable};
 use crate::message::{Header, WireMessage};
 use crate::message_signing::IngestionError;
 use crate::metric::{COMM_DESERIALIZE_VERIFY_TIME_ID, INCOMING_MESSAGE_SIZE_ID};
-use crate::serialization::{deserialize_message, Serializable};
+use crate::serialization::{Serializable, deserialize_message};
 
 /// Process a message received from the byte layer of the network.
 /// Requires the lookup table to be able to get the appropriate type to deserialize the message.
@@ -42,13 +42,13 @@ where
             }
         }
     } /*else if let Err(e) = verify_ser_message_validity(network_info, &header, &message) {
-          warn!(
-              "Failed to verify message validity for message module: {:?}",
-              module
-          );
+    warn!(
+    "Failed to verify message validity for message module: {:?}",
+    module
+    );
 
-          return Err!(e);
-      }*/
+    return Err!(e);
+    }*/
 
     metric_store_count_max(INCOMING_MESSAGE_SIZE_ID, message.len() + Header::LENGTH);
 
@@ -94,7 +94,8 @@ pub enum IngestMessageError {
     DeserializationError(#[from] Error),
     #[error("Failed to process wire message: {0:?}")]
     SignatureVerificationFailure(#[from] IngestionError),
-    #[error("Attempted to process message without authenticated flag, but message was not a reconfiguration message (module: {0:?}, node {1:?})"
+    #[error(
+        "Attempted to process message without authenticated flag, but message was not a reconfiguration message (module: {0:?}, node {1:?})"
     )]
     UnAuthenticatedMessage(MessageModule, NodeId),
 }

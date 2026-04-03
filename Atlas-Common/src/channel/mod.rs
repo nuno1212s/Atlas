@@ -24,6 +24,20 @@ pub mod mult;
 pub mod oneshot;
 pub mod sync;
 
+#[derive(Error, Debug)]
+pub enum NoRetChannelErr {
+    #[error("{0}")]
+    RecvMult(#[from] RecvMultError),
+    #[error("{0}")]
+    Recv(#[from] RecvError),
+    #[error("{0}")]
+    TryRecv(#[from] TryRecvError),
+    #[error("{0}")]
+    Send(#[from] SendError),
+    #[error("{0}")]
+    TrySend(#[from] TrySendError),
+}
+
 /**
 Errors
  **/
@@ -52,7 +66,6 @@ pub enum RecvError {
     #[error("Channel has disconnected")]
     ChannelDc,
 }
-
 
 #[derive(Error)]
 pub enum TrySendReturnError<T> {

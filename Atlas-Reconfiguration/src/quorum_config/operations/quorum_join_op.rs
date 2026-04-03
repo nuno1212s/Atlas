@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
-use atlas_common::error::*;
 use atlas_common::Err;
+use atlas_common::error::*;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
 
@@ -17,7 +17,7 @@ use crate::quorum_config::operations::quorum_info_op::ObtainQuorumInfoOP;
 use crate::quorum_config::operations::{
     Operation, OperationExecutionCandidateError, OperationResponse,
 };
-use crate::quorum_config::{get_quorum_for_n, InternalNode, QuorumView};
+use crate::quorum_config::{InternalNode, QuorumView, get_quorum_for_n};
 
 /// The operation to enter the quorum
 pub struct EnterQuorumOperation {
@@ -118,7 +118,9 @@ impl EnterQuorumOperation {
     {
         match &mut self.phase {
             OperationPhase::Waiting => {
-                error!("Received locked vote while we are still in waiting phase (have not yet contacted anyone). This should not be possible.");
+                error!(
+                    "Received locked vote while we are still in waiting phase (have not yet contacted anyone). This should not be possible."
+                );
             }
             OperationPhase::LockingQC(received_votes, rejects) => {
                 match vote {
@@ -127,7 +129,9 @@ impl EnterQuorumOperation {
                         received_votes.push(StoredMessage::new(header, accept_vote));
 
                         if received_votes.len() >= self.threshold {
-                            info!("Received enough locked votes, moving to commit phase and broadcasting the locked QC");
+                            info!(
+                                "Received enough locked votes, moving to commit phase and broadcasting the locked QC"
+                            );
 
                             let phase = std::mem::replace(
                                 &mut self.phase,
@@ -147,7 +151,9 @@ impl EnterQuorumOperation {
                                 self.initial_quorum.quorum_members().clone().into_iter(),
                             );
                         } else {
-                            info!("Received locked vote, but not enough to move to commit phase. Waiting for more votes.");
+                            info!(
+                                "Received locked vote, but not enough to move to commit phase. Waiting for more votes."
+                            );
                         }
                     }
                     QuorumJoinResponse::Rejected(rejection_reason) => {
@@ -162,10 +168,16 @@ impl EnterQuorumOperation {
                 }
             }
             OperationPhase::CommittingQC(_, _) => {
-                debug!("Received locked vote while we are in commit phase. Ignoring message. From: {:?}", header.from());
+                debug!(
+                    "Received locked vote while we are in commit phase. Ignoring message. From: {:?}",
+                    header.from()
+                );
             }
             OperationPhase::Done => {
-                debug!("Received locked vote while we are done with the protocol. Ignoring message. From: {:?}", header.from());
+                debug!(
+                    "Received locked vote while we are done with the protocol. Ignoring message. From: {:?}",
+                    header.from()
+                );
             }
         }
 
@@ -184,10 +196,15 @@ impl EnterQuorumOperation {
     {
         match &mut self.phase {
             OperationPhase::Waiting => {
-                error!("Received locked vote while we are still in waiting phase (have not yet contacted anyone). This should not be possible.");
+                error!(
+                    "Received locked vote while we are still in waiting phase (have not yet contacted anyone). This should not be possible."
+                );
             }
             OperationPhase::LockingQC(_, _) => {
-                info!("Received commit vote while we are in locking phase. Pushing message into pending queue. From: {:?}", header.from());
+                info!(
+                    "Received commit vote while we are in locking phase. Pushing message into pending queue. From: {:?}",
+                    header.from()
+                );
 
                 self.pending_messages
                     .push_pending_message(StoredMessage::new(
@@ -203,11 +220,15 @@ impl EnterQuorumOperation {
                         .expect("We should have a locked QC at this point");
 
                     if *locked_qc != *accept_vote.qc() {
-                        error!("Received commit vote with different QC than the one we locked. This should not be possible.");
+                        error!(
+                            "Received commit vote with different QC than the one we locked. This should not be possible."
+                        );
 
                         return Err!(JoinExecErr::LockedQCDoesNotMatchOurs);
                     } else if *locked_qc.quorum() != *accept_vote.view() {
-                        error!("Received commit vote with different quorum than the one we locked. This should not be possible.");
+                        error!(
+                            "Received commit vote with different quorum than the one we locked. This should not be possible."
+                        );
 
                         return Err!(JoinExecErr::ViewDoesNotMatchOurs);
                     } else {
@@ -215,7 +236,9 @@ impl EnterQuorumOperation {
                     }
 
                     if accepts.len() >= self.threshold {
-                        info!("Received enough commit votes, moving to done phase and broadcasting the commit QC");
+                        info!(
+                            "Received enough commit votes, moving to done phase and broadcasting the commit QC"
+                        );
 
                         let phase = std::mem::replace(&mut self.phase, OperationPhase::Done);
 
@@ -329,7 +352,9 @@ impl Operation for EnterQuorumOperation {
 
         let msg_result = match message {
             QuorumJoinReconfMessages::RequestJoinQuorum(_) => {
-                error!("Received request join quorum message while we are the ones requesting information. Ignoring.");
+                error!(
+                    "Received request join quorum message while we are the ones requesting information. Ignoring."
+                );
 
                 return Ok(OperationResponse::Processing);
             }
@@ -337,7 +362,9 @@ impl Operation for EnterQuorumOperation {
                 self.handle_locked_vote_received(node, network, header, vote)
             }
             QuorumJoinReconfMessages::CommitQuorum(_) => {
-                error!("Received commit quorum message while we are the ones requesting information. Ignoring.");
+                error!(
+                    "Received commit quorum message while we are the ones requesting information. Ignoring."
+                );
 
                 return Ok(OperationResponse::Processing);
             }
@@ -345,7 +372,9 @@ impl Operation for EnterQuorumOperation {
                 self.handle_commit_vote_received(node, network, header, vote)
             }
             QuorumJoinReconfMessages::Decided(_) => {
-                error!("Received decided message while we are the ones requesting information. Ignoring.");
+                error!(
+                    "Received decided message while we are the ones requesting information. Ignoring."
+                );
 
                 return Ok(OperationResponse::Processing);
             }
@@ -399,7 +428,9 @@ impl PendingMessages {
                 self.pending_commit_message.push_back(message);
             }
             _ => {
-                error!("Received unexpected message while not ready to receive it. (Type does not match what we are expecting)");
+                error!(
+                    "Received unexpected message while not ready to receive it. (Type does not match what we are expecting)"
+                );
             }
         }
     }

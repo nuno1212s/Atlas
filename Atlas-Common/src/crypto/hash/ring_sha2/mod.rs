@@ -1,7 +1,7 @@
 use ring::digest::{self, SHA256, SHA256_OUTPUT_LEN};
 
-use crate::crypto::hash::HashError;
 use crate::Err;
+use crate::crypto::hash::HashError;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 

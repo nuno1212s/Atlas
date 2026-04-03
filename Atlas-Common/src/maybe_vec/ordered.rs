@@ -1,5 +1,5 @@
-use std::collections::btree_set::{IntoIter, Iter};
 use std::collections::BTreeSet;
+use std::collections::btree_set::{IntoIter, Iter};
 use std::iter;
 use std::iter::Once;
 

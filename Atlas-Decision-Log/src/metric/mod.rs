@@ -6,11 +6,13 @@ pub(crate) const DECISION_LOG_CHECKPOINT_TIME_ID: usize = 900;
 
 #[allow(dead_code)]
 pub fn metrics() -> Vec<MetricRegistry> {
-    vec![(
-        DECISION_LOG_CHECKPOINT_TIME_ID,
-        DECISION_LOG_CHECKPOINT_TIME.to_string(),
-        MetricKind::Duration,
-        MetricLevel::Info,
-    )
-        .into()]
+    vec![
+        (
+            DECISION_LOG_CHECKPOINT_TIME_ID,
+            DECISION_LOG_CHECKPOINT_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Info,
+        )
+            .into(),
+    ]
 }

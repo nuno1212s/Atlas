@@ -7,7 +7,7 @@ use influxdb::{InfluxDbWriteable, WriteQuery};
 use tracing::{debug, error, info};
 
 use crate::metrics::correlation_ids::CorrelationEventOccurrence;
-use crate::metrics::{collect_all_measurements, MetricData, MetricKind};
+use crate::metrics::{MetricData, MetricKind, collect_all_measurements};
 use crate::{InfluxDBArgs, MetricLevel};
 use atlas_common::async_runtime as rt;
 use atlas_common::maybe_vec::MaybeVec;

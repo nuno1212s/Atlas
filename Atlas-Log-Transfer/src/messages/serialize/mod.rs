@@ -19,11 +19,11 @@ pub struct LTMsg<
 >(FPhantom<(RQ, OP, POPT, LS)>);
 
 impl<
-        RQ: SerMsg,
-        OP: OrderingProtocolMessage<RQ>,
-        POPT: PersistentOrderProtocolTypes<RQ, OP>,
-        LS: DecisionLogMessage<RQ, OP, POPT>,
-    > LogTransferMessage<RQ, OP> for LTMsg<RQ, OP, POPT, LS>
+    RQ: SerMsg,
+    OP: OrderingProtocolMessage<RQ>,
+    POPT: PersistentOrderProtocolTypes<RQ, OP>,
+    LS: DecisionLogMessage<RQ, OP, POPT>,
+> LogTransferMessage<RQ, OP> for LTMsg<RQ, OP, POPT, LS>
 {
     type LogTransferMessage = LTMessage<POPT::Proof, LS::DecLog>;
 

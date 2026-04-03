@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use enum_map::{enum_map, Enum, EnumMap};
+use enum_map::{Enum, EnumMap, enum_map};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;

@@ -1,6 +1,6 @@
 use crate::channel::{RecvError, SendError};
 use std::future::Future;
-use std::pin::{pin, Pin};
+use std::pin::{Pin, pin};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
