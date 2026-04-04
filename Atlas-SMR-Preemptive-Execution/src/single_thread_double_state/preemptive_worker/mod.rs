@@ -168,8 +168,7 @@ where
         confirmed_to_preemptive_rx,
     );
 
-    let request_pipeline =
-        PreemptiveRequestPipeline::new((state_seq, state));
+    let request_pipeline = PreemptiveRequestPipeline::new((state_seq, state));
 
     let preemptive_worker = PreemptiveWorker {
         state: request_pipeline,

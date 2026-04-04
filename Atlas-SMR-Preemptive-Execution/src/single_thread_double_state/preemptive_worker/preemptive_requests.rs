@@ -1,4 +1,3 @@
-use crate::single_thread_double_state::preemptive_worker::comm_handles::PreemptiveWorkerChannels;
 use atlas_common::ordering::singular_tbo_queue::TSingleTboQueue;
 use atlas_common::ordering::singular_tbo_queue::vec_single_tbo_queue::VSingleTBOQueue;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -44,7 +43,7 @@ where
 
     preemptive_state: S,
 
-    pending_permanent_update: VSingleTBOQueue<PendingPermanentUpdate<A, S>>
+    pending_permanent_update: VSingleTBOQueue<PendingPermanentUpdate<A, S>>,
 }
 
 impl<S, A> Orderable for PreemptiveRequestPipeline<S, A>
@@ -60,9 +59,7 @@ impl<S, A> PreemptiveRequestPipeline<S, A>
 where
     A: Application<S>,
 {
-    pub fn new(
-        initial_state: (SeqNo, S),
-    ) -> Self {
+    pub fn new(initial_state: (SeqNo, S)) -> Self {
         Self {
             current_state_seq_no: initial_state.0,
             preemptive_state: initial_state.1,
@@ -109,7 +106,11 @@ where
             .expect("Failed to push pending permanent update to the queue");
     }
 
-    pub fn handle_catch_up(&mut self, application: &A, batches: impl IntoIterator<Item = UpdateBatch<Request<A, S>>>) {
+    pub fn handle_catch_up(
+        &mut self,
+        application: &A,
+        batches: impl IntoIterator<Item = UpdateBatch<Request<A, S>>>,
+    ) {
         self.pending_permanent_update = VSingleTBOQueue::new();
 
         for batch in batches {
