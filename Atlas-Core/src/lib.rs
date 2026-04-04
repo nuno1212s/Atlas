@@ -1,5 +1,3 @@
-#![feature(associated_type_defaults)]
-
 pub mod execution;
 pub mod followers;
 pub mod messages;
