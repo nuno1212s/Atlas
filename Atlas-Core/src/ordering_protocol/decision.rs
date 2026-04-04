@@ -186,7 +186,6 @@ where
     ///
     /// # Errors
     /// Returns an error if the sequence numbers of the decisions do not match
-    #[must_use]
     pub fn merge_decisions(&mut self, other: Self) -> error::Result<()>
     where
         DAD: PartialEq,

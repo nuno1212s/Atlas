@@ -29,6 +29,7 @@ pub enum WorkerMessage {
     ResetAll(Arc<str>),
 }
 
+#[allow(dead_code)]
 enum TimeoutPhase {
     // This request has never timed out
     NeverTimedOut,
@@ -42,6 +43,7 @@ struct RegisteredTimeout {
     #[get]
     timeout_phase: TimeoutPhase,
     #[get]
+    #[allow(dead_code)]
     time_made: SystemTime,
     #[get]
     acks_received: BTreeSet<NodeId>,
@@ -50,7 +52,9 @@ struct RegisteredTimeout {
 }
 
 pub struct TimeoutWorker<WR> {
+    #[allow(dead_code)]
     our_node_id: NodeId,
+    #[allow(dead_code)]
     worker_id: u32,
     default_timeout_duration: Duration,
 
@@ -391,6 +395,7 @@ impl TimeoutPhase {
         }
     }
 
+    #[allow(dead_code)]
     fn last_timeout_time(&self) -> Option<SystemTime> {
         match self {
             Self::NeverTimedOut => None,

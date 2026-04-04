@@ -120,6 +120,6 @@ impl Iterator for State {
 }
 
 #[inline]
-fn rotl(x: u64, k: u64) -> u64 {
-    (x << k) | (x >> (64 - k))
+fn rotl(x: u64, k: u32) -> u64 {
+    x.rotate_left(k)
 }

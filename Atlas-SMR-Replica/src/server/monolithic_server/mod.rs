@@ -64,6 +64,7 @@ where
 {
     p: FPhantom<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
+    #[allow(clippy::type_complexity)]
     inner_replica:
         Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL, SMRExecWrapper<ME::ExecutionHandle>>,
 }
@@ -203,10 +204,10 @@ where
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
 
-            if let Some(trigger) = trigger.as_ref() {
-                if trigger.load(Ordering::Relaxed) {
-                    break Ok(()); // Exit the loop
-                }
+            if let Some(trigger) = trigger.as_ref()
+                && trigger.load(Ordering::Relaxed)
+            {
+                break Ok(()); // Exit the loop
             }
 
             metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());

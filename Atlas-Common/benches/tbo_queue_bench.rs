@@ -5,7 +5,6 @@ use atlas_common::ordering::tbo_queue::btree_tbo_queue::TboQueue;
 use atlas_common::ordering::tbo_queue::vec_tbo_queue::VTboQueue;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::fmt::Display;
-use std::sync::{Arc, LazyLock, OnceLock};
 
 #[derive(Clone, Debug, Copy)]
 struct BenchSeq(usize, usize);

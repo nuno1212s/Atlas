@@ -623,10 +623,10 @@ impl ConnectionHandler {
             .entry(*peer_id)
             .and_modify(|value| *value -= 1);
 
-        if let Some(connection_count) = connection_guard.get(peer_id) {
-            if *connection_count == 0 {
-                connection_guard.remove(peer_id);
-            }
+        if let Some(connection_count) = connection_guard.get(peer_id)
+            && *connection_count == 0
+        {
+            connection_guard.remove(peer_id);
         }
     }
 

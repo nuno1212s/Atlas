@@ -283,20 +283,18 @@ where
 
         match &self.connections[token.into()] {
             SocketConnection::PeerConn { .. } => {
-                if event.is_readable() {
-                    if let ConnectionWorkResult::ConnectionBroken(written, to_write) =
+                if event.is_readable()
+                    && let ConnectionWorkResult::ConnectionBroken(written, to_write) =
                         self.read_until_block(token)?
-                    {
-                        return Ok(ConnectionWorkResult::ConnectionBroken(written, to_write));
-                    }
+                {
+                    return Ok(ConnectionWorkResult::ConnectionBroken(written, to_write));
                 }
 
-                if event.is_writable() {
-                    if let ConnectionWorkResult::ConnectionBroken(written, to_write) =
+                if event.is_writable()
+                    && let ConnectionWorkResult::ConnectionBroken(written, to_write) =
                         self.try_write_until_block(token)?
-                    {
-                        return Ok(ConnectionWorkResult::ConnectionBroken(written, to_write));
-                    }
+                {
+                    return Ok(ConnectionWorkResult::ConnectionBroken(written, to_write));
                 }
             }
             SocketConnection::Waker => {}

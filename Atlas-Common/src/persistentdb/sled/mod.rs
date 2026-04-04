@@ -55,15 +55,12 @@ impl SledKVDB {
             .get_tree(prefix)
             .context("Failed to get tree for prefix to get all items")?;
 
-        let items = keys
-            .map(|key| {
-                tree.get(key.as_ref())
-                    .map(|v| v.map(|v| v.to_vec()))
-                    .map_err(From::from)
-            })
-            .collect();
-
-        items
+        keys.map(|key| {
+            tree.get(key.as_ref())
+                .map(|v| v.map(|v| v.to_vec()))
+                .map_err(From::from)
+        })
+        .collect()
     }
 
     pub fn exists<T>(&self, prefix: &'static str, key: T) -> Result<bool>

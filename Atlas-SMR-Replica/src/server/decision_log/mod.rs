@@ -425,7 +425,7 @@ where
         Ok(())
     }
     fn probe_checkpoint_needed(&mut self, seq: SeqNo, last_seq_no_u32: u32) -> ExecutionResult {
-        let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
+        if last_seq_no_u32 > 0 && last_seq_no_u32.is_multiple_of(CHECKPOINT_PERIOD) {
             //We check that % == 0 so we don't start multiple checkpoints
 
             let (e_tx, e_rx) = channel::oneshot::new_oneshot_channel();
@@ -447,9 +447,7 @@ where
             }
         } else {
             ExecutionResult::Nil
-        };
-
-        checkpoint
+        }
     }
 
     fn execute_transferred_decisions(

@@ -343,7 +343,7 @@ impl CommStatsHelper {
     pub fn register_rq_sent(&self) {
         let requests = self.register_rq(&self.requests_sent);
 
-        if requests % self.measurement_interval == 0 {
+        if requests.is_multiple_of(self.measurement_interval) {
             self.print_data(requests);
         }
     }
@@ -589,7 +589,7 @@ impl ClientPerf {
 
         let count = self.count.fetch_add(1, Ordering::Relaxed);
 
-        if count % Self::MEASUREMENT_INTERVAL == 0 {
+        if count.is_multiple_of(Self::MEASUREMENT_INTERVAL) {
             self.print_data(count);
         }
     }

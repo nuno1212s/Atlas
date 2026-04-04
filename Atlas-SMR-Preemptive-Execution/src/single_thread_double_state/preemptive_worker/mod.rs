@@ -124,7 +124,7 @@ where
                 Ok(())
             },
             recv(unwrap_channel!(self.preemptive_channels.confirmed_worker_rx())) -> msg => {
-                let message = msg.map_err(RecvError::from)?;
+                let _message = msg.map_err(RecvError::from)?;
 
                 todo!()
             },

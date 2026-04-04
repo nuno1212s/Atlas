@@ -320,19 +320,19 @@ impl Operation for EnterQuorumOperation {
                 message_type,
                 current_view.quorum_members().clone().into_iter(),
             );
-        } else if let OperationPhase::CommittingQC(_, _) = &self.phase {
-            if self.pending_messages.has_pending_messages() {
-                let message = self.pending_messages.pop_pending_message().unwrap();
+        } else if let OperationPhase::CommittingQC(_, _) = &self.phase
+            && self.pending_messages.has_pending_messages()
+        {
+            let message = self.pending_messages.pop_pending_message().unwrap();
 
-                let (header, message) = message.into_inner();
+            let (header, message) = message.into_inner();
 
-                return self.handle_received_message(
-                    node,
-                    network,
-                    header,
-                    OperationMessage::QuorumReconfiguration(message),
-                );
-            }
+            return self.handle_received_message(
+                node,
+                network,
+                header,
+                OperationMessage::QuorumReconfiguration(message),
+            );
         }
 
         Ok(OperationResponse::Processing)
@@ -350,13 +350,13 @@ impl Operation for EnterQuorumOperation {
     {
         let message = Self::unwrap_operation_message(message);
 
-        let msg_result = match message {
+        match message {
             QuorumJoinReconfMessages::RequestJoinQuorum(_) => {
                 error!(
                     "Received request join quorum message while we are the ones requesting information. Ignoring."
                 );
 
-                return Ok(OperationResponse::Processing);
+                Ok(OperationResponse::Processing)
             }
             QuorumJoinReconfMessages::LockedQuorumResponse(vote) => {
                 self.handle_locked_vote_received(node, network, header, vote)
@@ -366,7 +366,7 @@ impl Operation for EnterQuorumOperation {
                     "Received commit quorum message while we are the ones requesting information. Ignoring."
                 );
 
-                return Ok(OperationResponse::Processing);
+                Ok(OperationResponse::Processing)
             }
             QuorumJoinReconfMessages::CommitQuorumResponse(vote) => {
                 self.handle_commit_vote_received(node, network, header, vote)
@@ -376,11 +376,9 @@ impl Operation for EnterQuorumOperation {
                     "Received decided message while we are the ones requesting information. Ignoring."
                 );
 
-                return Ok(OperationResponse::Processing);
+                Ok(OperationResponse::Processing)
             }
-        };
-
-        msg_result
+        }
     }
 
     fn handle_quorum_response<NT>(

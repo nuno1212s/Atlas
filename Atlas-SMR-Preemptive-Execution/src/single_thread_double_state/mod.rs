@@ -6,15 +6,12 @@ use crate::single_thread_double_state::preemptive_worker::comm_handles::{
     PreemptiveWorkMessage, PreemptiveWorkerHandle,
 };
 use crate::single_thread_double_state::state_management::StateMessage;
-use atlas_common::channel::{
-    self, NoRetChannelErr,
-    sync::{ChannelSyncRx, ChannelSyncTx},
-};
+use atlas_common::channel::{self, NoRetChannelErr, sync::ChannelSyncRx};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{error, quiet_unwrap, unwrap_channel};
 use atlas_smr_application::{
     app::{Application, Request},
-    state::monolithic_state::{AppStateMessage, InstallStateMessage, MonolithicState},
+    state::monolithic_state::{InstallStateMessage, MonolithicState},
 };
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::executors::monolithic_state::MonStateInstallHandle;
@@ -50,6 +47,7 @@ where
     work_rx: ChannelSyncRx<PreemptiveExecutionRequest<Request<A, S>>>,
     state_rx: ChannelSyncRx<InstallStateMessage<S>>,
 
+    #[allow(dead_code)]
     send_node: Arc<NT>,
 }
 
@@ -140,6 +138,7 @@ where
         self.run_mode = run_mode;
     }
 
+    #[allow(clippy::extra_unused_type_parameters)]
     fn worker<T>(&mut self)
     where
         T: ExecutorReplier + 'static,
@@ -237,7 +236,7 @@ where
                     )
                 ));
             }
-            PreemptiveExecutionRequest::PreemptiveUpdate(reqs, time) => {
+            PreemptiveExecutionRequest::PreemptiveUpdate(reqs, _time) => {
                 quiet_unwrap!(
                     self.preemptive_worker
                         .preemptive_exec_handle()

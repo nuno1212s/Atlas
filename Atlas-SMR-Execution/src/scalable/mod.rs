@@ -178,10 +178,10 @@ where
                 AccessType::Write => {
                     //TODO: If this repeats various write accesses to the same key,
                     // Reduce them all into a single access
-                    if let Some(value) = unit.cache().get(alteration.column()) {
-                        if let Some(value) = value.get(alteration.key()) {
-                            state.update(alteration.column(), alteration.key(), value);
-                        }
+                    if let Some(value) = unit.cache().get(alteration.column())
+                        && let Some(value) = value.get(alteration.key())
+                    {
+                        state.update(alteration.column(), alteration.key(), value);
                     }
                 }
                 AccessType::Delete => {
