@@ -18,7 +18,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: nightly-2025-06-09
+          toolchain: nightly
           components: rustfmt, clippy
       - name: Check versions
         run: |
@@ -48,7 +48,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: nightly-2025-06-09
+          toolchain: nightly
       - uses: taiki-e/install-action@nextest
       - run: cargo build --tests
       - run: cargo nextest run --no-tests pass
