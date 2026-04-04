@@ -4,6 +4,7 @@ use crate::single_thread_double_state::state_management::{
 use crate::single_thread_double_state::{EXECUTING_BUFFER, STATE_BUFFER};
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use getset::Getters;
+use atlas_smr_application::state::monolithic_state::AppStateMessage;
 
 /// The channels for the Confirmed Worker to use in communication with the Preemptive Worker.
 #[derive(Getters)]
@@ -12,18 +13,22 @@ pub struct ConfirmedWorkerSharedChannels<R, S> {
     confirmed_to_preemptive_tx: ChannelSyncTx<ConfirmedToPreemptiveMsg<S>>,
     #[get = "pub"]
     preemptive_to_confirmed_rx: ChannelSyncRx<PreemptiveToConfirmedMsg<R>>,
+    
+    state_emission_channel: ChannelSyncTx<AppStateMessage<S>>
 }
 
 impl<R, S> From<ConfirmedWorkerSharedChannels<R, S>>
     for (
         ChannelSyncTx<ConfirmedToPreemptiveMsg<S>>,
         ChannelSyncRx<PreemptiveToConfirmedMsg<R>>,
+        ChannelSyncTx<AppStateMessage<S>>
     )
 {
     fn from(value: ConfirmedWorkerSharedChannels<R, S>) -> Self {
         (
             value.confirmed_to_preemptive_tx,
             value.preemptive_to_confirmed_rx,
+            value.state_emission_channel
         )
     }
 }
@@ -49,7 +54,9 @@ impl<R, S> From<PreemptiveWorkerSharedChannels<R, S>>
     }
 }
 
-pub fn initialize_shared_channels<R, S>() -> (
+pub fn initialize_shared_channels<R, S>(
+    state_emission_channel: ChannelSyncTx<AppStateMessage<S>>,
+) -> (
     ConfirmedWorkerSharedChannels<R, S>,
     PreemptiveWorkerSharedChannels<R, S>,
 ) {
@@ -69,6 +76,7 @@ pub fn initialize_shared_channels<R, S>() -> (
         ConfirmedWorkerSharedChannels {
             confirmed_to_preemptive_tx,
             preemptive_to_confirmed_rx,
+            state_emission_channel,
         },
         PreemptiveWorkerSharedChannels {
             confirmed_to_preemptive_rx,

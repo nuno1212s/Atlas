@@ -44,9 +44,7 @@ where
 
     preemptive_state: S,
 
-    pending_permanent_update: VSingleTBOQueue<PendingPermanentUpdate<A, S>>,
-
-    channel_handles: PreemptiveWorkerChannels<Request<A, S>, S>,
+    pending_permanent_update: VSingleTBOQueue<PendingPermanentUpdate<A, S>>
 }
 
 impl<S, A> Orderable for PreemptiveRequestPipeline<S, A>
@@ -63,14 +61,12 @@ where
     A: Application<S>,
 {
     pub fn new(
-        handle: PreemptiveWorkerChannels<Request<A, S>, S>,
         initial_state: (SeqNo, S),
     ) -> Self {
         Self {
             current_state_seq_no: initial_state.0,
             preemptive_state: initial_state.1,
             pending_permanent_update: VSingleTBOQueue::new(),
-            channel_handles: handle,
         }
     }
 
@@ -111,6 +107,21 @@ where
         self.pending_permanent_update
             .push(PendingPermanentUpdate(pending_copy, replies))
             .expect("Failed to push pending permanent update to the queue");
+    }
+
+    pub fn handle_catch_up(&mut self, application: &A, batches: impl IntoIterator<Item = UpdateBatch<Request<A, S>>>) {
+        self.pending_permanent_update = VSingleTBOQueue::new();
+
+        for batch in batches {
+            let seq = batch.seq_no();
+            // Execute directly and discard replies — no client notifications needed for catch-up
+            let _ = application.update_batch(&mut self.preemptive_state, batch);
+            self.current_state_seq_no = seq;
+        }
+
+        self.pending_permanent_update
+            .install_seq(self.current_state_seq_no)
+            .expect("Failed to install sequence number after catch-up");
     }
 
     pub fn handle_update_confirmed(&mut self, sequence_no: SeqNo) -> PendingPermanentUpdate<A, S> {

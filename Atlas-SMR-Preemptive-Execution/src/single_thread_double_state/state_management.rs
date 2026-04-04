@@ -13,6 +13,7 @@ pub(super) enum StateMessage<S> {
 /// messages that the preemptive state management thread sends to the confirmed state management thread.
 pub(super) enum PreemptiveToConfirmedMsg<R> {
     UpdateConfirmed(UpdateBatch<R>),
+    UpdateConfirmedEmitAppState(UpdateBatch<R>),
     RequestStateCopy(SeqNo),
 }
 
