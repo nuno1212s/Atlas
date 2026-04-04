@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use atlas_core::execution::requests::{ReplyBatch, UpdateBatch};
 use atlas_smr_application::app::{Application, Reply, Request};
 

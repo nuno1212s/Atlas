@@ -23,6 +23,7 @@ impl<A, S> PendingPermanentUpdate<A, S>
 where
     A: Application<S>,
 {
+    #[allow(dead_code)]
     pub fn new(
         update_batch: UpdateBatch<Request<A, S>>,
         reply_batch: ReplyBatch<Reply<A, S>>,
@@ -30,6 +31,7 @@ where
         Self(update_batch, reply_batch)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn into_inner(self) -> (UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>) {
         (self.0, self.1)
     }

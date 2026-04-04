@@ -59,6 +59,7 @@ where
 {
     p: PhantomData<fn() -> (A, SE)>,
     /// The inner replica object, responsible for the general replica things
+    #[allow(clippy::type_complexity)]
     inner_replica:
         Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL, SMRExecWrapper<SE::ExecutionHandle>>,
 }

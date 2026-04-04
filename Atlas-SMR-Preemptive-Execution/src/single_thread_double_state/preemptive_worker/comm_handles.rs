@@ -68,6 +68,7 @@ impl<R, S> PreemptiveWorkerChannels<R, S> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn send_update_confirmed(&self, update_batch: UpdateBatch<R>) {
         if let Err(err) = self
             .confirmed_worker_tx
@@ -77,6 +78,7 @@ impl<R, S> PreemptiveWorkerChannels<R, S> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn request_latest_confirmed_state(
         &self,
         seq_no: SeqNo,
@@ -109,6 +111,7 @@ impl<R, S> Clone for PreemptiveWorkerChannels<R, S> {
 }
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub(super) enum RequestLatestStateError {
     #[error("Failed to send state copy request to confirmed worker: {0}")]
     SendRequestFailed(#[from] channel::SendError),

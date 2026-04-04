@@ -402,16 +402,16 @@ impl OnGoingOperations {
 
                                 self.launch_quorum_join_op(node)?;
                             }
-                        } else if let ReplicaState::Joining = current_state {
-                            if is_part_of_quorum {
-                                info!("We have joined the quorum, calling initial setup done");
+                        } else if let ReplicaState::Joining = current_state
+                            && is_part_of_quorum
+                        {
+                            info!("We have joined the quorum, calling initial setup done");
 
-                                *current_state = ReplicaState::Member;
+                            *current_state = ReplicaState::Member;
 
-                                self.launch_quorum_notify_op(node)?;
+                            self.launch_quorum_notify_op(node)?;
 
-                                return Ok(QuorumProtocolResponse::DoneInitialSetup);
-                            }
+                            return Ok(QuorumProtocolResponse::DoneInitialSetup);
                         }
                     }
                 }
@@ -481,29 +481,29 @@ impl OnGoingOperations {
 
         match &mut node.node_type {
             NodeStatusType::ClientNode { current_state, .. } => {
-                if let ClientState::Awaiting = current_state {
-                    if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
-                        info!(
-                            "Launching quorum info operation as we have not yet obtained the quorum info"
-                        );
+                if let ClientState::Awaiting = current_state
+                    && !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME)
+                {
+                    info!(
+                        "Launching quorum info operation as we have not yet obtained the quorum info"
+                    );
 
-                        *current_state = ClientState::ObtainingInfo;
+                    *current_state = ClientState::ObtainingInfo;
 
-                        self.launch_quorum_obtain_info_op(node)?;
-                    }
+                    self.launch_quorum_obtain_info_op(node)?;
                 }
             }
             NodeStatusType::QuorumNode { current_state, .. } => {
-                if let ReplicaState::Awaiting = current_state {
-                    if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
-                        info!(
-                            "Launching quorum info operation as we have not yet obtained the quorum info"
-                        );
+                if let ReplicaState::Awaiting = current_state
+                    && !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME)
+                {
+                    info!(
+                        "Launching quorum info operation as we have not yet obtained the quorum info"
+                    );
 
-                        *current_state = ReplicaState::ObtainingInfo;
+                    *current_state = ReplicaState::ObtainingInfo;
 
-                        self.launch_quorum_obtain_info_op(node)?;
-                    }
+                    self.launch_quorum_obtain_info_op(node)?;
                 }
             }
         }
@@ -737,15 +737,15 @@ impl OnGoingOperations {
 
     // Function that handles an operation no longer needing to receive quorum responses
     fn handle_no_longer_awaiting_response_protocol(&mut self, operation_name: &'static str) {
-        if let Some(str) = &self.awaiting_reconfig_response {
-            if **str == *operation_name {
-                info!(
-                    "The operation {} is no longer waiting for a quorum response",
-                    operation_name
-                );
+        if let Some(str) = &self.awaiting_reconfig_response
+            && **str == *operation_name
+        {
+            info!(
+                "The operation {} is no longer waiting for a quorum response",
+                operation_name
+            );
 
-                self.awaiting_reconfig_response = None;
-            }
+            self.awaiting_reconfig_response = None;
         }
     }
 }
