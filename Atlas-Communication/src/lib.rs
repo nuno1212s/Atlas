@@ -1,6 +1,5 @@
 #![allow(incomplete_features)]
 #![feature(inherent_associated_types)]
-#![feature(associated_type_defaults)]
 #![allow(dead_code)]
 
 use std::sync::Arc;
