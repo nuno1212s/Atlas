@@ -1,6 +1,5 @@
 #![allow(incomplete_features)]
 #![allow(type_alias_bounds)]
-#![feature(associated_type_defaults)]
 #![feature(inherent_associated_types)]
 
 use atlas_core::messages::{ReplyMessage, RequestMessage};

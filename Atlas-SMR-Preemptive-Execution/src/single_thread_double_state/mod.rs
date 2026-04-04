@@ -164,6 +164,8 @@ where
                 // Send it to both the confirmed worker and the preemptive worker.
                 quiet_unwrap!(self.send_state_to_preemptive_worker(seq, state.clone()));
                 quiet_unwrap!(self.send_state_to_confirmed_worker(seq, state));
+
+                self.set_run_mode(RunMode::Normal);
             }
         }
     }
