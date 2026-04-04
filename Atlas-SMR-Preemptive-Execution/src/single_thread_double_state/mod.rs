@@ -20,7 +20,6 @@ use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::executors::monolithic_state::MonStateInstallHandle;
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_execution::repliers::ExecutorReplier;
-use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -43,18 +42,13 @@ where
     S: MonolithicState + 'static,
     A: Application<S> + 'static,
 {
-    application: Arc<A>,
-
     run_mode: RunMode,
 
     confirmed_worker: ConfirmedWorkerHandle<Request<A, S>, S>,
     preemptive_worker: PreemptiveWorkerHandle<Request<A, S>, S>,
 
-    read_thread_pool: ThreadPool,
-
     work_rx: ChannelSyncRx<PreemptiveExecutionRequest<Request<A, S>>>,
     state_rx: ChannelSyncRx<InstallStateMessage<S>>,
-    checkpoint_tx: ChannelSyncTx<AppStateMessage<S>>,
 
     send_node: Arc<NT>,
 }
@@ -99,16 +93,6 @@ where
             (SeqNo::ZERO, A::initial_state()?)
         };
 
-        let (confirmed_worker_shared_channels, preemptive_worker_shared_channels) =
-            comm_handles::initialize_shared_channels();
-
-        let confirmed_worker = confirmed_worker::init_confirmed_worker::<A, S, NT, T>(
-            (seq, state.clone()),
-            wrapped_application.clone(),
-            send_node.clone(),
-            confirmed_worker_shared_channels,
-        );
-
         let (state_tx, state_rx) = channel::sync::new_bounded_sync(
             STATE_BUFFER,
             Some("ST Monolithic Executor Work InstState"),
@@ -117,6 +101,15 @@ where
         let (checkpoint_tx, checkpoint_rx) =
             channel::sync::new_bounded_sync(STATE_BUFFER, Some("ST Monolithic Executor AppState"));
 
+        let (confirmed_worker_shared_channels, preemptive_worker_shared_channels) =
+            comm_handles::initialize_shared_channels(checkpoint_tx);
+
+        let confirmed_worker = confirmed_worker::init_confirmed_worker::<A, S, NT, T>(
+            (seq, state.clone()),
+            wrapped_application.clone(),
+            send_node.clone(),
+            confirmed_worker_shared_channels,
+        );
         let preemptive_state_handle =
             preemptive_worker::initialize_preemptive_execution::<A, S, NT, T>(
                 SeqNo::ZERO,
@@ -127,14 +120,11 @@ where
             );
 
         let mut executor = Self {
-            application: wrapped_application,
             run_mode: RunMode::Normal,
             confirmed_worker,
             preemptive_worker: preemptive_state_handle,
-            read_thread_pool: ThreadPoolBuilder::new().num_threads(4).build()?,
             work_rx: handle,
             state_rx,
-            checkpoint_tx,
             send_node,
         };
 
@@ -160,7 +150,7 @@ where
                 channel::sync::sync_select! {
                      recv(unwrap_channel!(self.work_rx)) -> exec_req => {
                         if let Ok(exec_req) = exec_req {
-                            self.handle_preemptive_execution_request::<T>(exec_req);
+                            self.handle_preemptive_execution_request(exec_req);
                         }
                     }
                 }
@@ -209,11 +199,10 @@ where
         Ok(())
     }
 
-    fn handle_preemptive_execution_request<T>(
+    fn handle_preemptive_execution_request(
         &mut self,
         execution_request: PreemptiveExecutionRequest<Request<A, S>>,
     ) where
-        T: ExecutorReplier + 'static,
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     {
         match execution_request {
@@ -224,7 +213,13 @@ where
                 quiet_unwrap!(
                     self.confirmed_worker
                         .update_messages()
-                        .send(ConfirmedUpdateMessage::CatchUp(confirmed_batches))
+                        .send(ConfirmedUpdateMessage::CatchUp(confirmed_batches.clone()))
+                );
+
+                quiet_unwrap!(
+                    self.preemptive_worker
+                        .preemptive_exec_handle()
+                        .send(PreemptiveWorkMessage::CatchUp(confirmed_batches))
                 );
             }
             PreemptiveExecutionRequest::UpdateBatch(update, _) => {
@@ -260,10 +255,12 @@ where
                 quiet_unwrap!(
                     self.preemptive_worker
                         .preemptive_exec_handle()
-                        .send(PreemptiveWorkMessage::ConfirmedUpdate(seq_no))
+                        .send(PreemptiveWorkMessage::ConfirmedUpdateEmitAppState(seq_no))
                 );
 
-                todo!("Now we need to get the app state and send it to the executor")
+                // The preemptive worker will then forward this request of app state to the confirmed worker
+                // when it sends it. The confirmed worker will then directly send the app state message
+                // To the state transfer module via the channel.
             }
             PreemptiveExecutionRequest::ExecuteUnordered(unordered_batch) => {
                 quiet_unwrap!(

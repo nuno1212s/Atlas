@@ -6,6 +6,7 @@ use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
+use atlas_smr_application::state::monolithic_state::AppStateMessage;
 use getset::Getters;
 use std::time::Instant;
 
@@ -26,13 +27,15 @@ pub(super) fn initialize_handles<R, S>(
 
     let confirmed_worker_handle = ConfirmedWorkerHandle::new(update_message_tx, state_message_tx);
 
-    let (confirmed_to_preemptive_tx, preemptive_to_confirmed_rx) = shared_channels.into();
+    let (confirmed_to_preemptive_tx, preemptive_to_confirmed_rx, state_emission_channel) =
+        shared_channels.into();
 
     let confirmed_worker_channels = ConfirmedChannels::new(
         preemptive_to_confirmed_rx,
         confirmed_to_preemptive_tx,
         update_message_rx,
         state_message_rx,
+        state_emission_channel,
     );
 
     (confirmed_worker_handle, confirmed_worker_channels)
@@ -78,6 +81,8 @@ pub(super) struct ConfirmedChannels<R, S> {
     update_messages: ChannelSyncRx<ConfirmedUpdateMessage<R>>,
     #[get = "pub"]
     state_messages: ChannelSyncRx<StateMessage<S>>,
+    #[get = "pub"]
+    state_emission_channel: ChannelSyncTx<AppStateMessage<S>>,
 }
 
 impl<R, S> ConfirmedChannels<R, S> {
@@ -86,12 +91,14 @@ impl<R, S> ConfirmedChannels<R, S> {
         preemptive_worker_rx: ChannelSyncTx<ConfirmedToPreemptiveMsg<S>>,
         update_messages: ChannelSyncRx<ConfirmedUpdateMessage<R>>,
         state_messages: ChannelSyncRx<StateMessage<S>>,
+        state_emission_channel: ChannelSyncTx<AppStateMessage<S>>,
     ) -> Self {
         Self {
             incoming_preemptive_msg,
             outgoing_msg: preemptive_worker_rx,
             update_messages,
             state_messages,
+            state_emission_channel,
         }
     }
 }

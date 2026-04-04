@@ -6,7 +6,15 @@ use atlas_common::serialization_helper::NonSyncSerMsg;
 use std::io::{Read, Write};
 use std::mem::size_of;
 
-/// The type abstraction for a monolithic state (only needs to be serializable, in reality)
+/// The type abstraction for a monolithic state (only needs to be serializable, in reality)´
+///
+/// This represents one of the two available state implementations in Atlas.
+/// It will be completely held in memory, therefore it is heavily limited in size.
+/// It is, however, very fast and easy to use so it is recommended for small applications
+/// Which have little state or for experiments.
+///
+/// For more complex state handling, see [`super::divisible_state::DivisibleState`]
+///
 pub trait MonolithicState: NonSyncSerMsg {
     ///Serialize a request from your service, given the writer to serialize into
     ///  (either for network sending or persistent storing)
@@ -23,24 +31,18 @@ pub trait MonolithicState: NonSyncSerMsg {
 }
 
 pub struct InstallStateMessage<S>
-where
-    S: MonolithicState,
 {
     seq: SeqNo,
     state: S,
 }
 
 pub struct AppStateMessage<S>
-where
-    S: MonolithicState,
 {
     seq: SeqNo,
     state: S,
 }
 
 impl<S> AppStateMessage<S>
-where
-    S: MonolithicState,
 {
     pub fn new(seq: SeqNo, state: S) -> Self {
         AppStateMessage { seq, state }
@@ -60,8 +62,6 @@ where
 }
 
 impl<S> InstallStateMessage<S>
-where
-    S: MonolithicState,
 {
     pub fn new(seq_no: SeqNo, state: S) -> Self {
         InstallStateMessage { seq: seq_no, state }
@@ -77,8 +77,6 @@ where
 }
 
 impl<S> Orderable for InstallStateMessage<S>
-where
-    S: MonolithicState,
 {
     fn sequence_number(&self) -> SeqNo {
         self.seq

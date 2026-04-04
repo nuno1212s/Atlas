@@ -90,6 +90,16 @@ where
 
                         self.preemptive_channels.confirmed_worker_tx().send(PreemptiveToConfirmedMsg::UpdateConfirmed(update_batch))?;
                     },
+                    PreemptiveWorkMessage::ConfirmedUpdateEmitAppState(seq_no) => {
+                        let (update_batch, replies) = self.state.handle_update_confirmed(seq_no).into_inner();
+
+                        T::execution_finished::<A::AppData, NT>(self.node.clone(), Some(seq_no), replies);
+
+                        self.preemptive_channels.confirmed_worker_tx().send(PreemptiveToConfirmedMsg::UpdateConfirmedEmitAppState(update_batch))?;
+                    }
+                    PreemptiveWorkMessage::CatchUp(confirmed_batches) => {
+                        self.state.handle_catch_up(&self.application, confirmed_batches);
+                    }
                     PreemptiveWorkMessage::PollStateChannel => {
                         self.set_run_mode(RunMode::StateTransfer);
                     }
@@ -159,7 +169,7 @@ where
     );
 
     let request_pipeline =
-        PreemptiveRequestPipeline::new(preemptive_channels.clone(), (state_seq, state));
+        PreemptiveRequestPipeline::new((state_seq, state));
 
     let preemptive_worker = PreemptiveWorker {
         state: request_pipeline,
