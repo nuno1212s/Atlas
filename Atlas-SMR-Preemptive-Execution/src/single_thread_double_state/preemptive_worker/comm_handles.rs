@@ -3,12 +3,12 @@ use crate::single_thread_double_state::state_management::{
 };
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::UpdateBatch;
 use getset::Getters;
 use thiserror::Error;
 use tracing::error;
-use atlas_common::maybe_vec::MaybeVec;
 
 /// Messages sent by the orchestrator to the preemptive state management thread to trigger updates to the preemptive state.
 pub enum PreemptiveWorkMessage<R> {

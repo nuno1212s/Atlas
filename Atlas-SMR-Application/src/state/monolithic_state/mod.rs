@@ -30,20 +30,17 @@ pub trait MonolithicState: NonSyncSerMsg {
         Self: Sized;
 }
 
-pub struct InstallStateMessage<S>
-{
+pub struct InstallStateMessage<S> {
     seq: SeqNo,
     state: S,
 }
 
-pub struct AppStateMessage<S>
-{
+pub struct AppStateMessage<S> {
     seq: SeqNo,
     state: S,
 }
 
-impl<S> AppStateMessage<S>
-{
+impl<S> AppStateMessage<S> {
     pub fn new(seq: SeqNo, state: S) -> Self {
         AppStateMessage { seq, state }
     }
@@ -61,8 +58,7 @@ impl<S> AppStateMessage<S>
     }
 }
 
-impl<S> InstallStateMessage<S>
-{
+impl<S> InstallStateMessage<S> {
     pub fn new(seq_no: SeqNo, state: S) -> Self {
         InstallStateMessage { seq: seq_no, state }
     }
@@ -76,8 +72,7 @@ impl<S> InstallStateMessage<S>
     }
 }
 
-impl<S> Orderable for InstallStateMessage<S>
-{
+impl<S> Orderable for InstallStateMessage<S> {
     fn sequence_number(&self) -> SeqNo {
         self.seq
     }

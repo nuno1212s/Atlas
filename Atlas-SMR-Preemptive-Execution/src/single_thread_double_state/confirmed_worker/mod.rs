@@ -18,6 +18,7 @@ use atlas_common::{exhaust_and_consume, quiet_unwrap, unwrap_channel};
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Application, Request};
+use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::monolithic_state::{AppStateMessage, MonolithicState};
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::ReplyNode;
@@ -26,7 +27,6 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tracing::error;
-use atlas_smr_application::serialize::ApplicationData;
 
 pub(super) mod comm_handles;
 pub(super) mod confirmed_requests;
@@ -162,7 +162,11 @@ where
                     self.execute_and_advance(batch);
 
                     let (seq, state) = self.confirmed_state.take_state_snapshot();
-                    quiet_unwrap!(self.confirmed_channels.state_emission_channel().send(AppStateMessage::new(seq, state)));
+                    quiet_unwrap!(
+                        self.confirmed_channels
+                            .state_emission_channel()
+                            .send(AppStateMessage::new(seq, state))
+                    );
                 }
             }
         }
@@ -221,7 +225,10 @@ where
                 }
             }
             PreemptiveToConfirmedMsg::UpdateConfirmedEmitAppState(confirmed_update) => {
-                if let Err(err) = self.update_queue.push(Update::UpdateAndGetState(confirmed_update)) {
+                if let Err(err) = self
+                    .update_queue
+                    .push(Update::UpdateAndGetState(confirmed_update))
+                {
                     error!("Failed to push confirmed update: {:?}", err);
                 }
             }
