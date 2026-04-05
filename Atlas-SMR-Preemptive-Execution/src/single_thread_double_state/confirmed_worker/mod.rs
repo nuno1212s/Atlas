@@ -231,7 +231,7 @@ where
                     error!("Failed to push confirmed update: {:?}", err);
                 }
             }
-            PreemptiveToConfirmedMsg::RequestStateCopy(_) => {
+            PreemptiveToConfirmedMsg::RequestStateCopy => {
                 let (seq_no, state) = self.confirmed_state.take_state_snapshot();
 
                 self.confirmed_channels

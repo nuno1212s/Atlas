@@ -13,9 +13,9 @@ use tracing::error;
 /// Messages sent by the orchestrator to the preemptive state management thread to trigger updates to the preemptive state.
 pub enum PreemptiveWorkMessage<R> {
     PreemptiveUpdate(UpdateBatch<R>),
-    ConfirmedUpdate(SeqNo),
+    PreemptiveUpdateConfirmed(SeqNo),
+    PreemptiveUpdateConfirmedAndGetAppState(SeqNo),
     CatchUp(MaybeVec<UpdateBatch<R>>),
-    ConfirmedUpdateEmitAppState(SeqNo),
     PollStateChannel,
 }
 

@@ -18,18 +18,18 @@ pub enum PreemptiveExecutionRequest<O> {
     UpdateBatch(UpdateBatch<O>, Instant),
     /// A decided, finalized update batch to be executed, and the application state to be retrieved after execution.
     /// The Instant represents the time at which the update was originally queued for execution.
-    UpdateFinalizedAndGetAppstateBatch(UpdateBatch<O>, Instant),
+    UpdateBatchAndGetAppstate(UpdateBatch<O>, Instant),
     /// A preemptive update batch to be executed.
     /// The Instant represents the time at which the update was originally queued for execution.
     PreemptiveUpdate(UpdateBatch<O>, Instant),
     /// A preemptive update that has been finalized. We can now
     /// Send the replies to the clients and permanently apply the update
     /// to our state
-    UpdateFinalized(SeqNo),
-    /// Similarly to the [PreemptiveExecutionRequest::UpdateFinalized(_)] branch
+    PreemptiveUpdateFinalized(SeqNo),
+    /// Similarly to the [PreemptiveUpdateFinalized(_)] branch
     /// But with the added action of also taking a snapshot of the app state
     /// (After the update has been performed) and
-    UpdateFinalizedAndGetAppstate(SeqNo),
+    PreemptiveUpdateFinalizedAndGetAppstate(SeqNo),
     /// Execute an unordered update on the confirmed state (this will not
     /// take into account any pending preemptive updates, only updates which
     /// have been effectivized)
@@ -104,7 +104,7 @@ where
     ) -> atlas_common::error::Result<()> {
         self.e_tx
             .send(
-                PreemptiveExecutionRequest::UpdateFinalizedAndGetAppstateBatch(
+                PreemptiveExecutionRequest::UpdateBatchAndGetAppstate(
                     batch,
                     Instant::now(),
                 ),
@@ -128,7 +128,7 @@ where
 
     fn queue_update_finalized(&self, seq: SeqNo) -> atlas_common::error::Result<()> {
         self.e_tx
-            .send(PreemptiveExecutionRequest::UpdateFinalized(seq))
+            .send(PreemptiveExecutionRequest::PreemptiveUpdateFinalized(seq))
             .context("Failed to send UpdateFinalized request to executor")
     }
 
@@ -137,7 +137,7 @@ where
         seq: SeqNo,
     ) -> atlas_common::error::Result<()> {
         self.e_tx
-            .send(PreemptiveExecutionRequest::UpdateFinalizedAndGetAppstate(
+            .send(PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(
                 seq,
             ))
             .context("Failed to send UpdateFinalizedAndGetAppstate request to executor")

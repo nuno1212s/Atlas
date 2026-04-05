@@ -87,12 +87,12 @@ where
                     PreemptiveWorkMessage::PreemptiveUpdate(update_batch) => {
                         self.handle_preemptive_update::<T>(update_batch);
                     }
-                    PreemptiveWorkMessage::ConfirmedUpdate(seq_no) => {
+                    PreemptiveWorkMessage::PreemptiveUpdateConfirmed(seq_no) => {
                         let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no);
 
                         self.preemptive_channels.send_update_confirmed(update_batch);
                     },
-                    PreemptiveWorkMessage::ConfirmedUpdateEmitAppState(seq_no) => {
+                    PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(seq_no) => {
                         let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no);
 
                         self.preemptive_channels.send_update_confirmed_get_appstate(update_batch);
