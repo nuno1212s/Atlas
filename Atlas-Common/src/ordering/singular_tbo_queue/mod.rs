@@ -33,10 +33,14 @@ pub trait TSingleTboQueue<M>: Orderable + Default {
     /// Installs a new sequence number for the queue, which may be used to skip over
     /// a range of sequence numbers. Any messages with sequence numbers that are now too old to be popped
     /// will be discarded.
-    fn install_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo>;
+    fn advance_to_seq(&mut self, seq_no: SeqNo) -> Result<(), InvalidSeqNo>;
 
     /// Clears all messages from the queue, does not change the current sequence number.
     fn clear(&mut self);
+    
+    /// Reset the queue to a given sequence number. Will clear the queue and move to the number
+    /// indicated. Possible to backtrack
+    fn reset_with_seq(&mut self, seq: SeqNo);
 }
 
 #[derive(Error, Debug)]

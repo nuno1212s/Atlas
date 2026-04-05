@@ -68,7 +68,6 @@ impl<R, S> PreemptiveWorkerChannels<R, S> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn send_update_confirmed(&self, update_batch: UpdateBatch<R>) {
         if let Err(err) = self
             .confirmed_worker_tx
@@ -78,17 +77,24 @@ impl<R, S> PreemptiveWorkerChannels<R, S> {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn request_latest_confirmed_state(
-        &self,
-        seq_no: SeqNo,
-    ) -> Result<(SeqNo, S), RequestLatestStateError> {
+    pub fn send_update_confirmed_get_appstate(&self, update_batch: UpdateBatch<R>) {
+        if let Err(err) =
+            self.confirmed_worker_tx
+                .send(PreemptiveToConfirmedMsg::UpdateConfirmedEmitAppState(
+                    update_batch,
+                ))
+        {
+            error!("Failed to send update batch to confirmed worker: {err}");
+        }
+    }
+
+    pub fn request_latest_confirmed_state(&self) -> Result<(SeqNo, S), RequestLatestStateError> {
         if !self.confirmed_worker_rx.is_empty() {
             return Err(RequestLatestStateError::UnexpectedMessage);
         }
 
         self.confirmed_worker_tx
-            .send(PreemptiveToConfirmedMsg::RequestStateCopy(seq_no))?;
+            .send(PreemptiveToConfirmedMsg::RequestStateCopy)?;
 
         match self.confirmed_worker_rx.recv() {
             Ok(ConfirmedToPreemptiveMsg(confirmed_seq_no, confirmed_state)) => {
