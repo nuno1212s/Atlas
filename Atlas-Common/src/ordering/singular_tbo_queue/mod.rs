@@ -37,7 +37,7 @@ pub trait TSingleTboQueue<M>: Orderable + Default {
 
     /// Clears all messages from the queue, does not change the current sequence number.
     fn clear(&mut self);
-    
+
     /// Reset the queue to a given sequence number. Will clear the queue and move to the number
     /// indicated. Possible to backtrack
     fn reset_with_seq(&mut self, seq: SeqNo);

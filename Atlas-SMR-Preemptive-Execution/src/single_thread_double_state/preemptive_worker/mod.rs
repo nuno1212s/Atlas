@@ -11,7 +11,7 @@ use crate::single_thread_double_state::preemptive_worker::preemptive_requests::{
 use crate::single_thread_double_state::state_management::StateMessage;
 use atlas_common::channel::{NoRetChannelErr, RecvError, sync};
 use atlas_common::ordering::SeqNo;
-use atlas_common::{unwrap_channel};
+use atlas_common::unwrap_channel;
 use atlas_core::execution::requests::UpdateBatch;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_core::SMRReply;

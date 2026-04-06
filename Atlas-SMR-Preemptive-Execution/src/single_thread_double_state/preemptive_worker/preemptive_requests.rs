@@ -276,7 +276,9 @@ where
                 })
             }
         } else {
-            Err(HandleUpdateConfirmedError::EmptyQueue { received: sequence_no })
+            Err(HandleUpdateConfirmedError::EmptyQueue {
+                received: sequence_no,
+            })
         }
     }
 }
@@ -494,9 +496,15 @@ mod tests {
         let mut state = new_state();
 
         // Three preemptive updates
-        state.handle_preemptive_update(&app, make_batch(1, &[10])).unwrap();
-        state.handle_preemptive_update(&app, make_batch(2, &[20])).unwrap();
-        state.handle_preemptive_update(&app, make_batch(3, &[30])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(1, &[10]))
+            .unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(2, &[20]))
+            .unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(3, &[30]))
+            .unwrap();
 
         // Confirm them in order; each should return the matching batch
         let p1 = state.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
@@ -518,15 +526,21 @@ mod tests {
         let mut state = new_state();
 
         // Preemptive at 1, confirm, then preemptive at 2, confirm …
-        state.handle_preemptive_update(&app, make_batch(1, &[1])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(1, &[1]))
+            .unwrap();
         let _ = state.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
         assert_eq!(state.current_confirmed_seq_no, SeqNo::from(1u32));
 
-        state.handle_preemptive_update(&app, make_batch(2, &[2])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(2, &[2]))
+            .unwrap();
         let _ = state.handle_update_confirmed(SeqNo::from(2u32)).unwrap();
         assert_eq!(state.current_confirmed_seq_no, SeqNo::from(2u32));
 
-        state.handle_preemptive_update(&app, make_batch(3, &[3])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(3, &[3]))
+            .unwrap();
         let _ = state.handle_update_confirmed(SeqNo::from(3u32)).unwrap();
         assert_eq!(state.current_confirmed_seq_no, SeqNo::from(3u32));
 
@@ -665,7 +679,9 @@ mod tests {
         // Backtrack to seq 1 (the update that caused conflict is at seq 1):
         // re-execute range is (confirmed=0, backtracked=1) exclusive = nothing.
         // All three pending items are discarded.
-        state.backtrack(&app, SeqNo::ZERO, 0u32, SeqNo::from(1u32)).unwrap();
+        state
+            .backtrack(&app, SeqNo::ZERO, 0u32, SeqNo::from(1u32))
+            .unwrap();
 
         assert_eq!(state.sequence_number(), SeqNo::ZERO);
         assert_eq!(state.current_confirmed_seq_no, SeqNo::ZERO);
@@ -695,7 +711,9 @@ mod tests {
         // Backtrack to seq 3:
         //   re-execute: seq 1 and seq 2 (seq < 3 AND > confirmed=0)
         //   discard:    seq 3 and seq 4
-        state.backtrack(&app, SeqNo::ZERO, 0u32, SeqNo::from(3u32)).unwrap();
+        state
+            .backtrack(&app, SeqNo::ZERO, 0u32, SeqNo::from(3u32))
+            .unwrap();
 
         // After backtrack, current_state_seq_no = 2 (last re-executed)
         assert_eq!(state.sequence_number(), SeqNo::from(2u32));
@@ -716,19 +734,29 @@ mod tests {
         let mut state = new_state();
 
         // Preemptive at 1, confirm it
-        state.handle_preemptive_update(&app, make_batch(1, &[5])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(1, &[5]))
+            .unwrap();
         let _ = state.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
 
         // Now speculate at 2, 3, 4
-        state.handle_preemptive_update(&app, make_batch(2, &[5])).unwrap();
-        state.handle_preemptive_update(&app, make_batch(3, &[5])).unwrap();
-        state.handle_preemptive_update(&app, make_batch(4, &[5])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(2, &[5]))
+            .unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(3, &[5]))
+            .unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(4, &[5]))
+            .unwrap();
 
         // Conflict at seq 3. Confirmed baseline is seq 1, state = 5.
         // Backtrack to seq 3:
         //   re-execute seq 2 (> confirmed=1 AND < backtracked=3)
         //   discard    seq 3 and 4
-        state.backtrack(&app, SeqNo::from(1u32), 5u32, SeqNo::from(3u32)).unwrap();
+        state
+            .backtrack(&app, SeqNo::from(1u32), 5u32, SeqNo::from(3u32))
+            .unwrap();
 
         assert_eq!(state.sequence_number(), SeqNo::from(2u32));
         assert_eq!(state.preemptive_state, 5 + 5); // confirmed base 5 + re-exec seq2 (+5)
@@ -786,17 +814,22 @@ mod tests {
         let app = TestApp;
         let mut state = new_state();
 
-        state.handle_preemptive_update(&app, make_batch(1, &[1])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(1, &[1]))
+            .unwrap();
         let _ = state.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
 
         // Attempt to backtrack to the confirmed seq itself — not allowed.
-        let err = state.backtrack(&app, SeqNo::from(1u32), 1u32, SeqNo::from(1u32)).unwrap_err();
+        let err = state
+            .backtrack(&app, SeqNo::from(1u32), 1u32, SeqNo::from(1u32))
+            .unwrap_err();
         assert!(
             matches!(err, BacktrackError::BacktrackToConfirmedOrBelow {
                 backtrack_seq,
                 confirmed_seq,
             } if backtrack_seq == SeqNo::from(1u32) && confirmed_seq == SeqNo::from(1u32)),
-            "expected BacktrackToConfirmedOrBelow, got {:?}", err
+            "expected BacktrackToConfirmedOrBelow, got {:?}",
+            err
         );
     }
 
@@ -816,10 +849,15 @@ mod tests {
         let app = TestApp;
         let mut state = new_state();
 
-        state.handle_preemptive_update(&app, make_batch(1, &[10])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(1, &[10]))
+            .unwrap();
 
         // Illegal: seq 1 is still pending in the queue.
-        let err = state.handle_confirmed_update(&app, make_batch(2, &[5])).err().unwrap();
+        let err = state
+            .handle_confirmed_update(&app, make_batch(2, &[5]))
+            .err()
+            .unwrap();
         assert!(
             matches!(err, ConfirmedUpdateError::PendingPreemptiveUpdates {
                 confirmed_update_seq,
@@ -828,7 +866,8 @@ mod tests {
             } if confirmed_update_seq == SeqNo::from(2u32)
               && preemptive_seq == SeqNo::from(1u32)
               && confirmed_seq == SeqNo::ZERO),
-            "unexpected error: {:?}", err
+            "unexpected error: {:?}",
+            err
         );
     }
 
@@ -839,12 +878,21 @@ mod tests {
         let app = TestApp;
         let mut state = new_state();
 
-        state.handle_preemptive_update(&app, make_batch(1, &[1])).unwrap();
-        state.handle_preemptive_update(&app, make_batch(2, &[2])).unwrap();
-        state.handle_preemptive_update(&app, make_batch(3, &[3])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(1, &[1]))
+            .unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(2, &[2]))
+            .unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(3, &[3]))
+            .unwrap();
 
         // Illegal: seq 1, 2, and 3 are all still unconfirmed.
-        let err = state.handle_confirmed_update(&app, make_batch(4, &[4])).err().unwrap();
+        let err = state
+            .handle_confirmed_update(&app, make_batch(4, &[4]))
+            .err()
+            .unwrap();
         assert!(
             matches!(err, ConfirmedUpdateError::PendingPreemptiveUpdates {
                 confirmed_update_seq,
@@ -853,7 +901,8 @@ mod tests {
             } if confirmed_update_seq == SeqNo::from(4u32)
               && preemptive_seq == SeqNo::from(3u32)
               && confirmed_seq == SeqNo::ZERO),
-            "unexpected error: {:?}", err
+            "unexpected error: {:?}",
+            err
         );
     }
 
@@ -864,14 +913,21 @@ mod tests {
         let app = TestApp;
         let mut state = new_state();
 
-        state.handle_preemptive_update(&app, make_batch(1, &[1])).unwrap();
-        state.handle_preemptive_update(&app, make_batch(2, &[2])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(1, &[1]))
+            .unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(2, &[2]))
+            .unwrap();
 
         // Confirm only seq 1 — seq 2 is still pending.
         let _ = state.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
 
         // Illegal: seq 2 is still unconfirmed.
-        let err = state.handle_confirmed_update(&app, make_batch(3, &[3])).err().unwrap();
+        let err = state
+            .handle_confirmed_update(&app, make_batch(3, &[3]))
+            .err()
+            .unwrap();
         assert!(
             matches!(err, ConfirmedUpdateError::PendingPreemptiveUpdates {
                 confirmed_update_seq,
@@ -880,7 +936,8 @@ mod tests {
             } if confirmed_update_seq == SeqNo::from(3u32)
               && preemptive_seq == SeqNo::from(2u32)
               && confirmed_seq == SeqNo::from(1u32)),
-            "unexpected error: {:?}", err
+            "unexpected error: {:?}",
+            err
         );
     }
 
@@ -894,7 +951,9 @@ mod tests {
         let app = TestApp;
         let mut state = new_state();
 
-        let replies = state.handle_confirmed_update(&app, make_batch(1, &[7])).unwrap();
+        let replies = state
+            .handle_confirmed_update(&app, make_batch(1, &[7]))
+            .unwrap();
         assert_eq!(replies.len(), 1);
         assert_eq!(state.sequence_number(), SeqNo::from(1u32));
         assert_eq!(state.current_confirmed_seq_no, SeqNo::from(1u32));
@@ -908,15 +967,21 @@ mod tests {
         let app = TestApp;
         let mut state = new_state();
 
-        state.handle_preemptive_update(&app, make_batch(1, &[10])).unwrap();
-        state.handle_preemptive_update(&app, make_batch(2, &[20])).unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(1, &[10]))
+            .unwrap();
+        state
+            .handle_preemptive_update(&app, make_batch(2, &[20]))
+            .unwrap();
 
         // Confirm both — queue is now empty.
         let _ = state.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
         let _ = state.handle_update_confirmed(SeqNo::from(2u32)).unwrap();
 
         // Legal: no pending preemptive work.
-        let replies = state.handle_confirmed_update(&app, make_batch(3, &[5])).unwrap();
+        let replies = state
+            .handle_confirmed_update(&app, make_batch(3, &[5]))
+            .unwrap();
         assert_eq!(replies.len(), 1);
         assert_eq!(state.sequence_number(), SeqNo::from(3u32));
         assert_eq!(state.current_confirmed_seq_no, SeqNo::from(3u32));
@@ -929,9 +994,15 @@ mod tests {
         let app = TestApp;
         let mut state = new_state();
 
-        let _ = state.handle_confirmed_update(&app, make_batch(1, &[3])).unwrap();
-        let _ = state.handle_confirmed_update(&app, make_batch(2, &[7])).unwrap();
-        let replies = state.handle_confirmed_update(&app, make_batch(3, &[10])).unwrap();
+        let _ = state
+            .handle_confirmed_update(&app, make_batch(1, &[3]))
+            .unwrap();
+        let _ = state
+            .handle_confirmed_update(&app, make_batch(2, &[7]))
+            .unwrap();
+        let replies = state
+            .handle_confirmed_update(&app, make_batch(3, &[10]))
+            .unwrap();
 
         assert_eq!(replies.len(), 1);
         assert_eq!(state.sequence_number(), SeqNo::from(3u32));
