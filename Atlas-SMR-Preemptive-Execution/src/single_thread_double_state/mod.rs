@@ -18,13 +18,14 @@ use atlas_smr_core::execution::executors::monolithic_state::MonStateInstallHandl
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_execution::repliers::ExecutorReplier;
 use std::sync::Arc;
-use std::time::Instant;
 
 mod comm_handles;
 mod confirmed_worker;
 mod duplicate_state;
 mod preemptive_worker;
 mod state_management;
+#[cfg(test)]
+mod tests;
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
@@ -81,7 +82,7 @@ where
     {
         let wrapped_application = Arc::new(service);
 
-        let (seq, state) = if let Some((mut state, requests)) = initial_state {
+        let state = if let Some((mut state, requests)) = initial_state {
             for request in requests {
                 wrapped_application.update(&mut state, request.clone());
             }
@@ -103,14 +104,13 @@ where
             comm_handles::initialize_shared_channels(checkpoint_tx);
 
         let confirmed_worker = confirmed_worker::init_confirmed_worker::<A, S, NT, T>(
-            (seq, state.clone()),
+            state.clone(),
             wrapped_application.clone(),
             send_node.clone(),
             confirmed_worker_shared_channels,
         );
         let preemptive_state_handle =
             preemptive_worker::initialize_preemptive_execution::<A, S, NT, T>(
-                SeqNo::ZERO,
                 state,
                 wrapped_application.clone(),
                 send_node.clone(),
@@ -225,18 +225,17 @@ where
             }
             PreemptiveExecutionRequest::UpdateBatch(update, _) => {
                 quiet_unwrap!(
-                    self.confirmed_worker
-                        .update_messages()
-                        .send(ConfirmedUpdateMessage::UpdateBatch(update, Instant::now()))
+                    self.preemptive_worker
+                        .preemptive_exec_handle()
+                        .send(PreemptiveWorkMessage::ConfirmedUpdate(update))
                 );
             }
             PreemptiveExecutionRequest::UpdateBatchAndGetAppstate(update, _) => {
-                quiet_unwrap!(self.confirmed_worker.update_messages().send(
-                    ConfirmedUpdateMessage::UpdateFinalizedAndGetAppstateBatch(
-                        update,
-                        Instant::now()
-                    )
-                ));
+                quiet_unwrap!(
+                    self.preemptive_worker
+                        .preemptive_exec_handle()
+                        .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(update))
+                );
             }
             PreemptiveExecutionRequest::PreemptiveUpdate(reqs, _time) => {
                 quiet_unwrap!(
@@ -254,9 +253,9 @@ where
             }
             PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(seq_no) => {
                 quiet_unwrap!(
-                    self.preemptive_worker
-                        .preemptive_exec_handle()
-                        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(seq_no))
+                    self.preemptive_worker.preemptive_exec_handle().send(
+                        PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(seq_no)
+                    )
                 );
 
                 // The preemptive worker will then forward this request of app state to the confirmed worker

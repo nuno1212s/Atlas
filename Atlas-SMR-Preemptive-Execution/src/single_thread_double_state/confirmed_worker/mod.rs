@@ -1,4 +1,3 @@
-use crate::metric::CONFIRMED_WORKER_LATENCY_ID;
 use crate::single_thread_double_state::RunMode;
 use crate::single_thread_double_state::comm_handles::ConfirmedWorkerSharedChannels;
 use crate::single_thread_double_state::confirmed_worker::comm_handles::{
@@ -16,7 +15,6 @@ use atlas_common::ordering::tbo_queue::vec_tbo_queue::VTboQueue;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{exhaust_and_consume, quiet_unwrap, unwrap_channel};
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
-use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::state::monolithic_state::{AppStateMessage, MonolithicState};
 use atlas_smr_core::SMRReply;
@@ -46,6 +44,11 @@ where
 {
     let (worker_handle, worker_channels) = comm_handles::initialize_handles(shared_worker_channels);
 
+    // The TBO queue must start at initial_seq + 1 so that the first incoming
+    // confirmed batch (at initial_seq + 1) lands at slot 0 and is immediately poppable.
+    let mut update_queue = VTboQueue::default();
+    update_queue.reset_with_seq(state.0.next());
+
     let worker_state = ConfirmedUpdateExecutor::<_, _, _, T> {
         application,
         send_node,
@@ -56,7 +59,7 @@ where
             .num_threads(READ_THREAD_POOL_SIZE)
             .build()
             .unwrap(),
-        update_queue: VTboQueue::default(),
+        update_queue,
         _phantom: PhantomData,
     };
 
@@ -126,16 +129,42 @@ where
     fn run_normal_mode(&mut self) -> Result<(), NoRetChannelErr> {
         self.execute_updates();
 
+        // Prioritise orchestrator commands (update_messages) over in-flight
+        // preemptive confirmations. A non-blocking check here ensures that a
+        // StateTransferAvailable is always handled before any confirmations
+        // that are already queued, preventing them from landing at wrong
+        // TBO-queue slots and being discarded by the subsequent reset.
+        if let Ok(msg) = self.confirmed_channels.update_messages().try_recv() {
+            return self.drain_update_messages(msg);
+        }
+
         sync_select! {
             recv(unwrap_channel!(self.confirmed_channels.update_messages())) -> msg =>
-            exhaust_and_consume!(msg.map_err(RecvError::from)?,
-                self.confirmed_channels.update_messages(),
-                self, handle_work_message),
+                self.drain_update_messages(msg.map_err(RecvError::from)?),
             recv(unwrap_channel!(self.confirmed_channels.incoming_preemptive_msg())) -> msg =>
             exhaust_and_consume!(msg.map_err(RecvError::from)?,
                 self.confirmed_channels.incoming_preemptive_msg(),
                 self, handle_confirmed_update),
         }
+    }
+
+    /// Processes `first` and then drains any further pending `update_messages`,
+    /// stopping as soon as the run mode changes (e.g. after `StateTransferAvailable`).
+    fn drain_update_messages(
+        &mut self,
+        first: ConfirmedUpdateMessage<Request<A, S>>,
+    ) -> Result<(), NoRetChannelErr>
+    where
+        S: Clone,
+    {
+        self.handle_work_message(first)?;
+        while matches!(self.run_mode, RunMode::Normal) {
+            match self.confirmed_channels.update_messages().try_recv() {
+                Ok(msg) => self.handle_work_message(msg)?,
+                Err(_) => break,
+            }
+        }
+        Ok(())
     }
 
     fn run_state_transfer_mode(&mut self) -> Result<(), NoRetChannelErr> {
@@ -181,23 +210,6 @@ where
         match message {
             ConfirmedUpdateMessage::CatchUp(catch_up) => {
                 self.handle_catch_up(catch_up);
-            }
-            ConfirmedUpdateMessage::UpdateBatch(update_batch, send_time) => {
-                metric_duration(CONFIRMED_WORKER_LATENCY_ID, send_time.elapsed());
-
-                if let Err(err) = self.update_queue.push(Update::Update(update_batch)) {
-                    error!("Failed to push confirmed update batch: {:?}", err);
-                }
-            }
-            ConfirmedUpdateMessage::UpdateFinalizedAndGetAppstateBatch(update_batch, send_time) => {
-                metric_duration(CONFIRMED_WORKER_LATENCY_ID, send_time.elapsed());
-
-                if let Err(err) = self
-                    .update_queue
-                    .push(Update::UpdateAndGetState(update_batch))
-                {
-                    error!("Failed to push confirmed update get state batch: {:?}", err);
-                }
             }
             ConfirmedUpdateMessage::ExecuteUnordered(unordered_batch) => {
                 self.handle_unordered_batch(unordered_batch);
@@ -250,7 +262,8 @@ where
         let StateMessage::ConfirmedStateReceived(seq, s) = message;
 
         self.confirmed_state.install_state_message(seq, s.clone());
-        self.update_queue.reset_with_seq(seq);
+        // Position queue at seq + 1 so the next batch lands at slot 0.
+        self.update_queue.reset_with_seq(seq.next());
 
         self.set_run_mode(RunMode::Normal);
 
@@ -275,8 +288,9 @@ where
             );
         }
 
+        // Advance to seq + 1 so the next confirmed batch lands at slot 0.
         self.update_queue
-            .advance_to_seq(self.confirmed_state.sequence_number())
+            .advance_to_seq(self.confirmed_state.sequence_number().next())
             .expect("Failed to advance to seq number.");
     }
 

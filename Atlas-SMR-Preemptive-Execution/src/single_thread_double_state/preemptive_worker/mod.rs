@@ -5,12 +5,13 @@ use crate::single_thread_double_state::preemptive_worker::comm_handles::{
     RequestLatestStateError,
 };
 use crate::single_thread_double_state::preemptive_worker::preemptive_requests::{
-    ExecuteUpdateError, PreemptiveState,
+    BacktrackError, ConfirmedUpdateError, ExecuteUpdateError, HandleUpdateConfirmedError,
+    PreemptiveState,
 };
-use crate::single_thread_double_state::state_management::{PreemptiveToConfirmedMsg, StateMessage};
-use atlas_common::channel::{RecvError, SendError, sync};
+use crate::single_thread_double_state::state_management::StateMessage;
+use atlas_common::channel::{NoRetChannelErr, RecvError, sync};
 use atlas_common::ordering::SeqNo;
-use atlas_common::{quiet_unwrap, unwrap_channel};
+use atlas_common::{unwrap_channel};
 use atlas_core::execution::requests::UpdateBatch;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_core::SMRReply;
@@ -69,33 +70,39 @@ where
             };
 
             if let Err(err) = result {
-                error!("Preemptive worker thread failed with error: {:?}", err);
+                error!("Preemptive worker thread failed with error: {err}");
 
                 break;
             }
         }
     }
 
-    fn preemptive_worker_normal_mode<T>(&mut self) -> Result<(), ChannelError>
+    fn preemptive_worker_normal_mode<T>(&mut self) -> Result<(), PreemptiveWorkerError>
     where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
         T: ExecutorReplier,
     {
         sync::sync_select! {
             recv(unwrap_channel!(self.preemptive_channels.work_rx())) -> msg => {
-                match msg.map_err(RecvError::from)? {
+                match msg.map_err(|e| NoRetChannelErr::from(RecvError::from(e)))? {
                     PreemptiveWorkMessage::PreemptiveUpdate(update_batch) => {
-                        self.handle_preemptive_update::<T>(update_batch);
+                        self.handle_preemptive_update::<T>(update_batch)?;
                     }
                     PreemptiveWorkMessage::PreemptiveUpdateConfirmed(seq_no) => {
-                        let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no);
+                        let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no)?;
 
                         self.preemptive_channels.send_update_confirmed(update_batch);
                     },
                     PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(seq_no) => {
-                        let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no);
+                        let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no)?;
 
                         self.preemptive_channels.send_update_confirmed_get_appstate(update_batch);
+                    }
+                    PreemptiveWorkMessage::ConfirmedUpdate(update_batch) => {
+                        self.handle_confirmed_update::<T>(update_batch, false)?;
+                    }
+                    PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(update_batch) => {
+                        self.handle_confirmed_update::<T>(update_batch, true)?;
                     }
                     PreemptiveWorkMessage::CatchUp(confirmed_batches) => {
                         self.state.handle_catch_up(&self.application, confirmed_batches);
@@ -110,20 +117,25 @@ where
         }
     }
 
-    fn handle_preemptive_update_confirmed<T>(&mut self, update_seq: SeqNo)
-    -> UpdateBatch<Request<A, S>>
+    fn handle_preemptive_update_confirmed<T>(
+        &mut self,
+        update_seq: SeqNo,
+    ) -> Result<UpdateBatch<Request<A, S>>, PreemptiveWorkerError>
     where
         T: ExecutorReplier,
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     {
-        let (update_batch, replies) = self.state.handle_update_confirmed(update_seq).into_inner();
+        let (update_batch, replies) = self.state.handle_update_confirmed(update_seq)?.into_inner();
 
         T::execution_finished::<A::AppData, NT>(self.node.clone(), Some(update_seq), replies);
 
-        update_batch
+        Ok(update_batch)
     }
 
-    fn handle_preemptive_update<T>(&mut self, update: UpdateBatch<Request<A, S>>)
+    fn handle_preemptive_update<T>(
+        &mut self,
+        update: UpdateBatch<Request<A, S>>,
+    ) -> Result<(), PreemptiveWorkerError>
     where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
         T: ExecutorReplier,
@@ -134,17 +146,26 @@ where
         {
             match err {
                 ExecuteUpdateError::Backtracking(_, batch) => {
-                    quiet_unwrap!(self.handle_backtracking_request::<T>(batch));
+                    self.handle_backtracking_request::<T>(batch)?;
                 }
-                _ => error!("Preemptive worker thread failed with error: {:?}", err),
+                ExecuteUpdateError::FutureRequest(seq, current) => {
+                    error!(
+                        "Preemptive update at seq {seq:?} is ahead of current head {current:?}; dropping"
+                    );
+                }
+                ExecuteUpdateError::ChannelErr(e) => {
+                    return Err(PreemptiveWorkerError::Channel(e));
+                }
             }
         }
+
+        Ok(())
     }
 
-    fn preemptive_worker_state_transfer_mode(&mut self) -> Result<(), ChannelError> {
+    fn preemptive_worker_state_transfer_mode(&mut self) -> Result<(), PreemptiveWorkerError> {
         sync::sync_select! {
             recv(unwrap_channel!(self.preemptive_channels.state_rx())) -> msg => {
-                match msg.map_err(RecvError::from)? {
+                match msg.map_err(|e| NoRetChannelErr::from(RecvError::from(e)))? {
                     StateMessage::ConfirmedStateReceived(seq_no, state) => {
                         self.state.install_confirmed_state(seq_no, state);
                     }
@@ -155,26 +176,58 @@ where
                 Ok(())
             },
             recv(unwrap_channel!(self.preemptive_channels.confirmed_worker_rx())) -> msg => {
-                let _message = msg.map_err(RecvError::from)?;
+                let _message = msg.map_err(|e| NoRetChannelErr::from(RecvError::from(e)))?;
 
                 todo!()
             },
         }
     }
 
+    fn handle_confirmed_update<T>(
+        &mut self,
+        update_batch: UpdateBatch<Request<A, S>>,
+        get_appstate: bool,
+    ) -> Result<(), PreemptiveWorkerError>
+    where
+        NT: ReplyNode<SMRReply<A::AppData>> + 'static,
+        T: ExecutorReplier,
+    {
+        let seq = update_batch.seq_no();
+        let batch_for_confirmed = update_batch.clone();
+
+        // Forward to the confirmed worker first so it can start executing
+        // on its authoritative state in parallel with our local execution below.
+        if get_appstate {
+            self.preemptive_channels
+                .send_update_confirmed_get_appstate(batch_for_confirmed);
+        } else {
+            self.preemptive_channels
+                .send_update_confirmed(batch_for_confirmed);
+        }
+
+        let replies = self
+            .state
+            .handle_confirmed_update(&self.application, update_batch)?;
+
+        T::execution_finished::<A::AppData, NT>(self.node.clone(), Some(seq), replies);
+
+        Ok(())
+    }
+
     fn handle_backtracking_request<T>(
         &mut self,
         update_batch: UpdateBatch<Request<A, S>>,
-    ) -> Result<(), RequestLatestStateError>
+    ) -> Result<(), PreemptiveWorkerError>
     where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
         T: ExecutorReplier,
     {
         let state = self.preemptive_channels.request_latest_confirmed_state()?;
 
-        self.state.backtrack(&self.application, state.0, state.1, update_batch.seq_no());
+        self.state
+            .backtrack(&self.application, state.0, state.1, update_batch.seq_no())?;
 
-        self.handle_preemptive_update::<T>(update_batch);
+        self.handle_preemptive_update::<T>(update_batch)?;
 
         Ok(())
     }
@@ -185,8 +238,7 @@ where
 }
 
 pub fn initialize_preemptive_execution<A, S, NT, T>(
-    state_seq: SeqNo,
-    state: S,
+    (state_seq, state): (SeqNo, S),
     application: Arc<A>,
     node: Arc<NT>,
     shared_channels: PreemptiveWorkerSharedChannels<Request<A, S>, S>,
@@ -232,9 +284,15 @@ where
 }
 
 #[derive(Debug, Error)]
-enum ChannelError {
-    #[error("Receive error: {0}")]
-    RecvError(#[from] RecvError),
-    #[error("Send error: {0}")]
-    SendError(#[from] SendError),
+enum PreemptiveWorkerError {
+    #[error("Channel error: {0}")]
+    Channel(#[from] NoRetChannelErr),
+    #[error("Confirmed update invariant violated: {0}")]
+    ConfirmedUpdate(#[from] ConfirmedUpdateError),
+    #[error("Failed to confirm preemptive update: {0}")]
+    HandleUpdateConfirmed(#[from] HandleUpdateConfirmedError),
+    #[error("Backtrack operation failed: {0}")]
+    Backtrack(#[from] BacktrackError),
+    #[error("Failed to request latest confirmed state: {0}")]
+    RequestLatestState(#[from] RequestLatestStateError),
 }
