@@ -103,12 +103,10 @@ where
         batch: UpdateBatch<RQ>,
     ) -> atlas_common::error::Result<()> {
         self.e_tx
-            .send(
-                PreemptiveExecutionRequest::UpdateBatchAndGetAppstate(
-                    batch,
-                    Instant::now(),
-                ),
-            )
+            .send(PreemptiveExecutionRequest::UpdateBatchAndGetAppstate(
+                batch,
+                Instant::now(),
+            ))
             .context("Failed to send UpdateFinalizedAndGetAppstateBatch request to executor")
     }
 }
@@ -137,9 +135,7 @@ where
         seq: SeqNo,
     ) -> atlas_common::error::Result<()> {
         self.e_tx
-            .send(PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(
-                seq,
-            ))
+            .send(PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(seq))
             .context("Failed to send UpdateFinalizedAndGetAppstate request to executor")
     }
 }

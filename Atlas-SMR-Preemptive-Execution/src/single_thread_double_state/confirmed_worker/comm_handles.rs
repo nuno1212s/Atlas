@@ -8,7 +8,6 @@ use atlas_common::maybe_vec::MaybeVec;
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_smr_application::state::monolithic_state::AppStateMessage;
 use getset::Getters;
-use std::time::Instant;
 
 const CONFIRMED_WORKER_SIZE: usize = 256;
 
@@ -106,12 +105,6 @@ impl<R, S> ConfirmedChannels<R, S> {
 pub enum ConfirmedUpdateMessage<R> {
     /// Instruct the executor to catch up to a quorum of updates.
     CatchUp(MaybeVec<UpdateBatch<R>>),
-    /// A decided, finalized update batch to be executed.
-    /// The Instant represents the time at which the update was originally queued for execution.
-    UpdateBatch(UpdateBatch<R>, Instant),
-    /// A decided, finalized update batch to be executed, and the application state to be retrieved after execution.
-    /// The Instant represents the time at which the update was originally queued for execution.
-    UpdateFinalizedAndGetAppstateBatch(UpdateBatch<R>, Instant),
     /// Execute an unordered update on the confirmed state (this will not
     /// take into account any pending preemptive updates, only updates which
     /// have been effectivized)

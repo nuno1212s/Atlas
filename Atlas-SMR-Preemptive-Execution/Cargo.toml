@@ -20,3 +20,6 @@ atlas-smr-execution = { path = "../Atlas-SMR-Execution" }
 # Reference lifetimes
 rayon = "1.9.0"
 lazy_static = "*"
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }

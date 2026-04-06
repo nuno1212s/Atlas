@@ -15,6 +15,13 @@ pub enum PreemptiveWorkMessage<R> {
     PreemptiveUpdate(UpdateBatch<R>),
     PreemptiveUpdateConfirmed(SeqNo),
     PreemptiveUpdateConfirmedAndGetAppState(SeqNo),
+    /// A directly-finalized update batch that was never preemptively executed.
+    /// The preemptive worker executes it on its state, sends replies immediately,
+    /// then forwards the batch to the confirmed worker for authoritative application.
+    ConfirmedUpdate(UpdateBatch<R>),
+    /// Like [`ConfirmedUpdate`] but also requests an app-state snapshot after
+    /// the confirmed worker has applied the batch.
+    ConfirmedUpdateAndGetAppstate(UpdateBatch<R>),
     CatchUp(MaybeVec<UpdateBatch<R>>),
     PollStateChannel,
 }
@@ -117,7 +124,6 @@ impl<R, S> Clone for PreemptiveWorkerChannels<R, S> {
 }
 
 #[derive(Error, Debug)]
-#[allow(dead_code)]
 pub(super) enum RequestLatestStateError {
     #[error("Failed to send state copy request to confirmed worker: {0}")]
     SendRequestFailed(#[from] channel::SendError),
