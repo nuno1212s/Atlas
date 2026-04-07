@@ -81,73 +81,8 @@ impl<S> ConfirmedRequestPipeline<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use atlas_common::node_id::NodeId;
     use atlas_common::ordering::SeqNo;
-    use atlas_core::execution::requests::{IncrementableUpdateBatch, UpdateBatch, UpdateInfo};
-    use atlas_smr_application::app::Application;
-    use atlas_smr_application::serialize::ApplicationData;
-
-    // ---------------------------------------------------------------------------
-    // Test fixtures (same minimal counter app as in preemptive_requests tests)
-    // ---------------------------------------------------------------------------
-
-    struct TestData;
-
-    impl ApplicationData for TestData {
-        type Request = u32;
-        type Reply = u32;
-        fn serialize_request<W>(_: W, _: &u32) -> atlas_common::error::Result<()>
-        where
-            W: std::io::Write,
-        {
-            Ok(())
-        }
-        fn deserialize_request<R>(_: R) -> atlas_common::error::Result<u32>
-        where
-            R: std::io::Read,
-        {
-            Ok(0)
-        }
-        fn serialize_reply<W>(_: W, _: &u32) -> atlas_common::error::Result<()>
-        where
-            W: std::io::Write,
-        {
-            Ok(())
-        }
-        fn deserialize_reply<R>(_: R) -> atlas_common::error::Result<u32>
-        where
-            R: std::io::Read,
-        {
-            Ok(0)
-        }
-    }
-
-    struct TestApp;
-
-    impl Application<u32> for TestApp {
-        type AppData = TestData;
-        fn initial_state() -> atlas_common::error::Result<u32> {
-            Ok(0)
-        }
-        fn unordered_execution(&self, state: &u32, _: u32) -> u32 {
-            *state
-        }
-        fn update(&self, state: &mut u32, req: u32) -> u32 {
-            *state += req;
-            *state
-        }
-    }
-
-    fn make_batch(seq: u32, ops: &[u32]) -> UpdateBatch<u32> {
-        let mut batch = UpdateBatch::new(SeqNo::from(seq));
-        for &op in ops {
-            batch.add(
-                UpdateInfo::new_session_based(NodeId::from(0u32), SeqNo::ZERO, SeqNo::from(op)),
-                op,
-            );
-        }
-        batch
-    }
+    use crate::single_thread_double_state::tests::test_fixtures::{TestApp, TestData, make_batch};
 
     // ---------------------------------------------------------------------------
     // Tests

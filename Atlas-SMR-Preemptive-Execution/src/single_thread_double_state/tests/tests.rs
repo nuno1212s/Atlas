@@ -33,54 +33,13 @@ use atlas_smr_application::state::monolithic_state::{AppStateMessage, Monolithic
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::{ReplyNode, RequestType};
 use atlas_smr_execution::repliers::FollowerReplier;
-
-use super::comm_handles::initialize_shared_channels;
-use super::confirmed_worker::comm_handles::{ConfirmedUpdateMessage, ConfirmedWorkerHandle};
-use super::confirmed_worker::init_confirmed_worker;
-use super::preemptive_worker::comm_handles::{PreemptiveWorkMessage, PreemptiveWorkerHandle};
-use super::preemptive_worker::initialize_preemptive_execution;
-use super::state_management::StateMessage;
-
-// ---------------------------------------------------------------------------
-// Fixtures shared across all worker tests
-// ---------------------------------------------------------------------------
-
-/// Minimal `ApplicationData` for the test counter application.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct TestData;
-
-impl ApplicationData for TestData {
-    type Request = u32;
-    type Reply = u32;
-
-    fn serialize_request<W>(_: W, _: &u32) -> atlas_common::error::Result<()>
-    where
-        W: std::io::Write,
-    {
-        Ok(())
-    }
-
-    fn deserialize_request<R>(_: R) -> atlas_common::error::Result<u32>
-    where
-        R: std::io::Read,
-    {
-        Ok(0)
-    }
-
-    fn serialize_reply<W>(_: W, _: &u32) -> atlas_common::error::Result<()>
-    where
-        W: std::io::Write,
-    {
-        Ok(())
-    }
-
-    fn deserialize_reply<R>(_: R) -> atlas_common::error::Result<u32>
-    where
-        R: std::io::Read,
-    {
-        Ok(0)
-    }
-}
+use crate::single_thread_double_state::comm_handles::initialize_shared_channels;
+use crate::single_thread_double_state::confirmed_worker::comm_handles::{ConfirmedUpdateMessage, ConfirmedWorkerHandle};
+use crate::single_thread_double_state::confirmed_worker::init_confirmed_worker;
+use crate::single_thread_double_state::preemptive_worker::comm_handles::{PreemptiveWorkMessage, PreemptiveWorkerHandle};
+use crate::single_thread_double_state::preemptive_worker::initialize_preemptive_execution;
+use crate::single_thread_double_state::state_management::StateMessage;
+use super::test_fixtures::{TestData, make_batch};
 
 /// Counter state. The value is the running total of all applied requests.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -169,17 +128,6 @@ impl ReplyNode<SMRReply<TestData>> for NoopNode {
     }
 }
 
-/// Build a single-request `UpdateBatch` at the given seq.
-fn make_batch(seq: u32, ops: &[u32]) -> UpdateBatch<u32> {
-    let mut batch = UpdateBatch::new(SeqNo::from(seq));
-    for &op in ops {
-        batch.add(
-            UpdateInfo::new_session_based(NodeId::from(0u32), SeqNo::ZERO, SeqNo::from(op)),
-            op,
-        );
-    }
-    batch
-}
 
 /// Timeout used for all blocking channel reads to avoid hanging tests.
 const RECV_TIMEOUT: Duration = Duration::from_secs(5);
