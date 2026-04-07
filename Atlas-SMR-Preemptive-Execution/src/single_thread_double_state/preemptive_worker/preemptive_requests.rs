@@ -366,82 +366,8 @@ impl<R> Debug for ExecuteUpdateError<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use atlas_common::node_id::NodeId;
     use atlas_common::ordering::SeqNo;
-    use atlas_core::execution::requests::{IncrementableUpdateBatch, UpdateBatch, UpdateInfo};
-    use atlas_smr_application::app::Application;
-    use atlas_smr_application::serialize::ApplicationData;
-
-    // ---------------------------------------------------------------------------
-    // Test fixtures
-    // ---------------------------------------------------------------------------
-
-    /// Minimal ApplicationData whose request/reply are both `u32`.
-    struct TestData;
-
-    impl ApplicationData for TestData {
-        type Request = u32;
-        type Reply = u32;
-
-        fn serialize_request<W>(_w: W, _r: &u32) -> atlas_common::error::Result<()>
-        where
-            W: std::io::Write,
-        {
-            Ok(())
-        }
-
-        fn deserialize_request<R>(_r: R) -> atlas_common::error::Result<u32>
-        where
-            R: std::io::Read,
-        {
-            Ok(0)
-        }
-
-        fn serialize_reply<W>(_w: W, _r: &u32) -> atlas_common::error::Result<()>
-        where
-            W: std::io::Write,
-        {
-            Ok(())
-        }
-
-        fn deserialize_reply<R>(_r: R) -> atlas_common::error::Result<u32>
-        where
-            R: std::io::Read,
-        {
-            Ok(0)
-        }
-    }
-
-    /// Simple counter application. State = running total (u32), request = value to add, reply = new total.
-    struct TestApp;
-
-    impl Application<u32> for TestApp {
-        type AppData = TestData;
-
-        fn initial_state() -> atlas_common::error::Result<u32> {
-            Ok(0)
-        }
-
-        fn unordered_execution(&self, state: &u32, _req: u32) -> u32 {
-            *state
-        }
-
-        fn update(&self, state: &mut u32, req: u32) -> u32 {
-            *state += req;
-            *state
-        }
-    }
-
-    /// Build a single-request `UpdateBatch` at `seq` carrying `ops` as individual requests.
-    fn make_batch(seq: u32, ops: &[u32]) -> UpdateBatch<u32> {
-        let mut batch = UpdateBatch::new(SeqNo::from(seq));
-        for &op in ops {
-            let info =
-                UpdateInfo::new_session_based(NodeId::from(0u32), SeqNo::ZERO, SeqNo::from(op));
-            batch.add(info, op);
-        }
-        batch
-    }
+    use crate::single_thread_double_state::tests::test_fixtures::{TestApp, TestData, make_batch};
 
     fn new_state() -> PreemptiveState<u32, TestApp> {
         PreemptiveState::new((SeqNo::ZERO, 0u32))

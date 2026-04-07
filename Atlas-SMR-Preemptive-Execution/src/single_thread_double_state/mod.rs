@@ -24,8 +24,12 @@ mod confirmed_worker;
 mod duplicate_state;
 mod preemptive_worker;
 mod state_management;
+
 #[cfg(test)]
-mod tests;
+pub mod tests {
+    pub mod test_fixtures;
+    mod tests;
+}
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
