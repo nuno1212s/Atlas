@@ -7,6 +7,7 @@ use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::UpdateBatch;
 use getset::Getters;
+use std::time::Instant;
 use thiserror::Error;
 use tracing::error;
 
@@ -78,7 +79,10 @@ impl<R, S> PreemptiveWorkerChannels<R, S> {
     pub fn send_update_confirmed(&self, update_batch: UpdateBatch<R>) {
         if let Err(err) = self
             .confirmed_worker_tx
-            .send(PreemptiveToConfirmedMsg::UpdateConfirmed(update_batch))
+            .send(PreemptiveToConfirmedMsg::UpdateConfirmed(
+                update_batch,
+                Instant::now(),
+            ))
         {
             error!("Failed to send update batch to confirmed worker: {err}");
         }
@@ -89,6 +93,7 @@ impl<R, S> PreemptiveWorkerChannels<R, S> {
             self.confirmed_worker_tx
                 .send(PreemptiveToConfirmedMsg::UpdateConfirmedEmitAppState(
                     update_batch,
+                    Instant::now(),
                 ))
         {
             error!("Failed to send update batch to confirmed worker: {err}");

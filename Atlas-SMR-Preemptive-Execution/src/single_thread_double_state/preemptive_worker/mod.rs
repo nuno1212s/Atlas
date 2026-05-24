@@ -1,3 +1,4 @@
+use crate::metric::DS_BACKTRACK_COUNT_ID;
 use crate::single_thread_double_state::RunMode;
 use crate::single_thread_double_state::comm_handles::PreemptiveWorkerSharedChannels;
 use crate::single_thread_double_state::preemptive_worker::comm_handles::{
@@ -13,6 +14,7 @@ use atlas_common::channel::{NoRetChannelErr, RecvError, sync};
 use atlas_common::ordering::SeqNo;
 use atlas_common::unwrap_channel;
 use atlas_core::execution::requests::UpdateBatch;
+use atlas_metrics::metrics::metric_increment;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::ReplyNode;
@@ -222,6 +224,7 @@ where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
         T: ExecutorReplier,
     {
+        metric_increment(DS_BACKTRACK_COUNT_ID, Some(1));
         let state = self.preemptive_channels.request_latest_confirmed_state()?;
 
         self.state

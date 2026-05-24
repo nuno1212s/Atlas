@@ -1,8 +1,11 @@
+use crate::metric::CONFIRM_EXECUTION_TIME_ID;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch, UpdateReply};
+use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Application, Reply, Request};
 use rayon::ThreadPool;
 use rayon::prelude::*;
+use std::time::Instant;
 
 pub struct ConfirmedRequestPipeline<S> {
     current_confirmed_seq_no: SeqNo,
@@ -33,7 +36,10 @@ impl<S> ConfirmedRequestPipeline<S> {
     {
         let update_seq = update_batch.seq_no();
 
+        let start = Instant::now();
         let reply_batch = application.update_batch(&mut self.confirmed_state, update_batch);
+        metric_duration(CONFIRM_EXECUTION_TIME_ID, start.elapsed());
+
         self.current_confirmed_seq_no = update_seq;
 
         reply_batch
@@ -81,8 +87,8 @@ impl<S> ConfirmedRequestPipeline<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::single_thread_double_state::tests::test_fixtures::{TestApp, make_batch};
     use atlas_common::ordering::SeqNo;
-    use crate::single_thread_double_state::tests::test_fixtures::{TestApp, TestData, make_batch};
 
     // ---------------------------------------------------------------------------
     // Tests
