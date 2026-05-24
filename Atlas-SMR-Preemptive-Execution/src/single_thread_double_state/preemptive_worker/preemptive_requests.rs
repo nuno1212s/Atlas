@@ -1,24 +1,36 @@
+use crate::metric::{
+    DS_OPS_PER_BATCH_ID, DS_PREEMPTIVE_EXECUTION_TIME_ID, DS_SPECULATION_TO_CONFIRM_LATENCY_ID,
+};
 use atlas_common::channel::NoRetChannelErr;
 use atlas_common::ordering::singular_tbo_queue::TSingleTboQueue;
 use atlas_common::ordering::singular_tbo_queue::vec_single_tbo_queue::VSingleTBOQueue;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::execution::requests::ReplyBatch;
 use atlas_core::execution::requests::UpdateBatch;
+use atlas_metrics::metrics::{metric_duration, metric_store_count};
 use atlas_smr_application::app::{Application, Reply, Request};
 use either::Either;
 use std::fmt::{Debug, Formatter};
+use std::time::Instant;
 use thiserror::Error;
 
-pub(super) struct PendingPermanentUpdate<A, S>(UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>)
+pub(super) struct PendingPermanentUpdate<A, S>
 where
-    A: Application<S>;
+    A: Application<S>,
+{
+    pub(super) batch: UpdateBatch<Request<A, S>>,
+    pub(super) replies: ReplyBatch<Reply<A, S>>,
+    /// Timestamp captured just before speculative execution, used to measure
+    /// the time from speculation to consensus confirmation.
+    pub(super) speculated_at: Instant,
+}
 
 impl<A, S> Orderable for PendingPermanentUpdate<A, S>
 where
     A: Application<S>,
 {
     fn sequence_number(&self) -> SeqNo {
-        self.0.sequence_number()
+        self.batch.sequence_number()
     }
 }
 
@@ -26,17 +38,20 @@ impl<A, S> PendingPermanentUpdate<A, S>
 where
     A: Application<S>,
 {
-    #[allow(dead_code)]
     pub fn new(
         update_batch: UpdateBatch<Request<A, S>>,
         reply_batch: ReplyBatch<Reply<A, S>>,
     ) -> Self {
-        Self(update_batch, reply_batch)
+        Self {
+            batch: update_batch,
+            replies: reply_batch,
+            speculated_at: Instant::now(),
+        }
     }
 
     #[allow(clippy::type_complexity)]
     pub fn into_inner(self) -> (UpdateBatch<Request<A, S>>, ReplyBatch<Reply<A, S>>) {
-        (self.0, self.1)
+        (self.batch, self.replies)
     }
 }
 
@@ -187,13 +202,17 @@ where
         }
 
         let pending_copy = update_batch.clone();
+        metric_store_count(DS_OPS_PER_BATCH_ID, pending_copy.len());
+
+        let exec_start = Instant::now();
         let replies = application.update_batch(&mut self.preemptive_state, update_batch);
+        metric_duration(DS_PREEMPTIVE_EXECUTION_TIME_ID, exec_start.elapsed());
 
         // Update the current state sequence number.
         self.current_state_seq_no = pending_copy.seq_no();
 
         self.pending_permanent_update
-            .push(PendingPermanentUpdate(pending_copy, replies))
+            .push(PendingPermanentUpdate::new(pending_copy, replies))
             .expect("Failed to push pending permanent update to the queue");
 
         Ok(())
@@ -262,8 +281,13 @@ where
     ) -> Result<PendingPermanentUpdate<A, S>, HandleUpdateConfirmedError> {
         // We can only confirm the next pending permanent update in order.
         if let Some(pending_permanent_update) = self.pending_permanent_update.peek() {
-            if pending_permanent_update.0.seq_no() == sequence_no {
+            if pending_permanent_update.batch.seq_no() == sequence_no {
                 let result = self.pending_permanent_update.pop().unwrap();
+
+                metric_duration(
+                    DS_SPECULATION_TO_CONFIRM_LATENCY_ID,
+                    result.speculated_at.elapsed(),
+                );
 
                 self.pending_permanent_update.advance_seq();
                 self.current_confirmed_seq_no = sequence_no;
@@ -271,7 +295,7 @@ where
                 Ok(result)
             } else {
                 Err(HandleUpdateConfirmedError::SeqMismatch {
-                    expected: pending_permanent_update.0.seq_no(),
+                    expected: pending_permanent_update.batch.seq_no(),
                     received: sequence_no,
                 })
             }
@@ -366,8 +390,8 @@ impl<R> Debug for ExecuteUpdateError<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::single_thread_double_state::tests::test_fixtures::{TestApp, make_batch};
     use atlas_common::ordering::SeqNo;
-    use crate::single_thread_double_state::tests::test_fixtures::{TestApp, TestData, make_batch};
 
     fn new_state() -> PreemptiveState<u32, TestApp> {
         PreemptiveState::new((SeqNo::ZERO, 0u32))

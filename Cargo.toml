@@ -24,7 +24,8 @@ members = [
     "Atlas-Log-Transfer",
     "Atlas-SMR-Application",
     "Atlas-View-Transfer",
-    "Atlas-SMR-Preemptive-Execution"
+    "Atlas-SMR-Preemptive-Execution",
+    "Atlas-Tools/keygen"
 ]
 
 

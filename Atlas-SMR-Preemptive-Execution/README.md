@@ -1,204 +1,295 @@
 # Atlas-SMR-Preemptive-Execution
 
-<div style="text-align:center">
-  <h1>⚡ Atlas SMR Preemptive Execution Framework</h1>
-  <p><em>Speculative, in-memory execution layer that preemptively executes requests as soon as they arrive from the ordering protocol, with commit/discard semantics driven by consensus decisions</em></p>
-
-  [![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org/)
-  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-</div>
+Speculative execution layer for the Atlas BFT/CFT SMR framework. Requests are executed *before* consensus finalizes them so that client replies can be sent earlier, hiding ordering latency. Two independent executor designs are provided, each with different memory and compute trade-offs.
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [Overview](#-overview)
-- [Key differences vs `Atlas-SMR-Execution`](#-key-differences-vs-atlas-smr-execution)
-- [Core architecture](#-core-architecture)
-- [Preemptive execution model](#-preemptive-execution-model)
-- [Execution modes](#-execution-modes)
-- [State management and semantics](#-state-management-and-semantics)
-- [Integration with Atlas-SMR-Core](#-integration-with-atlas-smr-core)
-- [Configuration and metrics](#-configuration-and-metrics)
-- [Usage guide](#-usage-guide)
-- [Recovery, rollback and catch-up](#-recovery-rollback-and-catch-up)
-- [Design principles](#-design-principles)
+- [Why preemptive execution?](#why-preemptive-execution)
+- [Shared message protocol](#shared-message-protocol)
+- [Executor 1: Dual-State](#executor-1-dual-state)
+- [Executor 2: CRUD Cache](#executor-2-crud-cache)
+- [Choosing between the two](#choosing-between-the-two)
+- [Metrics](#metrics)
+- [Testing](#testing)
 
-## 🧭 Overview
+---
 
-`Atlas-SMR-Preemptive-Execution` is an execution layer designed to reduce end-to-end latency by speculatively executing requests as soon as they are produced by the ordering protocol. Unlike the standard execution module, preemptive execution begins work in memory before the ordering protocol finalizes decisions. Later, when decisions are delivered (accept/commit or fail/abort), speculative results are either committed to durable state or discarded and rolled back.
+## Why preemptive execution?
 
-This README documents the model, integration points, expected APIs and considerations for moving from a single-threaded speculative executor to a parallel speculative executor in the future.
-
-## 🔀 Key differences vs `Atlas-SMR-Execution`
-
-- Preemptive execution: begin executing incoming ordered requests immediately, without waiting for final consensus decisions.
-- Speculative in-memory state: speculative changes are kept isolated from the committed state until decisions arrive.
-- Decision-driven commit/discard: results are committed when the ordering decides; otherwise discarded and the executor restarts from the last committed snapshot.
-- Execution modes: initial implementation targets single-threaded deterministic execution; an extensible API allows eventual parallel speculative execution.
-- Strong emphasis on rollback, isolation and deterministic commit semantics.
-
-## 🏗️ Core architecture
+In a conventional SMR replica the execution pipeline is:
 
 ```
-Ordering Protocol (pre-decision) → Atlas-SMR-Preemptive-Execution → Application State (committed)
-               ↕                                   ↕
-        Decision Notifications               Commit / Discard
+Client request → Ordering protocol → Execute → Reply to client
 ```
 
-- Pre-decision requests arrive from the ordering layer and are executed speculatively in-memory.
-- Each speculative execution is associated with a sequence identifier (e.g., proposal id / seq no / view).
-- A decision stream reconciles speculative work: accepted proposals are committed in order; rejected ones are discarded.
-- The executor exposes handles to submit preemptive requests and to notify decisions.
+The time the ordering protocol takes (consensus rounds, network RTTs) sits directly on the critical path of client-visible latency. Preemptive execution breaks this dependency by beginning execution as soon as a request is *proposed*, before consensus has finished:
 
-## ⚙️ Preemptive execution model
-
-Principles:
-
-- Speculative execution: execute as soon as requests are available to mask ordering latency.
-- Versioned speculation: speculative writes are tagged with proposal identifiers and ordered positions.
-- Commit semantics: when a decision for a proposal is accepted, apply the speculative writes (in sequence) to the committed state.
-- Discard semantics: when a decision fails, drop the speculative writes and roll back to last committed snapshot, optionally re-executing dependent requests.
-- Isolation: speculative changes are not visible to the committed state until they are committed.
-
-Example conceptual types and API (illustrative):
-
-```rust
-pub enum Decision {
-    Commit,
-    Abort,
-}
-
-pub struct SpeculativeResult {
-    proposal_id: ProposalId,
-    seq_no: SeqNo,
-    writes: HashMap<String, Vec<u8>>, // conceptual
-}
-
-pub enum PreemptiveExecutionRequest<O> {
-    PreemptiveExecute((O, ProposalId)), // run immediately in speculative memory
-    Decision(ProposalId, Decision),     // commit or discard the proposal
-    ReadCommittedState(NodeId),         // read-only from committed state
-    InstallState(MaybeState),           // state transfer for recovery
-}
+```
+Client request → Ordering protocol → Finalize (commit/abort)
+                        ↓                    ↓
+                 Execute speculatively   Commit replies  ←── much earlier
+                 (on proposed order)    or discard
 ```
 
-Notes:
-- The internal representation of writes will be application/state-specific (CRUD maps, monolithic snapshots, divisible parts, etc.).
-- The executor must preserve deterministic ordering when applying commits.
+If the speculation turns out to be correct (the proposed order matches the final order) the client reply is ready the instant consensus completes. If speculation was wrong (a backtrack occurs) the speculative work is discarded and re-executed on the correct order.
 
-## 🧩 Execution modes
+---
 
-1. Single-threaded (initial)
-   - Deterministic speculative execution with straightforward checkpoint/rollback.
-   - Good for correctness-first and easier reasoning about deterministic replay.
+## Shared message protocol
 
-2. Parallel / Scalable (planned)
-   - Speculative parallel execution with collision detection and dependency tracking.
-   - Requires application state to implement concurrent-friendly traits (e.g., `CRUDState`, `ScalableApp`).
-   - Adds complexity: conflict detection, rollback of partially-applied speculative writes, and deterministic commit ordering.
+Both executors receive the same `PreemptiveExecutionRequest<O>` message type via a `PreemptiveExecutorHandle<O>`. The handle implements three traits from `atlas-smr-application`:
 
-The module API is designed so single-threaded and parallel executors share common message types and commit/discard semantics.
+| Trait | Methods | Purpose |
+|---|---|---|
+| `TExecutionHandle` | `poll_state_channel`, `catch_up_to_quorum`, `queue_unordered` | State transfer, catch-up, read-only queries |
+| `TDeterministicExecutionHandle` | `queue_update`, `queue_update_and_get_appstate` | Directly-confirmed updates (no prior speculation) |
+| `TPreemptiveExecutionHandle` | `queue_preemptive_update`, `queue_update_finalized`, `queue_update_finalized_and_get_appstate` | Speculative updates and their finalization |
 
-## 🗂️ State management and semantics
+### Request variants
 
-- Speculative layer(s): keep an in-memory layer per outstanding proposal or per execution window.
-- Committed state: durable state representing the last agreed-on sequence of commits.
-- Checkpoints: the executor should support creating/installing checkpoints for recovery.
+| Variant | Meaning |
+|---|---|
+| `PreemptiveUpdate(batch)` | Execute speculatively; store replies until confirmation |
+| `PreemptiveUpdateFinalized(seq)` | Confirm the pending update at `seq`; send pre-computed replies |
+| `PreemptiveUpdateFinalizedAndGetAppstate(seq)` | Same as above, also emit a confirmed-state checkpoint |
+| `UpdateBatch(batch)` | Execute directly on confirmed state (no prior speculation for this seq) |
+| `UpdateBatchAndGetAppstate(batch)` | Same, also emit checkpoint |
+| `CatchUp(batches)` | Apply multiple batches directly; discards all pending speculation |
+| `PollStateChannel` | Switch to state-transfer mode; next message installs a new state snapshot |
+| `ExecuteUnordered(batch)` | Read-only execution on confirmed state via a rayon thread pool |
 
-Commit path:
-- Receive Decision(Commit, proposal_id) for proposals in order
-- Apply speculative writes associated with that proposal to the committed state
-- Advance last-committed marker and free speculative memory
+Checkpoints (`AppStateMessage<S>`) are received on a separate channel returned by the executor's `init` function (`MonStateInstallHandle<S>`). The same handle carries the state-install sender used during state transfer.
 
-Discard path:
-- Receive Decision(Abort, proposal_id)
-- Drop speculative writes associated with that proposal
-- If other speculative work depended on discarded writes, either drop/re-execute those units or trigger deterministic re-execution from last commit
+---
 
-API expectations:
-- For parallel mode, application state should implement `CRUDState` and be `Send + Sync`.
-- For single-threaded mode, applications can use `MonolithicState` or `DivisibleState` interfaces used by the rest of Atlas.
+## Executor 1: Dual-State
 
-## 🔗 Integration with Atlas-SMR-Core
+**Source:** `src/single_thread_double_state/`
 
-The executor is intended to plug into Atlas-SMR-Core similarly to `Atlas-SMR-Execution`, but with additional message types to handle preemptive execution and decision reconciliation.
+**Selector:** `MonolithicPreemptiveExecutor` in `src/lib.rs`
 
-Integration points:
-- Work submission: a channel/handle for preemptive execution requests produced by the ordering protocol.
-- Decision notifications: a decision channel that informs the executor which proposals to commit or discard.
-- State transfer: the same state-install/install-checkpoint APIs used by other executors for recovery.
-- Executor handle should provide methods like:
-  - `submit_preemptive(request: O, proposal_id: ProposalId)`
-  - `notify_decision(proposal_id: ProposalId, decision: Decision)`
-  - `read_committed()` / `install_state()`
+**Trait requirements:** `S: MonolithicState`, `A: Application<S>`
 
-Example processing pipeline (conceptual):
+### Design
 
-```text
-Ordering -> submit_preemptive -> speculative execute -> buffer speculative results
-Decision -> notify_decision -> commit/discard -> update committed state
+Maintains two full copies of the application state: a *preemptive* (speculative) copy and a *confirmed* (authoritative) copy. Two dedicated worker threads operate on them in parallel.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Orchestrator thread                                      │
+│  Receives PreemptiveExecutionRequest, routes messages     │
+└──────────────┬──────────────────────────┬────────────────┘
+               │                          │
+               ▼                          ▼
+┌──────────────────────────┐  ┌──────────────────────────┐
+│  Preemptive Worker       │  │  Confirmed Worker        │
+│  state: preemptive_state │  │  state: confirmed_state  │
+│  queue: VSingleTBOQueue  │  │  re-executes each batch  │
+│  (batch, replies) pairs  │  │  sends replies to client │
+└──────────────────────────┘  └──────────────────────────┘
+         │  PreemptiveToConfirmedMsg (finalized batch)
+         └──────────────────────────────────────────►
+                                  confirmed_worker re-runs it
 ```
 
-Concurrency model:
-- For single-threaded start, channels and a dedicated thread/process perform speculative execution and decision reconciliation.
-- For parallel mode, a thread-pool or task scheduler will perform speculative units and coordinate access to speculative layers.
+### Operation
 
-## 📊 Configuration and metrics
+**Preemptive update at seq N:**
+1. Execute on `preemptive_state`; store `(batch, replies)` in the TBO queue.
+2. Advance `preemptive_seq_no`.
 
-Suggested configuration knobs (mirroring the Execution module where applicable):
-- BUFFER_SIZES: sizes for preemptive request queues and state channels
-- THREAD_POOL_THREADS: number of threads used by the parallel executor (when enabled)
-- SPECULATIVE_WINDOW_SIZE: number of outstanding speculative proposals allowed
+**Finalization at seq N:**
+1. Pop the entry from the TBO queue.
+2. Forward the batch to the confirmed worker via `PreemptiveToConfirmedMsg`.
+3. The confirmed worker **re-executes** the batch on `confirmed_state` and sends replies to clients.
 
-Metrics to capture:
-- speculative_execution_latency: time to run speculative execution
-- time_to_commit_after_decision: time between decision arrival and commit application
-- speculative_discards_count: how often speculative results are discarded
-- rollback_duration: time cost to rollback discarded speculation
-- speculative_ops_per_second: throughput of speculative execution
+**Backtrack:**
+1. Drain the TBO queue.
+2. Request a state snapshot from the confirmed worker.
+3. Replace `preemptive_state` with the snapshot; discard all pending speculative work.
 
-Instrumentation points:
-- start and end of speculative execution
-- decision arrival and commit completion
-- discard and rollback events
+### Trade-offs
 
-## 🚀 Usage guide
+- Requires two full state copies — 2× memory usage.
+- The confirmed worker re-executes every batch — 2× CPU for ordered execution.
+- Backtracking requires a full state clone from the confirmed worker.
+- Does not require any special state interface (`CRUDState`).
 
-When to use preemptive execution:
-- Use when ordering latency is a meaningful fraction of end-to-end latency and speculation can mask that latency.
-- Start with single-threaded preemptive execution for safety and easier correctness proofs.
+### Key files
 
-How to adopt:
-1. Implement or reuse existing `Application<S>` and state traits (Monolithic/Divisible/CRUDState) required by the executor flavor.
-2. Wire the ordering protocol to call `submit_preemptive` as proposals are formed.
-3. Ensure the core calls `notify_decision` for proposals when decisions arrive.
-4. Monitor speculative discard rates and rollback costs; tune `SPECULATIVE_WINDOW_SIZE` accordingly.
+| File | Purpose |
+|---|---|
+| `mod.rs` | Orchestrator: routes requests to the appropriate worker |
+| `preemptive_worker/preemptive_requests.rs` | `PreemptiveRequestPipeline` — TBO queue, speculative execution |
+| `preemptive_worker/mod.rs` | Preemptive worker event loop |
+| `confirmed_worker/confirmed_requests.rs` | `ConfirmedRequestPipeline` — confirmed state, re-execution |
+| `confirmed_worker/mod.rs` | Confirmed worker event loop |
+| `state_management.rs` | Inter-worker message types (state snapshot request/response) |
+| `comm_handles.rs` | Shared channel type aliases |
 
-Best practices:
-- Keep speculative writes isolated and lightweight to reduce rollback cost.
-- Avoid exposing uncommitted speculative state to external reads unless the application semantics permit it.
-- Provide deterministic replay paths so that re-execution after discard is straightforward.
+---
 
-## 🔧 Recovery, rollback and catch-up
+## Executor 2: CRUD Cache
 
-Startup/Recovery:
-- Install the last committed checkpoint before accepting new speculative work.
-- Any outstanding speculative proposals from before a crash must be reconciled with decisions (commit/discard) provided by the ordering/consensus protocol.
+**Source:** `src/single_threaded_crud/`
 
-Rollback strategy:
-- Drop the speculative layer(s) that correspond to aborted proposals.
-- Re-execute dependent proposals if they were affected by discarded writes.
-- Optionally, keep a fast re-execution cache to speed up replay of common requests.
+**Selector:** `CRUDMonolithicPreemptiveExecutor` in `src/lib.rs`
 
-Catch-up:
-- Use existing `CatchUp` / `InstallState` flows from Atlas-SMR-Core to synchronize committed state across replicas.
-- After installing a checkpoint, the executor should replay or discard pending speculation according to the authoritative decision log.
+**Trait requirements:** `S: MonolithicState + CRUDState + Sync`, `A: CRUDApplication<S>`
 
-## 🎯 Design principles
+### Design
 
-1. Latency-first: reduce perceived latency by safe speculation.
-2. Determinism: commit/discard semantics must preserve deterministic state across replicas.
-3. Isolation: never allow speculative writes to corrupt committed state before commit.
-4. Extensibility: the API should allow plugging in single-threaded and parallel implementations without changing the core contract.
-5. Observability: track speculation success/failure and rollback costs to steer configuration.
+Maintains a **single confirmed state** plus an in-memory **accumulated cache** of pending speculative writes. A single worker thread handles all requests sequentially.
+
+```
+Confirmed state  ←── only written on confirmation
+      │
+      │  read fallback
+      ▼
+Accumulated cache  ←── merge of all pending deltas (latest write wins per key)
+      │
+      │  read fallback
+      ▼
+Per-update local delta  ←── writes from the current speculatively executing batch
+```
+
+Each preemptive update executes through a `CachingState<'a, S>` proxy that implements `CRUDState`:
+
+- **Reads:** check local delta first, then the accumulated cache, then the real state.
+- **Writes:** go into the local delta only.
+- **Deletes:** stored as `None` tombstones in the delta so subsequent reads see the key as absent.
+
+On confirmation: apply the pre-computed delta to the real state, rebuild the accumulated cache from the remaining pending deltas, send the pre-computed replies. **No re-execution.**
+
+On backtrack: discard pending entries at or after the backtrack seq, rebuild the accumulated cache from the kept entries, reset `preemptive_seq_no`. **No state clone.**
+
+### Operation
+
+**Preemptive update at seq N** (`handle_preemptive_update`):
+1. Validate `seq == preemptive_seq_no + 1`; return `Backtracking` error if behind, `FutureRequest` if more than one ahead.
+2. Create `CachingState { confirmed_state, accumulated_cache, delta: empty }`.
+3. Execute all ops via `application.speculatively_execute(&mut caching_state, op)` and collect replies.
+4. Merge the local delta into the accumulated cache.
+5. Push `PendingCachedUpdate { batch, replies, delta }` onto the pending queue.
+
+**Confirmation at seq N** (`handle_update_confirmed`):
+1. Pop the head entry (must match `seq`).
+2. Apply its delta to `confirmed_state` (writes → `update`, tombstones → `delete`).
+3. Rebuild the accumulated cache from the remaining pending deltas.
+4. Return the pre-computed replies.
+
+**Backtrack to seq B** (`backtrack`):
+1. Retain only pending entries with `seq < B`; discard the rest.
+2. Rebuild the accumulated cache from the kept deltas.
+3. Reset `preemptive_seq_no` to the last kept entry's seq (or `confirmed_seq_no` if none).
+
+**Direct confirmed update** (`handle_confirmed_update`):
+- Requires `preemptive_seq_no == confirmed_seq_no` (no pending speculation).
+- Executes directly on `confirmed_state` via `application.update_batch`.
+
+**CatchUp** (`handle_catch_up`):
+- Clears the pending queue and the accumulated cache.
+- Applies each batch directly to `confirmed_state` and advances both seq counters.
+
+**State transfer** (`install_confirmed_state`):
+- Replaces the confirmed state.
+- Resets both seq counters; clears cache and pending queue.
+
+### Key files
+
+| File | Purpose |
+|---|---|
+| `mod.rs` | `CachingPreemptiveWorker` — single worker event loop; routes `PreemptiveExecutionRequest` variants |
+| `caching_state.rs` | `CachingState<'a, S>` implementing `CRUDState` with layered read priority and tombstone semantics; `AccumulatedCache` type; `merge_delta_into`, `apply_delta_to_state`, `rebuild_accumulated_cache` helpers |
+| `pending_state.rs` | `CachingPreemptiveState<S, A>` — core state machine; `PendingCachedUpdate`; `PreemptiveError`, `ConfirmError`, `BacktrackError` |
+| `tests/test_fixtures.rs` | Shared test helpers: `MapState`, `MapApp`, `NoopNode`, `make_batch`, `spawn_worker` |
+| `tests/unit_tests.rs` | Unit tests for `CachingPreemptiveState` — no channels, no threads |
+| `tests/integration_tests.rs` | End-to-end tests via `PreemptiveExecutorHandle` + checkpoint receiver |
+
+### Trade-offs
+
+- Requires only one state copy — half the memory of the dual-state design.
+- Confirmation is O(delta size), not O(batch size) — no re-execution.
+- Backtracking is O(pending × delta size) for the cache rebuild — no state clone.
+- Requires `S: CRUDState + Sync` and `A: CRUDApplication<S>`.
+- Single-threaded: no parallelism between preemptive and confirmed processing.
+
+---
+
+## Choosing between the two
+
+| Factor | Dual-State | CRUD Cache |
+|---|---|---|
+| Application trait | `Application<S>` only | `CRUDApplication<S>` + `CRUDState` |
+| Memory overhead | 2× full state copies | 1× state + delta cache |
+| Confirmation cost | Full re-execution | Apply pre-computed delta |
+| Backtrack cost | Clone full confirmed state | Discard deltas, rebuild cache |
+| Thread count | 3 (orchestrator + 2 workers) | 1 worker |
+| Reply semantics | Sent from confirmed worker | Sent on confirmation by single worker |
+
+**Use the dual-state executor** when the application state does not implement `CRUDState` or when you need the simplest possible correctness story.
+
+**Use the CRUD cache executor** when memory footprint and re-execution overhead matter, and the application can express its state via the key-value CRUD interface.
+
+---
+
+## Metrics
+
+All metrics are registered via `src/metric.rs` and emitted using `atlas-metrics`. Both executors are mutually exclusive alternatives, so their ID ranges may overlap in the same ID space without conflict.
+
+### Dual-state executor metrics (800–807)
+
+| ID | Name | Kind | Wired in | Description |
+|---|---|---|---|---|
+| 800 | `CONFIRMED_WORKER_LATENCY` | Duration | `confirmed_worker/mod.rs` | Time from batch arrival at the confirmed worker to actual execution |
+| 801 | `CONFIRM_EXECUTION_TIME` | Duration | `confirmed_requests.rs` | Time for the confirmed worker to re-execute a batch on the authoritative state |
+| 804 | `DS_PREEMPTIVE_EXECUTION_TIME` | Duration | `preemptive_requests.rs` | Time for the preemptive worker to speculatively execute a batch |
+| 805 | `DS_SPECULATION_TO_CONFIRM_LATENCY` | Duration | `preemptive_requests.rs` | Time from speculative execution to consensus confirmation |
+| 806 | `DS_BACKTRACK_COUNT` | Counter | `preemptive_worker/mod.rs` | Total number of backtrack events |
+| 807 | `DS_OPS_PER_BATCH` | Count | `preemptive_requests.rs` | Number of operations per speculatively executed batch |
+
+### CRUD cache executor metrics (802–803, 809–816)
+
+| ID | Name | Kind | Wired in | Description |
+|---|---|---|---|---|
+| 802 | `CACHE_PREEMPTIVE_EXECUTION_TIME` | Duration | `pending_state.rs` | Time to speculatively execute a batch through `CachingState` |
+| 803 | `CACHE_CONFIRM_APPLICATION_TIME` | Duration | `pending_state.rs` | Time to apply a pre-computed delta to the confirmed state |
+| 809 | `CACHE_SPECULATION_TO_CONFIRM_LATENCY` | Duration | `pending_state.rs` | Time from speculative execution to consensus confirmation |
+| 810 | `CACHE_PENDING_QUEUE_SIZE` | Count | `pending_state.rs` | Number of pending updates at the time a confirmation arrives |
+| 811 | `CACHE_BACKTRACK_COUNT` | Counter | `pending_state.rs` | Total number of backtrack events |
+| 812 | `CACHE_DELTA_SIZE` | Count | `pending_state.rs` | Number of K/V entries in the confirmed delta applied per batch |
+| 813 | `CACHE_OPS_PER_BATCH` | Count | `pending_state.rs` | Number of operations per speculatively executed batch |
+| 814 | `CACHE_UNORDERED_EXECUTION_TIME` | Duration | `mod.rs` | Time for unordered (read-only) rayon thread-pool execution |
+| 815 | `CACHE_REBUILD_TIME` | Duration | `pending_state.rs` | Time to rebuild the accumulated cache after a confirmation or backtrack |
+| 816 | `CACHE_ENQUEUE_TO_EXECUTE_LATENCY` | Duration | `mod.rs` | Time from when a preemptive update was enqueued to when execution starts |
+
+---
+
+## Testing
+
+Tests for both executors live alongside their source code under `tests/` subdirectories.
+
+### Dual-state tests (`src/single_thread_double_state/tests/`)
+
+- `test_fixtures.rs` — Shared counter application and `make_batch` helper.
+- `tests.rs` — Integration tests that spawn both workers via channels and observe emitted `AppStateMessage` checkpoints. Covers normal path, backtracking, state transfer, catch-up, and convergence between preemptive and direct execution paths.
+
+Unit tests for the internal state machines live inline in `confirmed_requests.rs` and `preemptive_requests.rs`.
+
+### CRUD cache tests (`src/single_threaded_crud/tests/`)
+
+- `test_fixtures.rs` — `MapState` (HashMap-backed `CRUDState` + `MonolithicState`), `MapApp`, `NoopNode`, `make_batch`, `spawn_worker`.
+- `unit_tests.rs` — Tests for `CachingPreemptiveState` in isolation (no channels, no threads). Covers preemptive accumulation, confirmation, tombstone semantics, backtracking, catch-up, and state install.
+- `integration_tests.rs` — End-to-end tests via `PreemptiveExecutorHandle` + checkpoint receiver. Covers:
+  - Basic preemptive → finalize
+  - Multiple updates in order
+  - Direct confirmed updates
+  - Tombstone delete reaching confirmed state
+  - CatchUp discarding speculative work
+  - State transfer + resume
+  - Future-seq requests being silently dropped
+  - Backtrack correcting speculative state
+  - Backtrack followed by continued execution
+  - Convergence invariant: preemptive path and direct path must produce identical confirmed state
