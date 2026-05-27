@@ -1,14 +1,12 @@
 #![allow(dead_code)]
 
 use crate::exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle};
-use crate::metric::{CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID, CACHE_UNORDERED_EXECUTION_TIME_ID};
-use crate::single_threaded_crud::pending_state::{CachingPreemptiveState, PreemptiveError};
+use crate::scalable_crud::pending_state::{PreemptiveError, ScalableCachingPreemptiveState};
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::quiet_unwrap;
 use atlas_core::execution::requests::{ReplyBatch, UpdateBatch, UpdateReply};
-use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Reply, Request};
 use atlas_smr_application::state::monolithic_state::{
     AppStateMessage, InstallStateMessage, MonolithicState,
@@ -23,8 +21,8 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 use tracing::error;
 
-pub(crate) mod caching_state;
-pub(crate) mod pending_state;
+mod execution_unit;
+mod pending_state;
 
 #[cfg(test)]
 pub mod tests {
@@ -35,6 +33,9 @@ pub mod tests {
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
+/// Thread pool size for the parallel speculative execution phase.
+const PARALLEL_EXEC_THREAD_POOL_SIZE: usize = 4;
+/// Thread pool size for parallel unordered (read-only) execution.
 const READ_THREAD_POOL_SIZE: usize = 4;
 
 enum RunMode {
@@ -48,12 +49,13 @@ enum RunMode {
 
 pub fn init_handle<A, S>() -> PreemptiveExecutorHandle<Request<A, S>>
 where
-    S: MonolithicState + CRUDState,
-    A: CRUDApplication<S>,
+    S: MonolithicState + CRUDState + Sync,
+    A: CRUDApplication<S> + Sync,
+    Request<A, S>: Clone,
 {
     let (tx, rx) = channel::sync::new_bounded_sync(
         EXECUTING_BUFFER,
-        Some("CRUD Preemptive Executor Work Channel"),
+        Some("Scalable CRUD Preemptive Executor Work Channel"),
     );
     PreemptiveExecutorHandle::new(tx, rx)
 }
@@ -69,6 +71,7 @@ where
     S: MonolithicState + CRUDState + Clone + Sync + Send + 'static,
     NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     T: ExecutorReplier + 'static,
+    Request<A, S>: Clone,
 {
     let application = Arc::new(service);
 
@@ -81,17 +84,21 @@ where
         (SeqNo::ZERO, A::initial_state()?)
     };
 
+    let exec_thread_pool = ThreadPoolBuilder::new()
+        .num_threads(PARALLEL_EXEC_THREAD_POOL_SIZE)
+        .build()?;
+
     let (state_tx, state_rx) = channel::sync::new_bounded_sync(
         STATE_BUFFER,
-        Some("CRUD Preemptive Executor Install State Channel"),
+        Some("Scalable CRUD Preemptive Executor Install State Channel"),
     );
     let (checkpoint_tx, checkpoint_rx) = channel::sync::new_bounded_sync(
         STATE_BUFFER,
-        Some("CRUD Preemptive Executor App State Channel"),
+        Some("Scalable CRUD Preemptive Executor App State Channel"),
     );
 
-    let worker = CachingPreemptiveWorker {
-        state: CachingPreemptiveState::new(initial),
+    let worker = ScalableCachingPreemptiveWorker {
+        state: ScalableCachingPreemptiveState::new(initial, exec_thread_pool),
         application,
         node: send_node,
         work_rx: handle,
@@ -112,12 +119,12 @@ where
 // Worker internals
 // ---------------------------------------------------------------------------
 
-struct CachingPreemptiveWorker<S, A, NT>
+struct ScalableCachingPreemptiveWorker<S, A, NT>
 where
     A: CRUDApplication<S>,
     S: CRUDState + Sync,
 {
-    state: CachingPreemptiveState<S, A>,
+    state: ScalableCachingPreemptiveState<S, A>,
     application: Arc<A>,
     node: Arc<NT>,
     work_rx: ChannelSyncRx<PreemptiveExecutionRequest<Request<A, S>>>,
@@ -132,22 +139,23 @@ enum WorkerError {
     ChannelClosed,
 }
 
-impl<S, A, NT> CachingPreemptiveWorker<S, A, NT>
+impl<S, A, NT> ScalableCachingPreemptiveWorker<S, A, NT>
 where
-    A: CRUDApplication<S> + Send + 'static,
+    A: CRUDApplication<S> + Send + Sync + 'static,
     S: CRUDState + MonolithicState + Clone + Sync + Send + 'static,
     NT: ReplyNode<SMRReply<A::AppData>> + 'static,
+    Request<A, S>: Clone,
 {
     fn spawn<T>(mut self)
     where
         T: ExecutorReplier + 'static,
     {
         std::thread::Builder::new()
-            .name("Caching Preemptive Worker".to_string())
+            .name("Scalable Caching Preemptive Worker".to_string())
             .spawn(move || {
                 self.worker_loop::<T>();
             })
-            .expect("Failed to spawn caching preemptive worker thread");
+            .expect("Failed to spawn scalable caching preemptive worker thread");
     }
 
     fn worker_loop<T>(&mut self)
@@ -161,7 +169,7 @@ where
             };
 
             if let Err(err) = result {
-                error!("Caching preemptive worker terminated: {:?}", err);
+                error!("Scalable caching preemptive worker terminated: {:?}", err);
                 break;
             }
         }
@@ -236,8 +244,7 @@ where
                 }
             }
 
-            PreemptiveExecutionRequest::PreemptiveUpdate(batch, instant) => {
-                metric_duration(CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID, instant.elapsed());
+            PreemptiveExecutionRequest::PreemptiveUpdate(batch, _instant) => {
                 self.handle_preemptive_update(batch);
             }
 
@@ -269,11 +276,8 @@ where
             }
 
             PreemptiveExecutionRequest::ExecuteUnordered(unordered_batch) => {
-                // Cloning the Arc releases the borrow on self.application so the compiler
-                // can separately borrow self.state and self.read_thread_pool.
                 let application = self.application.clone();
                 let state: &S = self.state.confirmed_state();
-                let exec_start = std::time::Instant::now();
                 let replies: ReplyBatch<Reply<A, S>> = {
                     let pool: &ThreadPool = &self.read_thread_pool;
                     pool.install(|| {
@@ -289,13 +293,11 @@ where
                             .into()
                     })
                 };
-                metric_duration(CACHE_UNORDERED_EXECUTION_TIME_ID, exec_start.elapsed());
                 T::execution_finished::<A::AppData, NT>(self.node.clone(), None, replies);
             }
         }
     }
 
-    /// Run a preemptive update, automatically backtracking if the seq has fallen behind.
     fn handle_preemptive_update(&mut self, batch: UpdateBatch<Request<A, S>>) {
         match self
             .state

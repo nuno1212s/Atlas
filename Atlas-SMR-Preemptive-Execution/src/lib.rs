@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 mod exec_handle;
 pub mod metric;
+mod scalable_crud;
 mod single_thread_double_state;
 mod single_threaded_crud;
 
@@ -48,6 +49,52 @@ where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     {
         PreemptiveDuplicateStateMonolithicExecutor::<S, A, NT>::init::<ReplicaReplier>(
+            handle.get_request_receiver().clone(),
+            initial_state,
+            service,
+            send_node,
+        )
+    }
+}
+
+/// Scalable cache-based preemptive executor.
+///
+/// Combines the cross-batch accumulated cache of `CRUDMonolithicPreemptiveExecutor` with
+/// within-batch parallelism: requests in the same batch execute in parallel via a rayon thread
+/// pool, then colliding operations are re-executed sequentially in batch order.
+///
+/// Requires `S: CRUDState + Sync` and `A: CRUDApplication<S> + Sync`.
+pub struct ScalableCRUDMonolithicPreemptiveExecutor;
+
+impl<A, S> TExecutor<A, S> for ScalableCRUDMonolithicPreemptiveExecutor
+where
+    S: MonolithicState + CRUDState + Sync,
+    A: CRUDApplication<S> + Sync,
+    Request<A, S>: Clone,
+{
+    type ExecutionHandle = PreemptiveExecutorHandle<Request<A, S>>;
+
+    fn init_handle() -> Self::ExecutionHandle {
+        scalable_crud::init_handle::<A, S>()
+    }
+}
+
+impl<A, S, NT> TMonolithicStateExecutor<A, S, NT> for ScalableCRUDMonolithicPreemptiveExecutor
+where
+    S: MonolithicState + CRUDState + Clone + Sync + Send + 'static,
+    A: CRUDApplication<S> + Send + Sync + Clone + 'static,
+    Request<A, S>: Clone,
+{
+    fn init(
+        handle: Self::ExecutionHandle,
+        initial_state: Option<(S, Vec<Request<A, S>>)>,
+        service: A,
+        send_node: Arc<NT>,
+    ) -> atlas_common::error::Result<MonStateInstallHandle<S>>
+    where
+        NT: ReplyNode<SMRReply<A::AppData>> + 'static,
+    {
+        scalable_crud::init_executor::<A, S, NT, ReplicaReplier>(
             handle.get_request_receiver().clone(),
             initial_state,
             service,

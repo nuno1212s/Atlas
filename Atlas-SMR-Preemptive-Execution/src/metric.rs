@@ -73,6 +73,18 @@ pub const CACHE_REBUILD_TIME_ID: usize = 815;
 pub const CACHE_ENQUEUE_TO_EXECUTE_LATENCY: &str = "CACHE_ENQUEUE_TO_EXECUTE_LATENCY";
 pub const CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID: usize = 816;
 
+// ---------------------------------------------------------------------------
+// Scalable CRUD executor metrics (817-818)
+// ---------------------------------------------------------------------------
+
+/// Total wall-clock time for one parallel+collision+reexec cycle in the scalable CRUD executor.
+pub const SCALABLE_PREEMPTIVE_EXECUTION_TIME: &str = "SCALABLE_PREEMPTIVE_EXECUTION_TIME";
+pub const SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID: usize = 817;
+
+/// Number of colliding operations per batch in the scalable CRUD executor.
+pub const SCALABLE_COLLISION_COUNT: &str = "SCALABLE_COLLISION_COUNT";
+pub const SCALABLE_COLLISION_COUNT_ID: usize = 818;
+
 pub fn metrics() -> Vec<MetricRegistry> {
     vec![
         (
@@ -185,6 +197,20 @@ pub fn metrics() -> Vec<MetricRegistry> {
             CACHE_ENQUEUE_TO_EXECUTE_LATENCY.to_string(),
             MetricKind::Duration,
             MetricLevel::Info,
+        )
+            .into(),
+        (
+            SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID,
+            SCALABLE_PREEMPTIVE_EXECUTION_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Info,
+        )
+            .into(),
+        (
+            SCALABLE_COLLISION_COUNT_ID,
+            SCALABLE_COLLISION_COUNT.to_string(),
+            MetricKind::Count,
+            MetricLevel::Debug,
         )
             .into(),
     ]
