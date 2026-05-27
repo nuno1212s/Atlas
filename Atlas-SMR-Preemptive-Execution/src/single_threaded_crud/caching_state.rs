@@ -2,18 +2,18 @@ use atlas_common::collections::HashMap;
 use atlas_smr_execution::crud_states::CRUDState;
 
 /// A flat map of (column → (key → value)), where `None` is a tombstone (key deleted).
-pub(super) type AccumulatedCache = HashMap<String, HashMap<Vec<u8>, Option<Vec<u8>>>>;
+pub(crate) type AccumulatedCache = HashMap<String, HashMap<Vec<u8>, Option<Vec<u8>>>>;
 
 /// A view of state that reads from a layered cache before the real confirmed state.
 /// All writes go into the local `delta` only; the real state is never touched.
-pub(super) struct CachingState<'a, S> {
+pub(crate) struct CachingState<'a, S> {
     confirmed_state: &'a S,
     accumulated_cache: &'a AccumulatedCache,
     pub(super) delta: AccumulatedCache,
 }
 
 impl<'a, S: CRUDState + Sync> CachingState<'a, S> {
-    pub(super) fn new(confirmed_state: &'a S, accumulated_cache: &'a AccumulatedCache) -> Self {
+    pub(crate) fn new(confirmed_state: &'a S, accumulated_cache: &'a AccumulatedCache) -> Self {
         Self {
             confirmed_state,
             accumulated_cache,
@@ -21,7 +21,7 @@ impl<'a, S: CRUDState + Sync> CachingState<'a, S> {
         }
     }
 
-    pub(super) fn into_delta(self) -> AccumulatedCache {
+    pub(crate) fn into_delta(self) -> AccumulatedCache {
         self.delta
     }
 }
@@ -76,7 +76,7 @@ impl<'a, S: CRUDState + Sync> CRUDState for CachingState<'a, S> {
 }
 
 /// Merge all entries from `src` into `dst`, with `src` overriding `dst` for the same key.
-pub(super) fn merge_delta_into(dst: &mut AccumulatedCache, src: &AccumulatedCache) {
+pub(crate) fn merge_delta_into(dst: &mut AccumulatedCache, src: &AccumulatedCache) {
     for (col, keys) in src {
         let col_map = dst.entry(col.clone()).or_default();
         for (key, val) in keys {
@@ -86,7 +86,7 @@ pub(super) fn merge_delta_into(dst: &mut AccumulatedCache, src: &AccumulatedCach
 }
 
 /// Apply a delta to a real CRUD state: `Some(v)` → update, `None` → delete.
-pub(super) fn apply_delta_to_state<S: CRUDState>(state: &mut S, delta: &AccumulatedCache) {
+pub(crate) fn apply_delta_to_state<S: CRUDState>(state: &mut S, delta: &AccumulatedCache) {
     for (col, keys) in delta {
         for (key, val) in keys {
             match val {
@@ -102,7 +102,7 @@ pub(super) fn apply_delta_to_state<S: CRUDState>(state: &mut S, delta: &Accumula
 }
 
 /// Rebuild an accumulated cache by merging deltas in order (later deltas override earlier ones).
-pub(super) fn rebuild_accumulated_cache<'a>(
+pub(crate) fn rebuild_accumulated_cache<'a>(
     deltas: impl Iterator<Item = &'a AccumulatedCache>,
 ) -> AccumulatedCache {
     let mut acc = AccumulatedCache::default();

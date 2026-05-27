@@ -18,15 +18,15 @@ use std::fmt::{Debug, Formatter};
 use std::time::Instant;
 use thiserror::Error;
 
-pub(super) struct PendingCachedUpdate<A, S>
+pub(crate) struct PendingCachedUpdate<A, S>
 where
     A: Application<S>,
 {
-    pub(super) batch: UpdateBatch<Request<A, S>>,
-    pub(super) replies: ReplyBatch<Reply<A, S>>,
-    pub(super) delta: AccumulatedCache,
+    pub(crate) batch: UpdateBatch<Request<A, S>>,
+    pub(crate) replies: ReplyBatch<Reply<A, S>>,
+    pub(crate) delta: AccumulatedCache,
     /// Timestamp captured at the start of speculative execution.
-    pub(super) speculated_at: Instant,
+    pub(crate) speculated_at: Instant,
 }
 
 impl<A, S> Orderable for PendingCachedUpdate<A, S>
@@ -44,7 +44,7 @@ where
 /// Preemptive updates write into per-update deltas kept in an in-memory pending queue.
 /// The accumulated cache (merge of all pending deltas) answers reads that fall through
 /// from the current update's local delta.
-pub(super) struct CachingPreemptiveState<S, A>
+pub(crate) struct CachingPreemptiveState<S, A>
 where
     A: CRUDApplication<S>,
     S: CRUDState + Sync,
@@ -64,7 +64,7 @@ where
     A: CRUDApplication<S>,
     S: CRUDState + Sync,
 {
-    pub(super) fn new(initial_state: (SeqNo, S)) -> Self {
+    pub(crate) fn new(initial_state: (SeqNo, S)) -> Self {
         Self {
             confirmed_state: initial_state.1,
             confirmed_seq_no: initial_state.0,
@@ -74,23 +74,23 @@ where
         }
     }
 
-    pub(super) fn confirmed_seq_no(&self) -> SeqNo {
+    pub(crate) fn confirmed_seq_no(&self) -> SeqNo {
         self.confirmed_seq_no
     }
 
-    pub(super) fn preemptive_seq_no(&self) -> SeqNo {
+    pub(crate) fn preemptive_seq_no(&self) -> SeqNo {
         self.preemptive_seq_no
     }
 
-    pub(super) fn pending_count(&self) -> usize {
+    pub(crate) fn pending_count(&self) -> usize {
         self.pending.len()
     }
 
-    pub(super) fn pending_front_seq(&self) -> Option<SeqNo> {
+    pub(crate) fn pending_front_seq(&self) -> Option<SeqNo> {
         self.pending.front().map(|p| p.sequence_number())
     }
 
-    pub(super) fn confirmed_state(&self) -> &S {
+    pub(crate) fn confirmed_state(&self) -> &S {
         &self.confirmed_state
     }
 
@@ -98,13 +98,15 @@ where
     ///
     /// Writes go into a per-update delta; the real state is never touched.
     /// The computed replies are stored in the pending queue until confirmation.
-    pub(super) fn handle_preemptive_update(
+    pub(crate) fn handle_preemptive_update(
         &mut self,
         application: &A,
         update_batch: UpdateBatch<Request<A, S>>,
     ) -> Result<(), PreemptiveError<A, S>> {
         match update_batch.sequence_number().index(self.preemptive_seq_no) {
-            Either::Left(_) => {
+            // Left: incoming seq is older than current head — must backtrack.
+            // Right(0): incoming seq == current head — re-execution of the same slot, also a backtrack.
+            Either::Left(_) | Either::Right(0) => {
                 return Err(PreemptiveError::Backtracking(
                     update_batch.sequence_number(),
                     update_batch,
@@ -153,7 +155,7 @@ where
     ///
     /// Applies its delta to the real state, rebuilds the accumulated cache from the
     /// remaining pending deltas, and returns the pre-computed replies.
-    pub(super) fn handle_update_confirmed(
+    pub(crate) fn handle_update_confirmed(
         &mut self,
         sequence_no: SeqNo,
     ) -> Result<ReplyBatch<Reply<A, S>>, ConfirmError> {
@@ -199,7 +201,7 @@ where
     /// Execute a directly-finalized batch (no prior preemptive execution for this seq).
     ///
     /// Requires no pending speculative work: `preemptive_seq_no == confirmed_seq_no`.
-    pub(super) fn handle_confirmed_update(
+    pub(crate) fn handle_confirmed_update(
         &mut self,
         application: &A,
         update_batch: UpdateBatch<Request<A, S>>,
@@ -224,7 +226,7 @@ where
     /// Apply catch-up batches directly to the confirmed state and return replies.
     ///
     /// Clears all pending speculative work and the accumulated cache.
-    pub(super) fn handle_catch_up(
+    pub(crate) fn handle_catch_up(
         &mut self,
         application: &A,
         batches: impl IntoIterator<Item = UpdateBatch<Request<A, S>>>,
@@ -245,7 +247,7 @@ where
 
     /// Install a confirmed state snapshot (state transfer).
     /// Discards all pending speculative work.
-    pub(super) fn install_confirmed_state(&mut self, seq: SeqNo, state: S) {
+    pub(crate) fn install_confirmed_state(&mut self, seq: SeqNo, state: S) {
         self.confirmed_state = state;
         self.confirmed_seq_no = seq;
         self.preemptive_seq_no = seq;
@@ -257,7 +259,7 @@ where
     ///
     /// Updates with seq < `backtrack_seq` are kept — their cache contributions remain valid.
     /// The confirmed state is unchanged. No re-execution is required for kept batches.
-    pub(super) fn backtrack(&mut self, backtrack_seq: SeqNo) -> Result<(), BacktrackError> {
+    pub(crate) fn backtrack(&mut self, backtrack_seq: SeqNo) -> Result<(), BacktrackError> {
         if backtrack_seq <= self.confirmed_seq_no {
             return Err(BacktrackError::BacktrackToConfirmedOrBelow {
                 backtrack_seq,
@@ -288,7 +290,7 @@ where
 // ---------------------------------------------------------------------------
 
 #[derive(Error)]
-pub(super) enum PreemptiveError<A, S>
+pub(crate) enum PreemptiveError<A, S>
 where
     A: Application<S>,
 {
@@ -319,7 +321,7 @@ where
 }
 
 #[derive(Debug, Error)]
-pub(super) enum ConfirmError {
+pub(crate) enum ConfirmError {
     #[error("Seq mismatch: expected {expected:?}, received {received:?}")]
     SeqMismatch { expected: SeqNo, received: SeqNo },
     #[error("Pending queue is empty, received confirmation for seq {received:?}")]
@@ -336,7 +338,7 @@ pub(super) enum ConfirmError {
 }
 
 #[derive(Debug, Error)]
-pub(super) enum BacktrackError {
+pub(crate) enum BacktrackError {
     #[error(
         "Cannot backtrack to {backtrack_seq:?}: must be strictly above confirmed seq {confirmed_seq:?}"
     )]

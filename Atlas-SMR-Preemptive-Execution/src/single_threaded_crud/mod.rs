@@ -23,8 +23,8 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 use tracing::error;
 
-mod caching_state;
-mod pending_state;
+pub(crate) mod caching_state;
+pub(crate) mod pending_state;
 
 #[cfg(test)]
 pub mod tests {
