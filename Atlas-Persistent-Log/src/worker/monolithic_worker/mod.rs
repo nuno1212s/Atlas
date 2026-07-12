@@ -115,8 +115,8 @@ where
                     continue;
                 }
                 Err(error_kind) => match error_kind {
-                    TryRecvError::ChannelEmpty => {}
-                    TryRecvError::ChannelDc | TryRecvError::Timeout => {
+                    TryRecvError::ChannelEmpty { .. } => {}
+                    TryRecvError::ChannelDc { .. } | TryRecvError::Timeout { .. } => {
                         error!("Error receiving message: {error_kind:?}");
                     }
                 },

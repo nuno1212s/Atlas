@@ -1,0 +1,170 @@
+@startuml atlas-smr-core
+title atlas-smr-core — SMR Bridging Layer
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+' External trait references
+interface "atlas_smr_application::ApplicationData" as ApplicationData
+interface "atlas_smr_application::Application" as Application
+interface "atlas_smr_application::MonolithicState" as MonolithicState
+interface "atlas_smr_application::DivisibleState" as DivisibleState
+interface "atlas_core::OrderingProtocol" as OrderingProtocol
+interface "atlas_core::TExecutorDecisionHandle" as TExecutorDecisionHandle
+interface "atlas_core::TDeterministicExecutorDecisionHandle" as TDeterministicExecutorDecisionHandle
+interface "atlas_core::TPreemptiveExecutorDecisionHandle" as TPreemptiveExecutorDecisionHandle
+
+package "atlas-smr-core" {
+
+  package "execution" {
+    class SMRExecWrapper<RQ, S> {
+      -inner: S
+      --
+      Adapts atlas-core executor handles
+      to SMR UpdateBatch / UnorderedUpdateBatch
+    }
+
+    interface TExecutor<A, S> {
+      +{abstract} type ExecutionHandle : TExecutionHandle<Request<A,S>>
+      --
+      +init_handle() : Self::ExecutionHandle
+    }
+
+    interface TExecutorStateHandle<RQ, S> {
+      +install_state(seq: SeqNo, state: S) : Result<()>
+      +get_state() : Option<&S>
+    }
+
+    package "executors/monolithic_state" {
+      interface TMonolithicStateExecutor<A, S, NT> {
+        +init(handle, initial_state, service, send_node) : Result<MonStateInstallHandle<S>>
+      }
+      class MonStateInstallHandle<S> {
+        +install_state(seq: SeqNo, state: S) : Result<()>
+      }
+      TMonolithicStateExecutor ..> MonStateInstallHandle : returns
+    }
+
+    package "executors/divisible_state" {
+      interface TDivisibleStateExecutor<A, S, NT> {
+        +init(handle, initial_state, service, send_node) : Result<DivStateInstallHandle<S>>
+      }
+      class DivStateInstallHandle<S> {
+        +install_state_parts(descriptor, parts) : Result<()>
+      }
+      TDivisibleStateExecutor ..> DivStateInstallHandle : returns
+    }
+
+    SMRExecWrapper ..|> TExecutorDecisionHandle
+    SMRExecWrapper ..|> TDeterministicExecutorDecisionHandle
+    SMRExecWrapper ..|> TPreemptiveExecutorDecisionHandle
+  }
+
+  package "message" {
+    enum OrderableMessage<D> {
+      OrderedRequest(StoredMessage<SMRReq<D>>)
+      UnorderedRequest(StoredMessage<SMRReq<D>>)
+    }
+
+    class SystemMessage<D, P, LT, VT> {
+      Protocol(P)
+      LogTransfer(LT)
+      ViewTransfer(VT)
+      ForwardedRequests(ForwardedRequestsMessage<SMRReq<D>>)
+    }
+
+    class ForwardedRequestsMessage<RQ> {
+      -requests: Vec<StoredMessage<RQ>>
+    }
+
+    class UpdateBatch<RQ> {
+      -seq: SeqNo
+      -requests: Vec<StoredMessage<RQ>>
+      -batch_meta: Option<BatchMeta>
+    }
+
+    class UnorderedUpdateBatch<RQ> {
+      -requests: Vec<StoredMessage<RQ>>
+    }
+
+    class ClientRqInfo {
+      +session: SeqNo
+      +seq_no: SeqNo
+      +digest: Digest
+      +sender: NodeId
+    }
+  }
+
+  package "networking" {
+    interface SMRReplicaNetworkNode {
+      +{abstract} type ProtocolNode : NetworkStub
+      +{abstract} type ApplicationNode : NetworkStub
+      +{abstract} type StateTransferNode : NetworkStub
+      +{abstract} type ReconfigurationNode : NetworkStub
+    }
+
+    interface ReplyNode<RP> {
+      +send(reply: RP, target: NodeId, sign: bool)
+      +broadcast(reply: RP, targets: impl Iterator<Item=NodeId>)
+      +send_signed(reply: RP, target: NodeId)
+      +broadcast_signed(reply: RP, targets: impl Iterator<Item=NodeId>)
+    }
+  }
+
+  package "persistent_log" {
+    interface MonolithicStateLog<S> {
+      +write_checkpoint(checkpoint: Checkpoint<S>) : Result<()>
+      +read_checkpoint() : Result<Option<Checkpoint<S>>>
+    }
+
+    interface DivisibleStateLog<S> {
+      +write_descriptor(descriptor) : Result<()>
+      +write_parts(parts: Vec<S::StatePart>) : Result<()>
+      +read_descriptor() : Result<Option<S::StateDescriptor>>
+      +read_parts() : Result<Vec<S::StatePart>>
+    }
+
+    class Checkpoint<S> {
+      +seq: SeqNo
+      +state: S
+      +digest: Digest
+    }
+
+    MonolithicStateLog ..> Checkpoint : uses
+  }
+
+  package "state_transfer" {
+    interface StateTransferProtocol<S> {
+      +poll() : Result<STResult>
+      +process_message(msg) : Result<STResult>
+      +install_state(seq: SeqNo, state: S) : Result<()>
+    }
+  }
+
+  package "request_pre_processing" {
+    interface RequestPreProcessor<O> {
+      +process_forwarded(requests) : Result<()>
+      +process_stopped(requests) : Result<()>
+      +process_decided(batch: UpdateBatch<O>) : Result<()>
+    }
+  }
+
+  package "serialize" {
+    interface Service<D, P, L, VT> {
+      Delegates to protocol/log/view-transfer verifiers
+    }
+  }
+
+  ' Type aliases shown as notes
+  note as TypeAliases
+    Type aliases:
+    SMRReq<D>      = RequestMessage<D::Request>
+    SMRRawReq<R>   = RequestMessage<R>
+    SMRReply<D>    = ReplyMessage<D::Reply>
+  end note
+
+  TExecutor ..> TMonolithicStateExecutor : specializes to
+  TExecutor ..> TDivisibleStateExecutor : specializes to
+}
+
+@enduml

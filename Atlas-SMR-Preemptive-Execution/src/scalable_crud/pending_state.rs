@@ -1,4 +1,7 @@
-use crate::metric::{SCALABLE_COLLISION_COUNT_ID, SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID};
+use crate::metric::{
+    SCALABLE_COLLISION_COUNT_ID, SCALABLE_COLLISION_RATE_ID, SCALABLE_OPS_PER_BATCH_ID,
+    SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID,
+};
 use crate::scalable_crud::execution_unit::{
     CollisionState, ParallelExecutionUnit, progress_collision_state,
 };
@@ -197,10 +200,14 @@ where
         for (pos, accesses, ..) in &parallel_results {
             progress_collision_state(&mut collision_state, *pos, accesses);
         }
-        metric_store_count(
-            SCALABLE_COLLISION_COUNT_ID,
-            collision_state.collisions.len(),
-        );
+        metric_store_count(SCALABLE_COLLISION_COUNT_ID, collision_state.collisions.len());
+        metric_store_count(SCALABLE_OPS_PER_BATCH_ID, n);
+        if n > 0 {
+            metric_store_count(
+                SCALABLE_COLLISION_RATE_ID,
+                collision_state.collisions.len() * 1000 / n,
+            );
+        }
 
         // Step 3 & 4: Partition results into non-colliders and colliders (both in batch order
         // since parallel_results is already sorted). Consume parallel_results by value to avoid

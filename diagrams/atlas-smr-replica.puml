@@ -1,0 +1,84 @@
+@startuml atlas-smr-replica
+title atlas-smr-replica — Replica Orchestrator
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+' External trait references
+interface "atlas_core::OrderingProtocol" as OrderingProtocol
+interface "atlas_core::PermissionedOrderingProtocol" as PermissionedOrderingProtocol
+interface "atlas_core::TimeoutableMod" as TimeoutableMod
+interface "atlas_smr_core::TExecutor" as TExecutor
+interface "atlas_smr_core::SMRReplicaNetworkNode" as SMRReplicaNetworkNode
+interface "atlas_smr_core::StateTransferProtocol" as StateTransferProtocol
+interface "atlas_smr_core::RequestPreProcessor" as RequestPreProcessor
+interface "atlas_smr_core::MonolithicStateLog" as MonolithicStateLog
+interface "atlas_smr_core::DivisibleStateLog" as DivisibleStateLog
+interface "atlas_smr_application::Application" as Application
+interface "atlas_smr_application::ApplicationData" as ApplicationData
+
+package "atlas-smr-replica" {
+
+  interface TReplicaServer {
+    +bootstrap(config) : Result<Self>
+    +run() : Result<()>
+  }
+
+  class ReplicaServer<D, OP, ST, EX, NT, PL, ER, LT, VT, RQPP> {
+    -id: NodeId
+    -ordering_protocol: OP
+    -state_transfer: ST
+    -executor_handle: EX::ExecutionHandle
+    -network_node: Arc<NT>
+    -persistent_log: PL
+    -timeouts: TimeoutsHandle
+    -log_transfer: LT
+    -view_transfer: VT
+    -rq_pre_processor: RQPP
+    --
+    +bootstrap(config: ReplicaConfig) : Result<Self>
+    +run() : Result<()>
+    -run_consensus_loop()
+    -run_state_transfer()
+    -handle_decision(decision: Decision)
+  }
+
+  class ReplicaConfig {
+    +id: NodeId
+    +n: usize
+    +f: usize
+    +view: View
+    +op_config: OP::Config
+    +st_config: ST::Config
+    +networking_config: NT::Config
+    +log_config: PL::Config
+  }
+
+  ReplicaServer ..|> TReplicaServer
+  ReplicaServer *-- ReplicaConfig : configured by
+  ReplicaServer ..> OrderingProtocol : drives OP
+  ReplicaServer ..> StateTransferProtocol : drives ST
+  ReplicaServer ..> TExecutor : uses EX
+  ReplicaServer ..> SMRReplicaNetworkNode : uses NT
+  ReplicaServer ..> MonolithicStateLog : uses PL
+  ReplicaServer ..> RequestPreProcessor : uses RQPP
+
+  note right of ReplicaServer
+    Heavily generic over all components.
+    Type errors often manifest here
+    when bounds in other crates are wrong.
+    --
+    Generic params:
+    D  = ApplicationData
+    OP = OrderingProtocol
+    ST = StateTransferProtocol
+    EX = TExecutor
+    NT = SMRReplicaNetworkNode
+    PL = PersistentLog
+    LT = LogTransferProtocol
+    VT = ViewTransferProtocol
+    RQPP = RequestPreProcessor
+  end note
+}
+
+@enduml

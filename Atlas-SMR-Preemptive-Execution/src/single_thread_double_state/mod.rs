@@ -34,6 +34,7 @@ pub mod tests {
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
 
+#[derive(Debug)]
 enum RunMode {
     Normal,
     StateTransfer,

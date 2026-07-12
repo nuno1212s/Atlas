@@ -74,7 +74,7 @@ pub const CACHE_ENQUEUE_TO_EXECUTE_LATENCY: &str = "CACHE_ENQUEUE_TO_EXECUTE_LAT
 pub const CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID: usize = 816;
 
 // ---------------------------------------------------------------------------
-// Scalable CRUD executor metrics (817-818)
+// Scalable CRUD executor metrics (817-820)
 // ---------------------------------------------------------------------------
 
 /// Total wall-clock time for one parallel+collision+reexec cycle in the scalable CRUD executor.
@@ -84,6 +84,16 @@ pub const SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID: usize = 817;
 /// Number of colliding operations per batch in the scalable CRUD executor.
 pub const SCALABLE_COLLISION_COUNT: &str = "SCALABLE_COLLISION_COUNT";
 pub const SCALABLE_COLLISION_COUNT_ID: usize = 818;
+
+/// Per-batch collision rate in the scalable CRUD executor, stored as permille (×1000).
+/// A value of 500 means 50.0% of requests in that batch experienced a key collision.
+/// Divide by 10 to get a percentage, or by 1000 to get a [0.0, 1.0] fraction.
+pub const SCALABLE_COLLISION_RATE: &str = "SCALABLE_COLLISION_RATE";
+pub const SCALABLE_COLLISION_RATE_ID: usize = 819;
+
+/// Number of operations per speculatively executed batch (scalable CRUD executor).
+pub const SCALABLE_OPS_PER_BATCH: &str = "SCALABLE_OPS_PER_BATCH";
+pub const SCALABLE_OPS_PER_BATCH_ID: usize = 820;
 
 pub fn metrics() -> Vec<MetricRegistry> {
     vec![
@@ -209,6 +219,20 @@ pub fn metrics() -> Vec<MetricRegistry> {
         (
             SCALABLE_COLLISION_COUNT_ID,
             SCALABLE_COLLISION_COUNT.to_string(),
+            MetricKind::Count,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            SCALABLE_COLLISION_RATE_ID,
+            SCALABLE_COLLISION_RATE.to_string(),
+            MetricKind::Count,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            SCALABLE_OPS_PER_BATCH_ID,
+            SCALABLE_OPS_PER_BATCH.to_string(),
             MetricKind::Count,
             MetricLevel::Debug,
         )

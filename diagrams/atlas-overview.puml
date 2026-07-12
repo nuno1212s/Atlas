@@ -1,0 +1,90 @@
+@startuml atlas-overview
+title Atlas BFT/CFT Framework — Module Overview
+
+skinparam packageStyle rectangle
+skinparam componentStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam ArrowColor #555555
+
+package "Layer 1: Foundation" #LightYellow {
+  component [atlas-common] as common
+  component [atlas-capnp] as capnp
+  component [atlas-metrics] as metrics
+}
+
+package "Layer 2: Protocol Core" #LightBlue {
+  component [atlas-core] as core
+  component [atlas-communication] as comm
+  component [atlas-comm-mio] as mio
+  component [atlas-reconfiguration] as reconfig
+}
+
+package "Layer 3: Logging & State Transfer" #LightGreen {
+  component [atlas-logging-core] as logcore
+  component [atlas-decision-log] as declog
+  component [atlas-persistent-log] as perslog
+  component [atlas-log-transfer] as logtrans
+  component [atlas-view-transfer] as viewtrans
+}
+
+package "Layer 4: SMR Stack" #LightPink {
+  component [atlas-smr-application] as smrapp
+  component [atlas-smr-core] as smrcore
+  component [atlas-smr-execution] as smrexec
+  component [atlas-smr-preemptive-execution] as smrpreempt
+  component [atlas-smr-replica] as smrreplica
+  component [atlas-client] as client
+}
+
+' Foundation dependencies
+common --> capnp : uses schemas
+core --> common : ordering, crypto, channels
+core --> comm : message types
+comm --> common : NodeId, Digest, etc.
+comm --> mio : byte layer I/O
+metrics --> common
+
+' Protocol core
+reconfig --> comm : networking
+reconfig --> core : views, timeouts
+
+' Logging
+logcore --> core : protocol log traits
+declog --> logcore
+declog --> perslog
+perslog --> core : OrderingProtocolLog
+perslog --> logcore
+logtrans --> core : timeouts
+logtrans --> declog
+viewtrans --> core : NetworkView
+
+' SMR Stack
+smrapp --> common
+smrcore --> core : executor handles, decision
+smrcore --> comm : network stubs
+smrcore --> smrapp : ApplicationData, Application
+smrexec --> smrcore : TExecutor traits
+smrpreempt --> smrcore : TPreemptiveExecutor traits
+smrpreempt --> smrexec : ReplicaReplier
+smrreplica --> smrcore : all SMR traits
+smrreplica --> smrexec : execution
+smrreplica --> smrpreempt : preemptive execution
+smrreplica --> declog : decision log
+smrreplica --> perslog : persistent log
+smrreplica --> logtrans : log transfer
+smrreplica --> viewtrans : view transfer
+smrreplica --> reconfig : reconfiguration
+client --> comm : networking
+client --> smrapp : request/reply types
+
+note bottom of smrreplica
+  Central orchestrator.
+  Heavily generic over all protocol components.
+end note
+
+note right of smrpreempt
+  Currently in development
+  on preemptive_execution branch
+end note
+
+@enduml

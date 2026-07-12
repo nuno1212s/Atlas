@@ -132,7 +132,7 @@ where
                     self.process_message(message)?;
                 }
                 Err(e) => {
-                    if let TryRecvError::Timeout = e {
+                    if let TryRecvError::Timeout { .. } = e {
                     } else {
                         error!("Error receiving message: {:?}", e);
                     }

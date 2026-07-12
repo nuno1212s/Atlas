@@ -36,25 +36,28 @@ impl<T> ChannelMixedRx<T> {
 
     #[inline]
     pub fn recv(&self) -> Result<T, RecvError> {
-        match self.inner.recv_sync() {
-            Ok(res) => Ok(res),
-            Err(_err) => Err(RecvError::ChannelDc),
-        }
+        self.inner
+            .recv_sync()
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 
     #[inline]
     pub fn recv_timeout(&self, timeout: Duration) -> Result<T, TryRecvError> {
-        self.inner.recv_timeout(timeout)
+        self.inner
+            .recv_timeout(timeout)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 
     #[inline]
     pub fn recv_async(&mut self) -> ChannelRxFut<'_, T> {
-        self.inner.recv().into()
+        ChannelRxFut::new(self.inner.recv().into(), self.channel_identifier.clone())
     }
 
     #[inline]
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        self.inner.try_recv()
+        self.inner
+            .try_recv()
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 }
 
@@ -74,26 +77,34 @@ where
 
     #[inline]
     pub fn send_async(&self, value: T) -> ChannelTxFut<'_, T> {
-        self.inner.send(value).into()
+        ChannelTxFut::new(self.inner.send(value).into(), self.channel_identifier.clone())
     }
 
     #[inline]
     pub fn send_async_return(&self, value: T) -> ChannelTxFut<'_, T> {
-        self.inner.send(value).into()
+        ChannelTxFut::new(self.inner.send(value).into(), self.channel_identifier.clone())
     }
 
     #[inline]
     pub fn send(&self, value: T) -> crate::error::Result<()> {
-        Ok(self.inner.send_sync(value)?)
+        Ok(self
+            .inner
+            .send_sync(value)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))?)
     }
 
     #[inline]
     pub fn send_return(&self, value: T) -> Result<(), SendReturnError<T>> {
-        self.inner.send_sync_return(value)
+        self.inner
+            .send_sync_return(value)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 
     pub fn send_timeout(&self, value: T, timeout: Duration) -> crate::error::Result<()> {
-        Ok(self.inner.send_timeout_sync(value, timeout)?)
+        Ok(self
+            .inner
+            .send_timeout_sync(value, timeout)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))?)
     }
 
     #[inline]
@@ -102,7 +113,9 @@ where
         value: T,
         timeout: Duration,
     ) -> Result<(), TrySendReturnError<T>> {
-        self.inner.send_timeout_sync_return(value, timeout)
+        self.inner
+            .send_timeout_sync_return(value, timeout)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 }
 

@@ -57,7 +57,7 @@ impl<T> ChannelTx<T> {
     pub async fn send(&self, message: T) -> std::result::Result<(), SendReturnError<T>> {
         match self.inner.send_async(message).await {
             Ok(_) => Ok(()),
-            Err(err) => Err(SendReturnError::FailedToSend(err.0)),
+            Err(err) => Err(SendReturnError::FailedToSend(err.0, None)),
         }
     }
 
@@ -65,7 +65,7 @@ impl<T> ChannelTx<T> {
     pub fn send_blk(&self, message: T) -> std::result::Result<(), SendReturnError<T>> {
         match self.inner.send(message) {
             Ok(_) => Ok(()),
-            Err(err) => Err(SendReturnError::FailedToSend(err.0)),
+            Err(err) => Err(SendReturnError::FailedToSend(err.0, None)),
         }
     }
 }
@@ -166,7 +166,7 @@ impl<'a, T> Future for ChannelRxFut<'a, T> {
         Pin::new(&mut self.inner).poll(cx).map(|opt| match opt {
             Ok(rec) => Ok(rec),
             Err(_) => {
-                Err!(RecvError::ChannelDc)
+                Err!(RecvError::ChannelDc { channel: None })
             }
         })
     }

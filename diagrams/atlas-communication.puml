@@ -1,0 +1,123 @@
+@startuml atlas-communication
+title atlas-communication — Network Abstraction
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+package "atlas-communication" {
+
+  package "message" {
+    class Header << (S,#ADD1B2) struct >> {
+      +from: NodeId
+      +to: NodeId
+      +nonce: u64
+      +length: u32
+      +digest: Digest
+      +signature: Signature
+    }
+    note right of Header : #[repr(C, packed)]\n128-byte wire format
+
+    class StoredMessage<M> {
+      +header: Header
+      +message: M
+    }
+  }
+
+  package "management" {
+    class NetworkManagement<NI, CN, BN, R, O, S, A> {
+      +id: NodeId
+      +network_info: Arc<NI>
+      +rng: Arc<ThreadSafePrng>
+      --
+      +initialize(network_info, config, reconfig_msg) : Arc<Self>
+      +init_op_stub()
+      +init_reconf_stub()
+      +init_state_stub()
+      +init_app_stub()
+    }
+  }
+
+  package "stub traits" {
+    interface ModuleOutgoingStub<M> {
+      +send(target, msg, sign)
+      +send_signed(target, msg)
+      +broadcast(targets, msg)
+      +broadcast_signed(targets, msg)
+      +serialize_digest_message(msg) : Digest
+      +broadcast_serialized(serialized)
+    }
+
+    interface ModuleIncomingStub<M> {
+      +pending_rqs() : usize
+      +receive_messages() : Vec<M>
+      +try_receive_messages() : Option<Vec<M>>
+    }
+
+    interface NetworkStub<T> {
+      +id() : NodeId
+      +outgoing_stub() : &ModuleOutgoingStub<T>
+      +connections() : &PeerConnectionManager
+    }
+
+    interface RegularNetworkStub<T> {
+      +incoming_stub() : &ModuleIncomingStub<T>
+    }
+
+    interface BatchedNetworkStub<T> {
+      +incoming_stub_batched() : &ModuleIncomingStub<Vec<T>>
+    }
+
+    RegularNetworkStub --|> NetworkStub
+    BatchedNetworkStub --|> NetworkStub
+  }
+
+  package "serialization" {
+    interface Serializable {
+      +{abstract} type Message
+      +{abstract} type Verifier
+    }
+
+    interface InternalMessageVerifier<M> {
+      +verify_message(header, msg) : Result<M>
+    }
+  }
+
+  package "byte layer" {
+    interface ByteNetworkStub {
+      +dispatch_blocking(header, payload) : Result<()>
+    }
+
+    interface ByteNetworkController {
+      +create_connection(target) : ByteNetworkStub
+    }
+
+    interface ByteNetworkControllerInit {
+      +initialize_byte_network(config) : Arc<ByteNetworkController>
+    }
+  }
+
+  package "topology" {
+    interface NetworkInformationProvider {
+      +own_node_id() : NodeId
+      +get_addr(id) : Option<PeerAddr>
+      +get_public_key(id) : Option<PublicKey>
+    }
+
+    interface NetworkReconfigurationCommunication {
+      +send_reconfig(target, msg)
+      +receive_reconfig() : Option<ReconfigMsg>
+    }
+  }
+}
+
+' External references (from atlas-common)
+interface "atlas_common::Orderable" as Orderable
+interface "atlas_common::NodeId" as ExtNodeId
+
+NetworkManagement ..> NetworkInformationProvider : uses NI
+NetworkManagement ..> ByteNetworkController : uses BN
+NetworkManagement ..> ByteNetworkStub : uses CN
+RegularNetworkStub ..> ModuleIncomingStub : exposes
+NetworkStub ..> ModuleOutgoingStub : exposes
+
+@enduml

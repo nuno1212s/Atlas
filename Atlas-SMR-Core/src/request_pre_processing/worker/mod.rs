@@ -565,7 +565,7 @@ impl<O> BatchProduction<O> {
         )) {
             Ok(_) => {}
             Err(err) => match err {
-                TrySendReturnError::Full(messages) => {
+                TrySendReturnError::Full(messages, _) => {
                     debug!(
                         "Batch production is full, pending requests: {}",
                         messages.0.len()
@@ -573,7 +573,7 @@ impl<O> BatchProduction<O> {
 
                     self.append_to_pending(messages.0.into());
                 }
-                TrySendReturnError::Disconnected(_) | TrySendReturnError::Timeout(_) => {
+                TrySendReturnError::Disconnected(_, _) | TrySendReturnError::Timeout(_, _) => {
                     error!("Failed to send requests to batch production: {:?}", err);
                 }
             },

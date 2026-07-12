@@ -565,8 +565,8 @@ where
             None => match self.0.try_recv() {
                 Ok(message) => Ok(Some(message)),
                 Err(err) => match err {
-                    TryRecvError::ChannelEmpty => Ok(None),
-                    TryRecvError::ChannelDc | TryRecvError::Timeout => {
+                    TryRecvError::ChannelEmpty { .. } => Ok(None),
+                    TryRecvError::ChannelDc { .. } | TryRecvError::Timeout { .. } => {
                         Err!(err)
                     }
                 },
@@ -574,8 +574,8 @@ where
             Some(duration) => match self.0.recv_timeout(duration) {
                 Ok(message) => Ok(Some(message)),
                 Err(err) => match err {
-                    TryRecvError::ChannelEmpty | TryRecvError::Timeout => Ok(None),
-                    TryRecvError::ChannelDc => {
+                    TryRecvError::ChannelEmpty { .. } | TryRecvError::Timeout { .. } => Ok(None),
+                    TryRecvError::ChannelDc { .. } => {
                         Err!(err)
                     }
                 },

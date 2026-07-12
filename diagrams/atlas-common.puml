@@ -1,0 +1,134 @@
+@startuml atlas-common
+title atlas-common — Foundation Layer
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+package "atlas-common" {
+
+  package "ordering" {
+    class NodeId {
+      +0: u32
+    }
+
+    class SeqNo {
+      +0: i32
+    }
+
+    class ThreadSafeSeqNo {
+      +0: AtomicI32
+    }
+
+    enum NodeType {
+      Replica
+      Client
+    }
+
+    enum InvalidSeqNo {
+      Small
+      Big
+    }
+
+    interface Orderable {
+      +sequence_number() : SeqNo
+    }
+  }
+
+  package "channel" {
+    class ChannelAsyncTx<T>
+    class ChannelAsyncRx<T>
+    class ChannelSyncTx<T>
+    class ChannelSyncRx<T>
+
+    enum RecvError {
+      Disconnected
+    }
+    enum SendError<T> {
+      Disconnected(T)
+    }
+    enum TrySendError<T> {
+      Full(T)
+      Disconnected(T)
+    }
+  }
+
+  package "crypto" {
+    class KeyPair {
+      +generate_key_pair() : KeyPair
+      +sign(message) : Signature
+    }
+    class PublicKey {
+      +verify(message, sig) : Result<()>
+    }
+    class PublicKeyRef<'a>
+    class Signature
+    class Digest
+    class Context {
+      +new() : Context
+      +update(data)
+      +finish() : Digest
+    }
+
+    enum SignError
+    enum VerifyError
+    enum HashError
+  }
+
+  package "socket" {
+    class AsyncListener
+    class AsyncSocket
+    class SyncListener
+    class SyncSocket
+    class SecureSocketAsync
+    class SecureSocketSync
+    class PeerAddr {
+      +socket: SocketAddr
+      +hostname: String
+    }
+  }
+
+  package "collections" {
+    class MaybeVec<T> {
+      None
+      One(T)
+      Mult(Vec<T>)
+    }
+  }
+
+  package "runtime" {
+    class InitConfig {
+      +async_threads: usize
+      +threadpool_threads: usize
+    }
+    class InitGuard
+    class AsyncRuntime
+    class ThreadPool
+
+    interface TTboQueue<M> {
+      +push(item: M)
+      +pop() : Option<M>
+      +peek() : Option<&M>
+      +advance_seq()
+      +install_seq(SeqNo)
+      +clear()
+      +is_empty() : bool
+    }
+
+    interface TSingleTboQueue<M> {
+      +push(item: M)
+      +pop() : Option<M>
+      +peek() : Option<&M>
+      +advance_seq()
+      +install_seq(SeqNo)
+      +clear()
+      +is_empty() : bool
+    }
+  }
+
+  package "persistent" {
+    class KVDB
+    enum PersStorageError
+  }
+}
+
+@enduml

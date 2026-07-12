@@ -108,10 +108,10 @@ where
         match result {
             Ok(message) => Ok(Some(message)),
             Err(err) => match err {
-                TryRecvError::ChannelDc => {
-                    Err!(TryRecvError::ChannelDc)
+                TryRecvError::ChannelDc { channel } => {
+                    Err!(TryRecvError::ChannelDc { channel })
                 }
-                TryRecvError::ChannelEmpty | TryRecvError::Timeout => Ok(None),
+                TryRecvError::ChannelEmpty { .. } | TryRecvError::Timeout { .. } => Ok(None),
             },
         }
     }

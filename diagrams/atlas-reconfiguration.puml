@@ -1,0 +1,94 @@
+@startuml atlas-reconfiguration
+title atlas-reconfiguration — Dynamic Membership
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+' External trait references
+interface "atlas_core::NetworkView" as NetworkView
+interface "atlas_core::TimeoutsHandle" as TimeoutsHandle
+interface "atlas_communication::NetworkInformationProvider" as NetworkInformationProvider
+interface "atlas_communication::NetworkReconfigurationCommunication" as NetworkReconfigurationCommunication
+
+package "atlas-reconfiguration" {
+
+  class ReconfigurableNode<NT> {
+    -seq_gen: SeqNo
+    -node_state: ReconfigurableNodeState
+    -node: Arc<NT>
+    -network_node: NetworkNodeState
+    -reconfig_network: NetworkReconfigurationCommunication
+    -timeouts: TimeoutsHandle
+    -channel_rx: ChannelSyncRx<ReconfigMsg>
+    --
+    +poll() : Result<ReconfigurationProtocolResponse>
+    +process_message(msg: StoredMessage) : Result<ReconfigurationProtocolResponse>
+    +install_view(view: View) : Result<()>
+  }
+
+  class GeneralNodeInfo {
+    +node_id: NodeId
+    +node_type: NodeType
+    +public_key: PublicKey
+    +addr: PeerAddr
+  }
+
+  class NetworkNodeState {
+    +known_nodes: HashMap<NodeId, GeneralNodeInfo>
+    +current_view: Option<View>
+    --
+    +add_node(info: GeneralNodeInfo)
+    +remove_node(id: NodeId)
+    +update_view(view: View)
+  }
+
+  enum ReconfigurableNodeState {
+    NetworkReconfigurationProtocol
+    QuorumReconfigurationProtocol
+    Stable
+  }
+
+  enum NetworkProtocolResponse {
+    Done
+    Nil
+  }
+
+  enum QuorumProtocolResponse {
+    DoneInitialSetup
+    UpdatedQuorum(Vec<NodeId>)
+    Nil
+  }
+
+  enum ReconfigurationProtocolResponse {
+    Nil
+    Running
+    DoneInitialSetup
+    UpdatedQuorum
+  }
+
+  interface ReconfigurationProtocol {
+    +poll() : Result<ReconfigurationProtocolResponse>
+    +process_message(msg: StoredMessage) : Result<ReconfigurationProtocolResponse>
+    +install_view(view: View) : Result<()>
+  }
+
+  interface ReconfigurationProtocolInitializer {
+    +initialize_reconfiguration_protocol(config, node, timeouts) : Result<ReconfigurationProtocol>
+  }
+
+  interface ReconfigurationCommunicationHandles {
+    +send_to_quorum(msg: ReconfigMsg) : Result<()>
+    +send_to_node(target: NodeId, msg: ReconfigMsg) : Result<()>
+    +receive() : Option<ReconfigMsg>
+  }
+
+  ReconfigurableNode ..|> ReconfigurationProtocol
+  ReconfigurableNode *-- ReconfigurableNodeState
+  ReconfigurableNode *-- NetworkNodeState
+  ReconfigurableNode ..> ReconfigurationCommunicationHandles : uses
+  ReconfigurableNode ..> TimeoutsHandle : uses
+  NetworkNodeState *-- GeneralNodeInfo
+  ReconfigurationProtocolInitializer ..> ReconfigurationProtocol : creates
+}
+
+@enduml

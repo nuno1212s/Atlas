@@ -547,8 +547,8 @@ impl<ST> PeerConn<ST> {
                 Ok(Some(msg.0))
             }
             Err(err) => match err {
-                TryRecvError::ChannelDc => Err(MioError::FailedToRetrieveFromSendQueue),
-                TryRecvError::ChannelEmpty | TryRecvError::Timeout => Ok(None),
+                TryRecvError::ChannelDc { .. } => Err(MioError::FailedToRetrieveFromSendQueue),
+                TryRecvError::ChannelEmpty { .. } | TryRecvError::Timeout { .. } => Ok(None),
             },
         }
     }
@@ -597,10 +597,10 @@ impl byte_stub::ByteNetworkStub for ByteMessageSendStub {
     fn dispatch_message(&self, message: WireMessage) -> Result<(), DispatchError> {
         if let Err(err) = self.0.try_send_return((message, Instant::now())) {
             return match err {
-                TrySendReturnError::Disconnected(_) | TrySendReturnError::Timeout(_) => {
+                TrySendReturnError::Disconnected(_, _) | TrySendReturnError::Timeout(_, _) => {
                     Err(DispatchError::TrySendError(err.into()))
                 }
-                TrySendReturnError::Full(message) => {
+                TrySendReturnError::Full(message, _) => {
                     Err(DispatchError::CouldNotDispatchTryLater(message.0))
                 }
             };

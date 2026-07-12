@@ -1,0 +1,60 @@
+@startuml atlas-view-transfer
+title atlas-view-transfer — View Change Protocol
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+' External trait references
+interface "atlas_core::OrderingProtocol" as OrderingProtocol
+interface "atlas_core::NetworkView" as NetworkView
+interface "atlas_core::TimeoutsHandle" as TimeoutsHandle
+
+package "atlas-view-transfer" {
+
+  class SimpleViewTransferProtocol<OP, NT> {
+    -current_seq_no: SeqNo
+    -known_nodes: Vec<NodeId>
+    -current_state: TransferState<OP::ViewInfo>
+    -node: Arc<NT>
+    --
+    +poll() : Result<ViewTransferResponse<OP::ViewInfo>>
+    +request_latest_view(targets: &[NodeId]) : Result<()>
+    +process_message(msg: StoredMessage) : Result<ViewTransferResponse<OP::ViewInfo>>
+  }
+
+  class ReceivedView<V> {
+    +node: NodeId
+    +digest: Digest
+    +view: V
+  }
+
+  enum TransferState<V> {
+    Idle
+    Requested { pending_contact: usize, needed: usize, received: HashMap<NodeId, ReceivedView<V>> }
+  }
+
+  enum ViewTransferResponse<V> {
+    Ignored
+    NoneFound
+    ReRunProtocol
+    ViewReceived(V)
+  }
+
+  interface ViewTransferProtocol<OP> {
+    +poll() : Result<ViewTransferResponse<OP::ViewInfo>>
+    +request_latest_view(targets: &[NodeId]) : Result<()>
+    +process_message(msg: StoredMessage) : Result<ViewTransferResponse<OP::ViewInfo>>
+  }
+
+  interface ViewTransferProtocolInitializer {
+    +initialize_view_transfer_protocol(config, node, timeouts) : Result<ViewTransferProtocol>
+  }
+
+  SimpleViewTransferProtocol ..|> ViewTransferProtocol
+  SimpleViewTransferProtocol *-- TransferState
+  TransferState ..> ReceivedView : holds
+  SimpleViewTransferProtocol ..> ViewTransferResponse : returns
+  ViewTransferProtocolInitializer ..> ViewTransferProtocol : creates
+}
+
+@enduml

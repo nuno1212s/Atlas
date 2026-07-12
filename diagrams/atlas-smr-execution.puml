@@ -1,0 +1,118 @@
+@startuml atlas-smr-execution
+title atlas-smr-execution — Execution Engine
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+' External trait references
+interface "atlas_smr_core::TExecutor" as TExecutor
+interface "atlas_smr_core::TMonolithicStateExecutor" as TMonolithicStateExecutor
+interface "atlas_smr_core::TDivisibleStateExecutor" as TDivisibleStateExecutor
+interface "atlas_smr_core::ReplyNode" as ReplyNode
+interface "atlas_smr_application::Application" as Application
+interface "atlas_smr_application::MonolithicState" as MonolithicState
+interface "atlas_smr_application::DivisibleState" as DivisibleState
+
+package "atlas-smr-execution" {
+
+  package "executor handles" {
+    class ExecutorHandle<RQ> {
+      -tx: ChannelSyncTx<ExecutorMsg<RQ>>
+      --
+      +queue_update(batch: UpdateBatch<RQ>) : Result<()>
+      +queue_unordered(batch: UnorderedUpdateBatch<RQ>) : Result<()>
+      +install_state(seq, state) : Result<()>
+    }
+
+    note right of ExecutorHandle
+      Channel-based handle;
+      send-side for executor thread
+    end note
+  }
+
+  package "monolithic executors" {
+    class SingleThreadedMonExecutor<NT> {
+      -service: A
+      -state: S
+      -node: Arc<NT>
+      --
+      +init(handle, initial_state, service, node) : Result<MonStateInstallHandle<S>>
+    }
+
+    class MultiThreadedMonExecutor<NT> {
+      -service: A
+      -state: Arc<CRUDState>
+      -node: Arc<NT>
+      --
+      +init(handle, initial_state, service, node) : Result<MonStateInstallHandle<S>>
+    }
+
+    SingleThreadedMonExecutor ..|> TMonolithicStateExecutor
+    MultiThreadedMonExecutor ..|> TMonolithicStateExecutor
+  }
+
+  package "divisible executors" {
+    class SingleThreadedDivExecutor<NT> {
+      -service: A
+      -state: S
+      -node: Arc<NT>
+      --
+      +init(handle, initial_state, service, node) : Result<DivStateInstallHandle<S>>
+    }
+
+    class MultiThreadedDivExecutor<NT> {
+      -service: A
+      -state: Arc<S>
+      -node: Arc<NT>
+      --
+      +init(handle, initial_state, service, node) : Result<DivStateInstallHandle<S>>
+    }
+
+    SingleThreadedDivExecutor ..|> TDivisibleStateExecutor
+    MultiThreadedDivExecutor ..|> TDivisibleStateExecutor
+  }
+
+  package "CRUD" {
+    interface CRUDState {
+      +read(key) : Option<&Value>
+      +create(key, value) : Result<()>
+      +update(key, value) : Result<()>
+      +delete(key) : Result<()>
+    }
+
+    interface CRUDApplication<S> {
+      +speculatively_execute(req) : (Reply, Vec<Access>)
+    }
+
+    class Access {
+      +key: Key
+      +access_type: AccessType
+    }
+
+    enum AccessType {
+      Read
+      Write
+      Delete
+    }
+
+    Access *-- AccessType
+  }
+
+  package "repliers" {
+    class ReplicaReplier {
+      -node: Arc<NT>
+      --
+      +send_reply(reply: SMRReply, target: NodeId)
+    }
+    ReplicaReplier ..|> ReplyNode
+  }
+
+  ExecutorHandle ..> UpdateBatch : sends
+  ExecutorHandle ..> UnorderedUpdateBatch : sends
+  SingleThreadedMonExecutor ..> ExecutorHandle : uses
+  MultiThreadedMonExecutor ..> ExecutorHandle : uses
+  MultiThreadedMonExecutor ..> CRUDState : requires S
+  MultiThreadedMonExecutor ..> CRUDApplication : requires A
+}
+
+@enduml

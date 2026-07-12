@@ -1,0 +1,59 @@
+@startuml atlas-log-transfer
+title atlas-log-transfer — Log Synchronization
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+' External trait references
+interface "atlas_core::OrderingProtocol" as OrderingProtocol
+interface "atlas_core::TimeoutableMod" as TimeoutableMod
+interface "atlas_core::TimeoutsHandle" as TimeoutsHandle
+interface "atlas_smr_core::StateTransferProtocol" as StateTransferProtocol
+
+package "atlas-log-transfer" {
+
+  class CollabLogTransfer<D, OP, DL, NT, PL, EX> {
+    -curr_seq: SeqNo
+    -default_timeout: Duration
+    -log_transfer_state: LogTransferState<Proof<D, OP>, Decision<D, OP>>
+    -timeouts: TimeoutsHandle
+    -node: Arc<NT>
+    --
+    +poll() : Result<LTResult>
+    +process_message(msg: StoredMessage) : Result<LTResult>
+    +install_log(log: Vec<Proof>) : Result<()>
+  }
+
+  enum LogTransferState<P, D> {
+    Init
+    FetchingSeqNo { contacted: HashSet<NodeId>, received: HashMap<NodeId, SeqNo> }
+    FetchingLogParts { target_seq: SeqNo, received_parts: BTreeMap<SeqNo, P> }
+    FetchingLog { target_seq: SeqNo, received_log: BTreeMap<SeqNo, D> }
+  }
+
+  enum LTResult {
+    Running
+    InstallLog(Vec<Proof>)
+    RunStateTransfer
+    Nil
+  }
+
+  interface LogTransferProtocol<D, OP, POP> {
+    +poll() : Result<LTResult>
+    +process_message(msg: StoredMessage) : Result<LTResult>
+    +install_log(log: Vec<Proof>) : Result<()>
+    +request_latest_log(targets: &[NodeId])
+  }
+
+  interface LogTransferProtocolInitializer {
+    +initialize_log_transfer_protocol(config, node, timeouts) : Result<LogTransferProtocol>
+  }
+
+  CollabLogTransfer ..|> LogTransferProtocol
+  CollabLogTransfer *-- LogTransferState
+  CollabLogTransfer ..> TimeoutsHandle : uses
+  CollabLogTransfer ..> LTResult : returns
+  LogTransferProtocolInitializer ..> LogTransferProtocol : creates
+}
+
+@enduml

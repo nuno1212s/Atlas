@@ -114,8 +114,8 @@ impl ReconfigurationNetworkCommunication {
             None => match self.network_update_receiver.try_recv() {
                 Ok(msg) => Ok(Some(msg)),
                 Err(err) => match err {
-                    TryRecvError::ChannelEmpty | TryRecvError::Timeout => Ok(None),
-                    TryRecvError::ChannelDc => {
+                    TryRecvError::ChannelEmpty { .. } | TryRecvError::Timeout { .. } => Ok(None),
+                    TryRecvError::ChannelDc { .. } => {
                         Err!(err)
                     }
                 },
@@ -123,8 +123,8 @@ impl ReconfigurationNetworkCommunication {
             Some(timeout) => match self.network_update_receiver.recv_timeout(timeout) {
                 Ok(msg) => Ok(Some(msg)),
                 Err(err) => match err {
-                    TryRecvError::ChannelEmpty | TryRecvError::Timeout => Ok(None),
-                    TryRecvError::ChannelDc => {
+                    TryRecvError::ChannelEmpty { .. } | TryRecvError::Timeout { .. } => Ok(None),
+                    TryRecvError::ChannelDc { .. } => {
                         Err!(err)
                     }
                 },
@@ -154,8 +154,8 @@ impl NetworkReconfigurationCommunication {
             match self.network_update_receiver.recv_timeout(timeout) {
                 Ok(msg) => Ok(Some(msg)),
                 Err(err) => match err {
-                    TryRecvError::ChannelEmpty | TryRecvError::Timeout => Ok(None),
-                    TryRecvError::ChannelDc => {
+                    TryRecvError::ChannelEmpty { .. } | TryRecvError::Timeout { .. } => Ok(None),
+                    TryRecvError::ChannelDc { .. } => {
                         Err(anyhow!("Reconfig message channel has disconnected?"))
                     }
                 },
@@ -164,8 +164,8 @@ impl NetworkReconfigurationCommunication {
             match self.network_update_receiver.try_recv() {
                 Ok(msg) => Ok(Some(msg)),
                 Err(err) => match err {
-                    TryRecvError::ChannelEmpty | TryRecvError::Timeout => Ok(None),
-                    TryRecvError::ChannelDc => {
+                    TryRecvError::ChannelEmpty { .. } | TryRecvError::Timeout { .. } => Ok(None),
+                    TryRecvError::ChannelDc { .. } => {
                         Err(anyhow!("Reconfig message channel has disconnected?"))
                     }
                 },
