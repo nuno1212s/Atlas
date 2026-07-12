@@ -25,7 +25,7 @@ use atlas_smr_execution::repliers::ExecutorReplier;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::marker::PhantomData;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 
 pub(super) mod comm_handles;
 pub(super) mod confirmed_requests;
@@ -112,14 +112,14 @@ where
             match self.run_mode {
                 RunMode::Normal => {
                     if let Err(err) = self.run_normal_mode() {
-                        error!("Confirmed worker failed with error: {:?}", err);
+                        error!("Confirmed worker failed with error: {:?} during normal mode", err);
 
                         break;
                     }
                 }
                 RunMode::StateTransfer => {
                     if let Err(err) = self.run_state_transfer_mode() {
-                        error!("Confirmed worker failed with error: {:?}", err);
+                        error!("Confirmed worker failed with error: {:?} during state transfer mode", err);
 
                         break;
                     }
@@ -142,9 +142,9 @@ where
 
         sync_select! {
             recv(unwrap_channel!(self.confirmed_channels.update_messages())) -> msg =>
-                self.drain_update_messages(msg.map_err(RecvError::from)?),
+                self.drain_update_messages(msg.map_err(|err| RecvError::from_base_error_with_channel(err, self.confirmed_channels.update_messages().name().cloned()))?),
             recv(unwrap_channel!(self.confirmed_channels.incoming_preemptive_msg())) -> msg =>
-            exhaust_and_consume!(msg.map_err(RecvError::from)?,
+            exhaust_and_consume!(msg.map_err(|err| RecvError::from_base_error_with_channel(err, self.confirmed_channels.update_messages().name().cloned()))?,
                 self.confirmed_channels.incoming_preemptive_msg(),
                 self, handle_confirmed_update),
         }

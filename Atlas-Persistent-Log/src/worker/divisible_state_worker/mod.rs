@@ -143,8 +143,8 @@ where
                     continue;
                 }
                 Err(err) => match err {
-                    TryRecvError::ChannelEmpty => {}
-                    TryRecvError::ChannelDc | TryRecvError::Timeout => {
+                    TryRecvError::ChannelEmpty { .. } => {}
+                    TryRecvError::ChannelDc { .. } | TryRecvError::Timeout { .. } => {
                         error!("Error receiving message: {err:?}");
                     }
                 },
