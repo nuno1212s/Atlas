@@ -72,7 +72,10 @@ where
             };
 
             if let Err(err) = result {
-                error!("Preemptive worker thread failed with error: {err} during run-mode {:?}", &self.run_mode);
+                error!(
+                    "Preemptive worker thread failed with error: {err} during run-mode {:?}",
+                    &self.run_mode
+                );
 
                 break;
             }

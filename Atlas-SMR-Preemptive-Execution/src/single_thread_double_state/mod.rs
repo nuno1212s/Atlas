@@ -149,28 +149,37 @@ where
         T: ExecutorReplier + 'static,
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     {
-        match &self.run_mode {
-            RunMode::Normal => {
-                channel::sync::sync_select! {
-                     recv(unwrap_channel!(self.work_rx)) -> exec_req => {
-                        if let Ok(exec_req) = exec_req {
-                            self.handle_preemptive_execution_request(exec_req);
+        loop {
+            match &self.run_mode {
+                RunMode::Normal => {
+                    channel::sync::sync_select! {
+                         recv(unwrap_channel!(self.work_rx)) -> exec_req => {
+                            match exec_req {
+                                Ok(exec_req) => self.handle_preemptive_execution_request(exec_req),
+                                Err(_) => {
+                                    // The work channel has disconnected — the executor
+                                    // handle was dropped, so the executor is shutting
+                                    // down. Return to terminate this thread cleanly
+                                    // instead of spinning on the closed channel.
+                                    return;
+                                }
+                            }
                         }
                     }
                 }
-            }
-            RunMode::StateTransfer => {
-                let message = quiet_unwrap!(self.state_rx.recv());
+                RunMode::StateTransfer => {
+                    let message = quiet_unwrap!(self.state_rx.recv());
 
-                let seq = message.sequence_number();
-                let state = message.into_state();
+                    let seq = message.sequence_number();
+                    let state = message.into_state();
 
-                // when we receive a state message, we can immediately
-                // Send it to both the confirmed worker and the preemptive worker.
-                quiet_unwrap!(self.send_state_to_preemptive_worker(seq, state.clone()));
-                quiet_unwrap!(self.send_state_to_confirmed_worker(seq, state));
+                    // when we receive a state message, we can immediately
+                    // Send it to both the confirmed worker and the preemptive worker.
+                    quiet_unwrap!(self.send_state_to_preemptive_worker(seq, state.clone()));
+                    quiet_unwrap!(self.send_state_to_confirmed_worker(seq, state));
 
-                self.set_run_mode(RunMode::Normal);
+                    self.set_run_mode(RunMode::Normal);
+                }
             }
         }
     }

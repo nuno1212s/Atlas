@@ -63,6 +63,14 @@ where
     current_state_seq_no: SeqNo,
     /// Current sequence number of *confirmed* updates that have been committed.
     current_confirmed_seq_no: SeqNo,
+    /// Whether any baseline has been established yet. `false` on a fresh start
+    /// (nothing executed and no state installed). While `false`, the *first*
+    /// batch received — via any path — is adopted as the baseline regardless of
+    /// its sequence number, so the executor tracks whatever numbering the
+    /// ordering protocol uses (febft is 0-indexed; the first ordered batch is
+    /// `SeqNo(0)`). Once a baseline exists, subsequent batches must follow in
+    /// order. State install and catch-up also establish the baseline.
+    started: bool,
     /// Current state, at [current_state_seq_no] sequence number, which has been executed with preemptive updates.
     preemptive_state: S,
 
@@ -91,6 +99,7 @@ where
         Self {
             current_state_seq_no: initial_state.0,
             current_confirmed_seq_no: initial_state.0,
+            started: false,
             preemptive_state: initial_state.1,
             pending_permanent_update: queue,
         }
@@ -101,6 +110,8 @@ where
         self.preemptive_state = confirmed_state;
         self.current_confirmed_seq_no = confirmed_seq_no;
         self.current_state_seq_no = confirmed_seq_no;
+        // A state install establishes the baseline.
+        self.started = true;
         // Position the queue so that the next preemptive update (at confirmed_seq_no + 1)
         // lands at slot 0 and is immediately poppable.
         self.pending_permanent_update
@@ -182,23 +193,32 @@ where
     where
         A: Application<S>,
     {
-        match update_batch
-            .sequence_number()
-            .index(self.current_state_seq_no)
-        {
-            Either::Left(_) => {
-                return Err(ExecuteUpdateError::Backtracking(
-                    update_batch.sequence_number(),
-                    update_batch,
-                ));
+        if self.started {
+            match update_batch
+                .sequence_number()
+                .index(self.current_state_seq_no)
+            {
+                Either::Left(_) => {
+                    return Err(ExecuteUpdateError::Backtracking(
+                        update_batch.sequence_number(),
+                        update_batch,
+                    ));
+                }
+                Either::Right(1) => (),
+                Either::Right(_) => {
+                    return Err(ExecuteUpdateError::FutureRequest(
+                        update_batch.sequence_number(),
+                        self.current_state_seq_no,
+                    ));
+                }
             }
-            Either::Right(1) => (),
-            Either::Right(_) => {
-                return Err(ExecuteUpdateError::FutureRequest(
-                    update_batch.sequence_number(),
-                    self.current_state_seq_no,
-                ));
-            }
+        } else {
+            // Fresh start: adopt this batch's sequence number as the baseline.
+            // Position the pending queue so this entry lands at slot 0 and is
+            // immediately poppable on confirmation.
+            self.pending_permanent_update
+                .reset_with_seq(update_batch.sequence_number());
+            self.started = true;
         }
 
         let pending_copy = update_batch.clone();
@@ -235,6 +255,8 @@ where
 
         self.current_state_seq_no = last_seq;
         self.current_confirmed_seq_no = last_seq;
+        // Catch-up establishes the baseline.
+        self.started = true;
 
         // Position queue at last_seq + 1 so the next preemptive update lands at slot 0.
         self.pending_permanent_update
@@ -255,7 +277,12 @@ where
     ) -> Result<ReplyBatch<Reply<A, S>>, ConfirmedUpdateError> {
         let seq = update_batch.seq_no();
 
-        if self.current_state_seq_no != self.current_confirmed_seq_no {
+        // A directly-finalized batch may only be applied when no preemptive
+        // updates are still pending confirmation. Detect that from the queue
+        // itself (an unconfirmed preemptive entry sits at the head slot) rather
+        // than by comparing seq counters, so the check is correct even on a
+        // fresh start where no baseline has been established yet.
+        if self.pending_permanent_update.peek().is_some() {
             return Err(ConfirmedUpdateError::PendingPreemptiveUpdates {
                 confirmed_update_seq: seq,
                 preemptive_seq: self.current_state_seq_no,
@@ -265,12 +292,19 @@ where
 
         let replies = application.update_batch(&mut self.preemptive_state, update_batch);
 
+        if self.started {
+            // No entry was pushed for this slot (no prior preemptive execution), so
+            // just step the queue's seq pointer forward to account for the consumed slot.
+            self.pending_permanent_update.advance_seq();
+        } else {
+            // Fresh start: adopt this batch as the baseline. Position the queue
+            // just past the consumed slot so the next batch lands correctly.
+            self.pending_permanent_update.reset_with_seq(seq.next());
+            self.started = true;
+        }
+
         self.current_state_seq_no = seq;
         self.current_confirmed_seq_no = seq;
-
-        // No entry was pushed for this slot (no prior preemptive execution), so
-        // just step the queue's seq pointer forward to account for the consumed slot.
-        self.pending_permanent_update.advance_seq();
 
         Ok(replies)
     }
@@ -727,15 +761,20 @@ mod tests {
         let app = TestApp;
         let mut state = new_state();
 
-        // Skip seq 1, go straight to seq 3
+        // Establish the baseline with the first batch (adopted on a fresh start).
+        state
+            .handle_preemptive_update(&app, make_batch(1, &[10]))
+            .unwrap();
+
+        // Now skip seq 2 and jump to seq 3 — a gap ahead of the current head.
         let result = state.handle_preemptive_update(&app, make_batch(3, &[10]));
         assert!(
             matches!(result, Err(ExecuteUpdateError::FutureRequest(s, _)) if s == SeqNo::from(3u32)),
             "expected FutureRequest, got {:?}",
             result
         );
-        // State must be unchanged
-        assert_eq!(state.sequence_number(), SeqNo::ZERO);
+        // State must reflect only the accepted seq-1 batch.
+        assert_eq!(state.sequence_number(), SeqNo::from(1u32));
     }
 
     #[test]

@@ -82,9 +82,7 @@ impl<T> ChannelMixedTx<T> {
             Ok(_) => Ok(()),
             Err(err) => match err {
                 SendTimeoutError::Timeout(e) => Err(TrySendReturnError::Timeout(e, None)),
-                SendTimeoutError::Disconnected(e) => {
-                    Err(TrySendReturnError::Disconnected(e, None))
-                }
+                SendTimeoutError::Disconnected(e) => Err(TrySendReturnError::Disconnected(e, None)),
             },
         }
     }

@@ -59,7 +59,7 @@ impl<T> ChannelSyncRx<T> {
             .recv_timeout(timeout)
             .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
-    
+
     pub fn name(&self) -> Option<&Arc<str>> {
         self.channel_identifier.as_ref()
     }
@@ -96,7 +96,7 @@ impl<T> ChannelSyncTx<T> {
             .try_send(value)
             .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
-    
+
     pub fn name(&self) -> Option<&Arc<str>> {
         self.channel_identifier.as_ref()
     }
@@ -183,7 +183,10 @@ pub fn new_bounded_sync<T>(
             channel_identifier: name.clone(),
             inner: tx,
         },
-        ChannelSyncRx { channel_identifier: name, inner: rx },
+        ChannelSyncRx {
+            channel_identifier: name,
+            inner: rx,
+        },
     )
 }
 
@@ -209,7 +212,10 @@ pub fn new_unbounded_sync<T>(
             channel_identifier: name.clone(),
             inner: tx,
         },
-        ChannelSyncRx { channel_identifier: name, inner: rx },
+        ChannelSyncRx {
+            channel_identifier: name,
+            inner: rx,
+        },
     )
 }
 

@@ -22,6 +22,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::test_fixtures::{TestData, make_batch};
+use crate::single_thread_double_state::comm_handles::initialize_shared_channels;
+use crate::single_thread_double_state::confirmed_worker::comm_handles::{
+    ConfirmedUpdateMessage, ConfirmedWorkerHandle,
+};
+use crate::single_thread_double_state::confirmed_worker::init_confirmed_worker;
+use crate::single_thread_double_state::preemptive_worker::comm_handles::{
+    PreemptiveWorkMessage, PreemptiveWorkerHandle,
+};
+use crate::single_thread_double_state::preemptive_worker::initialize_preemptive_execution;
+use crate::single_thread_double_state::state_management::StateMessage;
 use atlas_common::channel::sync::{self, ChannelSyncRx};
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
@@ -33,13 +44,14 @@ use atlas_smr_application::state::monolithic_state::{AppStateMessage, Monolithic
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::{ReplyNode, RequestType};
 use atlas_smr_execution::repliers::FollowerReplier;
-use crate::single_thread_double_state::comm_handles::initialize_shared_channels;
-use crate::single_thread_double_state::confirmed_worker::comm_handles::{ConfirmedUpdateMessage, ConfirmedWorkerHandle};
-use crate::single_thread_double_state::confirmed_worker::init_confirmed_worker;
-use crate::single_thread_double_state::preemptive_worker::comm_handles::{PreemptiveWorkMessage, PreemptiveWorkerHandle};
-use crate::single_thread_double_state::preemptive_worker::initialize_preemptive_execution;
-use crate::single_thread_double_state::state_management::StateMessage;
-use super::test_fixtures::{TestData, make_batch};
+
+use crate::exec_handle::PreemptiveExecutorHandle;
+use crate::single_thread_double_state::{PreemptiveDuplicateStateMonolithicExecutor, init_handle};
+use atlas_common::channel::sync::ChannelSyncTx;
+use atlas_smr_application::TExecutionHandle;
+use atlas_smr_application::deterministic_execution::TDeterministicExecutionHandle;
+use atlas_smr_application::preemptive_execution::TPreemptiveExecutionHandle;
+use atlas_smr_application::state::monolithic_state::InstallStateMessage;
 
 /// Counter state. The value is the running total of all applied requests.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -127,7 +139,6 @@ impl ReplyNode<SMRReply<TestData>> for NoopNode {
         Ok(())
     }
 }
-
 
 /// Timeout used for all blocking channel reads to avoid hanging tests.
 const RECV_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1365,4 +1376,407 @@ fn test_calc_catchup_then_resume_states_converge() {
 
     // (10 + 5) × 4 = 60
     assert_states_converge(&result_a, &result_b, 60);
+}
+
+// ===========================================================================
+// Orchestrator integration tests
+// (PreemptiveDuplicateStateMonolithicExecutor, via `init`)
+// ===========================================================================
+//
+// The tests above drive the confirmed and preemptive workers directly. These
+// instead spin up the full executor through `init`, exercising the orchestrator
+// thread (`worker`) that fans each `PreemptiveExecutionRequest` out to the two
+// workers — the layer a real replica actually uses.
+//
+// The orchestrator must keep servicing requests for the lifetime of the
+// executor. An orchestrator that processed a single request and then let its
+// thread return would drop both worker handles, and the workers would die with
+// a channel-disconnect error on their very next receive. That is precisely the
+// regression these tests guard against: every case below requires the
+// orchestrator to handle more than one request (and `test_executor_*state
+// transfer*` also requires it to cycle Normal → StateTransfer → Normal).
+//
+// Confirmed state is observed through the checkpoint receiver returned by
+// `init`, which only carries a message for the `*AndGetAppstate` request
+// variants — so those double as observation points.
+
+/// Spawn a full counter executor and return the request handle, the
+/// state-install sender, and the checkpoint (app-state) receiver.
+#[allow(clippy::type_complexity)]
+fn spawn_executor() -> (
+    PreemptiveExecutorHandle<u32>,
+    ChannelSyncTx<InstallStateMessage<Counter>>,
+    ChannelSyncRx<AppStateMessage<Counter>>,
+) {
+    let handle = init_handle::<CounterApp, Counter>();
+
+    let (state_tx, checkpoint_rx) =
+        PreemptiveDuplicateStateMonolithicExecutor::<Counter, CounterApp, NoopNode>::init::<
+            FollowerReplier,
+        >(
+            handle.get_request_receiver().clone(),
+            None,
+            CounterApp,
+            Arc::new(NoopNode),
+        )
+        .expect("failed to init executor");
+
+    (handle, state_tx, checkpoint_rx)
+}
+
+// ---------------------------------------------------------------------------
+// Deferred-persistence / mixed-delivery situations
+// ---------------------------------------------------------------------------
+//
+// The replica's persistence layer can deliver a decision's confirmation via two
+// different paths:
+//   * the normal finalize — `queue_preemptive_update_finalized(seq)`, or
+//   * a re-delivery as a directly-confirmed batch when persistence was deferred
+//     (`register_decisions_logged` -> `queue_update`, i.e. the ConfirmedUpdate
+//     path; see Atlas-SMR-Replica/src/persistent_log/mod.rs).
+//
+// Because a seq is speculated (`queue_preemptive_update`) as soon as its decision
+// info arrives, but its confirmation may then come via *either* path — and the
+// two paths can race — the executor can see a confirmation for an already-
+// speculated seq, or confirmations that arrive out of order relative to the
+// speculation queue. The idle benchmark that produced the field failure is
+// almost entirely empty (0-op) batches, so these paths dominate.
+
+/// Empty (0-op) batches — the dominant shape of an idle workload — must be
+/// handled on the preemptive path.
+#[test]
+fn test_executor_empty_batch_preemptive() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle.queue_preemptive_update(make_batch(0, &[])).unwrap();
+    handle
+        .queue_update_finalized_and_get_appstate(SeqNo::from(0u32))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("timed out on empty preemptive batch");
+    assert_eq!(msg.seq(), SeqNo::from(0u32));
+    assert_eq!(msg.state().0, 0);
+}
+
+/// Empty (0-op) batch on the directly-confirmed path.
+#[test]
+fn test_executor_empty_batch_confirmed() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle
+        .queue_update_and_get_appstate(make_batch(0, &[]))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("timed out on empty confirmed batch");
+    assert_eq!(msg.seq(), SeqNo::from(0u32));
+    assert_eq!(msg.state().0, 0);
+}
+
+/// A directly-confirmed batch followed by a speculated-then-finalized one —
+/// the two delivery paths alternating across consecutive seqs.
+#[test]
+fn test_executor_confirmed_then_preemptive() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle.queue_update(make_batch(0, &[10])).unwrap();
+    handle
+        .queue_preemptive_update(make_batch(1, &[20]))
+        .unwrap();
+    handle
+        .queue_update_finalized_and_get_appstate(SeqNo::from(1u32))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("timed out on confirmed-then-preemptive");
+    assert_eq!(msg.seq(), SeqNo::from(1u32));
+    assert_eq!(msg.state().0, 30); // 10 + 20
+}
+
+/// KNOWN GAP — currently fails, so `#[ignore]`d. Deferred-persistence re-delivery:
+/// a seq is speculated via `queue_preemptive_update`, then the *same* seq is
+/// re-delivered as a directly-confirmed batch (`queue_update`) because its
+/// persistence was deferred. The executor must treat the confirmed delivery as
+/// the confirmation of the existing speculation. Today the preemptive worker
+/// instead errors with `PendingPreemptiveUpdates` and dies — the first app-state
+/// still lands (the confirmed worker emits it before the death), which masks the
+/// failure, so the test also drives a follow-up seq that only succeeds if the
+/// preemptive worker is still alive.
+#[test]
+#[ignore = "known gap: a ConfirmedUpdate for an already-speculated seq (deferred persistence) kills the preemptive worker; fix needs a design decision"]
+fn test_executor_speculated_seq_redelivered_as_confirmed_update() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle
+        .queue_preemptive_update(make_batch(0, &[10]))
+        .unwrap();
+    handle
+        .queue_update_and_get_appstate(make_batch(0, &[10]))
+        .unwrap();
+
+    let first = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("no app state for re-delivered seq 0");
+    assert_eq!(first.seq(), SeqNo::from(0u32));
+    assert_eq!(first.state().0, 10);
+
+    // The preemptive worker must still be alive to process the next seq.
+    handle.queue_preemptive_update(make_batch(1, &[5])).unwrap();
+    handle
+        .queue_update_finalized_and_get_appstate(SeqNo::from(1u32))
+        .unwrap();
+
+    let second = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("preemptive worker died after a ConfirmedUpdate of a speculated seq");
+    assert_eq!(second.seq(), SeqNo::from(1u32));
+    assert_eq!(second.state().0, 15); // 10 + 5
+}
+
+/// KNOWN GAP — currently fails, so `#[ignore]`d. Out-of-order finalize: with
+/// deferred persistence, seq 0's finalize is deferred while seq 1 is finalized
+/// first, so the finalize for seq 1 arrives while seq 0 is still the pending
+/// head. Today `handle_update_confirmed` requires the confirmed seq to match the
+/// head exactly and the preemptive worker dies with `SeqMismatch`. The executor
+/// needs to reconcile confirmations that arrive out of order relative to the
+/// speculation queue.
+#[test]
+#[ignore = "known gap: out-of-order finalize (deferred persistence) kills the preemptive worker with SeqMismatch; fix needs a design decision"]
+fn test_executor_out_of_order_finalize() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle
+        .queue_preemptive_update(make_batch(0, &[10]))
+        .unwrap();
+    handle
+        .queue_preemptive_update(make_batch(1, &[20]))
+        .unwrap();
+
+    // seq 1 finalized before seq 0 (seq 0's finalize deferred by persistence).
+    handle.queue_update_finalized(SeqNo::from(1u32)).unwrap();
+    // seq 0 confirmed later, and we observe the resulting state.
+    handle
+        .queue_update_finalized_and_get_appstate(SeqNo::from(0u32))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("preemptive worker died on out-of-order finalize");
+    // Both speculated batches confirmed → confirmed state = 10 + 20 = 30.
+    assert_eq!(msg.state().0, 30);
+}
+
+/// Regression test for the missing orchestrator loop: a preemptive update
+/// followed by its finalization requires the orchestrator to process two
+/// requests. If the orchestrator thread exited after the first, the
+/// finalization would never reach the workers and no app state would be emitted.
+#[test]
+fn test_executor_survives_multiple_requests() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle
+        .queue_preemptive_update(make_batch(1, &[10]))
+        .unwrap();
+    handle
+        .queue_update_finalized_and_get_appstate(SeqNo::from(1u32))
+        .unwrap();
+
+    let msg = checkpoint_rx.recv_timeout(RECV_TIMEOUT).expect(
+        "timed out waiting for app state (seq 1) — orchestrator stopped servicing requests",
+    );
+    assert_eq!(msg.seq(), SeqNo::from(1u32));
+    assert_eq!(msg.state().0, 10);
+}
+
+/// Drive many preemptive batches through the orchestrator, confirming each and
+/// observing the cumulative confirmed state after every one. Stresses the
+/// orchestrator loop across many iterations.
+#[test]
+fn test_executor_many_sequential_preemptive_batches() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    let mut expected = 0u32;
+    for seq in 1u32..=10 {
+        let value = seq * 2;
+        expected += value;
+
+        handle
+            .queue_preemptive_update(make_batch(seq, &[value]))
+            .unwrap();
+        handle
+            .queue_update_finalized_and_get_appstate(SeqNo::from(seq))
+            .unwrap();
+
+        let msg = checkpoint_rx
+            .recv_timeout(RECV_TIMEOUT)
+            .unwrap_or_else(|_| panic!("timed out waiting for app state (seq {seq})"));
+        assert_eq!(msg.seq(), SeqNo::from(seq));
+        assert_eq!(
+            msg.state().0,
+            expected,
+            "cumulative confirmed state mismatch at seq {seq}"
+        );
+    }
+}
+
+/// Directly-finalized (non-speculative) batches routed through the orchestrator
+/// accumulate correctly. Also requires more than one orchestrator request.
+#[test]
+fn test_executor_direct_confirmed_updates_accumulate() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle.queue_update(make_batch(1, &[5])).unwrap();
+    handle
+        .queue_update_and_get_appstate(make_batch(2, &[10]))
+        .unwrap();
+
+    let msg = checkpoint_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
+    assert_eq!(msg.seq(), SeqNo::from(2u32));
+    assert_eq!(msg.state().0, 15); // 5 + 10
+}
+
+/// State transfer driven through the orchestrator. `poll_state_channel` switches
+/// the orchestrator into StateTransfer mode; the installed state then arrives on
+/// the state channel, after which the orchestrator must return to Normal mode
+/// and resume servicing requests. Guards both the orchestrator loop and its
+/// StateTransfer → Normal transition.
+#[test]
+fn test_executor_state_transfer_then_resume() {
+    let (handle, state_tx, checkpoint_rx) = spawn_executor();
+
+    handle.poll_state_channel().unwrap();
+    state_tx
+        .send(InstallStateMessage::new(SeqNo::from(5u32), Counter(100)))
+        .unwrap();
+
+    // Back in Normal mode: a directly-confirmed batch at seq 6 builds on the
+    // installed state (100 + 10 = 110).
+    handle
+        .queue_update_and_get_appstate(make_batch(6, &[10]))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("timed out after state transfer — orchestrator did not resume");
+    assert_eq!(msg.seq(), SeqNo::from(6u32));
+    assert_eq!(msg.state().0, 110);
+}
+
+/// Regression test for the 0-indexed first batch (febft numbers ordered
+/// decisions from `SeqNo(0)`). A directly-finalized batch at seq 0 must be
+/// adopted as the baseline and executed — previously the confirmed worker
+/// rejected it as `InvalidSeqNo::Small` (queue head started at seq 1) and hung.
+#[test]
+fn test_executor_first_batch_seq_zero_confirmed() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle
+        .queue_update_and_get_appstate(make_batch(0, &[10]))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("timed out on 0-indexed first confirmed batch");
+    assert_eq!(msg.seq(), SeqNo::from(0u32));
+    assert_eq!(msg.state().0, 10);
+}
+
+/// Regression test for the 0-indexed first batch on the preemptive path.
+/// Previously the preemptive worker dropped seq 0 as `FutureRequest`, then
+/// `finalized(0)` hit an empty queue and killed the worker.
+#[test]
+fn test_executor_first_batch_seq_zero_preemptive() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle
+        .queue_preemptive_update(make_batch(0, &[10]))
+        .unwrap();
+    handle
+        .queue_update_finalized_and_get_appstate(SeqNo::from(0u32))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("timed out on 0-indexed first preemptive batch");
+    assert_eq!(msg.seq(), SeqNo::from(0u32));
+    assert_eq!(msg.state().0, 10);
+}
+
+/// Baseline counterpart to the seq-0 regressions: a first batch at seq 1 must
+/// also be adopted and executed. This is the case that worked before the
+/// adaptive-baseline fix (the queue head started at seq 1), and it must keep
+/// working after it — the adopted baseline follows whatever seq the first batch
+/// carries, whether the ordering protocol numbers from 0 or 1.
+#[test]
+fn test_executor_first_batch_seq_one_confirmed() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle
+        .queue_update_and_get_appstate(make_batch(1, &[10]))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("timed out on 1-indexed first confirmed batch");
+    assert_eq!(msg.seq(), SeqNo::from(1u32));
+    assert_eq!(msg.state().0, 10);
+}
+
+/// Drive a full 0-indexed sequence (seqs 0..=9) preemptively, exactly as febft
+/// delivers ordered decisions, confirming each and checking the cumulative
+/// confirmed state. Guards the whole 0-indexed pipeline end-to-end.
+#[test]
+fn test_executor_zero_indexed_sequence() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    let mut expected = 0u32;
+    for seq in 0u32..=9 {
+        let value = seq + 1;
+        expected += value;
+
+        handle
+            .queue_preemptive_update(make_batch(seq, &[value]))
+            .unwrap();
+        handle
+            .queue_update_finalized_and_get_appstate(SeqNo::from(seq))
+            .unwrap();
+
+        let msg = checkpoint_rx
+            .recv_timeout(RECV_TIMEOUT)
+            .unwrap_or_else(|_| panic!("timed out at 0-indexed seq {seq}"));
+        assert_eq!(msg.seq(), SeqNo::from(seq));
+        assert_eq!(
+            msg.state().0,
+            expected,
+            "cumulative confirmed state mismatch at seq {seq}"
+        );
+    }
+}
+
+/// A state transfer followed by several more batches: verifies the orchestrator
+/// keeps looping after it has cycled back from StateTransfer to Normal.
+#[test]
+fn test_executor_survives_requests_after_state_transfer() {
+    let (handle, state_tx, checkpoint_rx) = spawn_executor();
+
+    handle.poll_state_channel().unwrap();
+    state_tx
+        .send(InstallStateMessage::new(SeqNo::from(3u32), Counter(50)))
+        .unwrap();
+
+    // Two directly-confirmed batches after the transfer.
+    handle.queue_update(make_batch(4, &[10])).unwrap();
+    handle
+        .queue_update_and_get_appstate(make_batch(5, &[7]))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("timed out on seq 5 after state transfer");
+    assert_eq!(msg.seq(), SeqNo::from(5u32));
+    assert_eq!(msg.state().0, 67); // 50 + 10 + 7
 }

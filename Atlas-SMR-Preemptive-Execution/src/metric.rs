@@ -75,7 +75,7 @@ pub const CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID: usize = 816;
 
 // ---------------------------------------------------------------------------
 // Scalable CRUD executor metrics (817-820)
-// ---------------------------------------------------------------------------
+// ---------------------------  ------------------------------------------------
 
 /// Total wall-clock time for one parallel+collision+reexec cycle in the scalable CRUD executor.
 pub const SCALABLE_PREEMPTIVE_EXECUTION_TIME: &str = "SCALABLE_PREEMPTIVE_EXECUTION_TIME";
