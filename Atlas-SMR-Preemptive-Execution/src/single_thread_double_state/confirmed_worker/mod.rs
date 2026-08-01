@@ -18,7 +18,6 @@ use atlas_common::{exhaust_and_consume, quiet_unwrap, unwrap_channel};
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Application, Request};
-use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::monolithic_state::{AppStateMessage, MonolithicState};
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::ReplyNode;
@@ -26,7 +25,7 @@ use atlas_smr_execution::repliers::ExecutorReplier;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::marker::PhantomData;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::error;
 
 pub(super) mod comm_handles;
 pub(super) mod confirmed_requests;

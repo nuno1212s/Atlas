@@ -87,7 +87,7 @@ impl<T> ChannelAsyncTx<T> {
     //Asynchronously send message through channel
     #[inline]
     pub fn send(&mut self, message: T) -> ChannelTxFut<'_, T> {
-        ChannelTxFut::new(self.inner.send(message).into(), self.name.clone())
+        ChannelTxFut::new(self.inner.send(message), self.name.clone())
     }
 }
 
@@ -95,7 +95,7 @@ impl<T> ChannelAsyncRx<T> {
     //Asynchronously recv message from channel
     #[inline]
     pub fn recv(&mut self) -> ChannelRxFut<'_, T> {
-        ChannelRxFut::new(self.inner.recv().into(), self.name.clone())
+        ChannelRxFut::new(self.inner.recv(), self.name.clone())
     }
 }
 
