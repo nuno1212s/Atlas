@@ -3,4 +3,4 @@
 	url = https://github.com/nuno1212s/Atlas-Tools.git
 [submodule "Atlas-Examples"]
 	path = Atlas-Examples
-	url = git@github.com:nuno1212s/Atlas-Examples.git
+	url = https://github.com/nuno1212s/Atlas-Examples.git
