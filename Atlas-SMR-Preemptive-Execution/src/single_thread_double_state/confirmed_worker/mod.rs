@@ -9,7 +9,7 @@ use crate::single_thread_double_state::state_management::{
     ConfirmedToPreemptiveMsg, PreemptiveToConfirmedMsg, StateMessage,
 };
 use atlas_common::channel::sync::sync_select;
-use atlas_common::channel::{NoRetChannelErr, RecvError};
+use atlas_common::channel::{NoRetChannelErr, RecvError, TryRecvError};
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::tbo_queue::TTboQueue;
 use atlas_common::ordering::tbo_queue::vec_tbo_queue::VTboQueue;
@@ -18,6 +18,7 @@ use atlas_common::{exhaust_and_consume, quiet_unwrap, unwrap_channel};
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Application, Request};
+use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::monolithic_state::{AppStateMessage, MonolithicState};
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::ReplyNode;
@@ -46,10 +47,11 @@ where
 {
     let (worker_handle, worker_channels) = comm_handles::initialize_handles(shared_worker_channels);
 
-    // The TBO queue must start at initial_seq + 1 so that the first incoming
-    // confirmed batch (at initial_seq + 1) lands at slot 0 and is immediately poppable.
-    let mut update_queue = VTboQueue::default();
-    update_queue.reset_with_seq(state.0.next());
+    // On a fresh start the queue has no baseline yet: the first confirmed batch
+    // is adopted (see `awaiting_first_confirmed`), so its sequence number defines
+    // slot 0 regardless of whether the ordering protocol numbers from 0 or 1.
+    // A state install / catch-up positions the queue explicitly instead.
+    let update_queue = VTboQueue::default();
 
     let worker_state = ConfirmedUpdateExecutor::<_, _, _, T> {
         application,
@@ -62,6 +64,7 @@ where
             .build()
             .unwrap(),
         update_queue,
+        awaiting_first_confirmed: true,
         _phantom: PhantomData,
     };
 
@@ -79,6 +82,13 @@ where
     send_node: Arc<NT>,
     confirmed_channels: ConfirmedChannels<Request<A, S>, S>,
     update_queue: VTboQueue<Update<Request<A, S>>>,
+
+    /// `true` until the first confirmed batch is pushed on a fresh start. While
+    /// set, the first pushed batch's sequence number is adopted as the queue
+    /// baseline (slot 0), so the confirmed worker follows the ordering
+    /// protocol's numbering (febft is 0-indexed). Cleared by the first push, a
+    /// state install, or a catch-up.
+    awaiting_first_confirmed: bool,
 
     read_thread_pool: ThreadPool,
 
@@ -112,14 +122,20 @@ where
             match self.run_mode {
                 RunMode::Normal => {
                     if let Err(err) = self.run_normal_mode() {
-                        error!("Confirmed worker failed with error: {:?} during normal mode", err);
+                        error!(
+                            "Confirmed worker failed with error: {:?} during normal mode",
+                            err
+                        );
 
                         break;
                     }
                 }
                 RunMode::StateTransfer => {
                     if let Err(err) = self.run_state_transfer_mode() {
-                        error!("Confirmed worker failed with error: {:?} during state transfer mode", err);
+                        error!(
+                            "Confirmed worker failed with error: {:?} during state transfer mode",
+                            err
+                        );
 
                         break;
                     }
@@ -136,15 +152,31 @@ where
         // StateTransferAvailable is always handled before any confirmations
         // that are already queued, preventing them from landing at wrong
         // TBO-queue slots and being discarded by the subsequent reset.
-        if let Ok(msg) = self.confirmed_channels.update_messages().try_recv() {
-            return self.drain_update_messages(msg);
+        match self.confirmed_channels.update_messages().try_recv() {
+            Ok(confirmed_update_message) => {
+                self.drain_update_messages(confirmed_update_message)?;
+            }
+            Err(TryRecvError::ChannelDc { .. }) => {
+                error!("Confirmed worker disconnected from orchestrator");
+            }
+            Err(TryRecvError::ChannelEmpty { .. } | TryRecvError::Timeout { .. }) => {}
+        }
+
+        // If draining the queued update messages switched us out of Normal mode
+        // (e.g. a StateTransferAvailable), return immediately so the worker loop
+        // can dispatch to the correct mode handler. Falling through to the select
+        // below would block on `update_messages`/`incoming_preemptive_msg`, whereas
+        // the next expected message (the state install) arrives on `state_messages`,
+        // which only `run_state_transfer_mode` reads — leaving the worker stuck.
+        if !matches!(self.run_mode, RunMode::Normal) {
+            return Ok(());
         }
 
         sync_select! {
             recv(unwrap_channel!(self.confirmed_channels.update_messages())) -> msg =>
                 self.drain_update_messages(msg.map_err(|err| RecvError::from_base_error_with_channel(err, self.confirmed_channels.update_messages().name().cloned()))?),
             recv(unwrap_channel!(self.confirmed_channels.incoming_preemptive_msg())) -> msg =>
-            exhaust_and_consume!(msg.map_err(|err| RecvError::from_base_error_with_channel(err, self.confirmed_channels.update_messages().name().cloned()))?,
+            exhaust_and_consume!(msg.map_err(|err| RecvError::from_base_error_with_channel(err, self.confirmed_channels.incoming_preemptive_msg().name().cloned()))?,
                 self.confirmed_channels.incoming_preemptive_msg(),
                 self, handle_confirmed_update),
         }
@@ -238,6 +270,7 @@ where
     {
         match update_msg {
             PreemptiveToConfirmedMsg::UpdateConfirmed(confirmed_update, instant) => {
+                self.adopt_baseline_if_fresh(confirmed_update.seq_no());
                 if let Err(err) = self
                     .update_queue
                     .push(Update::Update(confirmed_update, instant))
@@ -246,6 +279,7 @@ where
                 }
             }
             PreemptiveToConfirmedMsg::UpdateConfirmedEmitAppState(confirmed_update, instant) => {
+                self.adopt_baseline_if_fresh(confirmed_update.seq_no());
                 if let Err(err) = self
                     .update_queue
                     .push(Update::UpdateAndGetState(confirmed_update, instant))
@@ -274,6 +308,8 @@ where
         self.confirmed_state.install_state_message(seq, s.clone());
         // Position queue at seq + 1 so the next batch lands at slot 0.
         self.update_queue.reset_with_seq(seq.next());
+        // A state install establishes the baseline explicitly.
+        self.awaiting_first_confirmed = false;
 
         self.set_run_mode(RunMode::Normal);
 
@@ -302,6 +338,8 @@ where
         self.update_queue
             .advance_to_seq(self.confirmed_state.sequence_number().next())
             .expect("Failed to advance to seq number.");
+        // Catch-up establishes the baseline.
+        self.awaiting_first_confirmed = false;
     }
 
     fn handle_unordered_batch(&self, unordered_batch: UnorderedUpdateBatch<Request<A, S>>) {
@@ -318,6 +356,18 @@ where
 
     fn set_run_mode(&mut self, run_mode: RunMode) {
         self.run_mode = run_mode;
+    }
+
+    /// On a fresh start, adopt the first confirmed batch's sequence number as the
+    /// queue baseline so it lands at slot 0 and is immediately poppable. This lets
+    /// the confirmed worker follow whatever numbering the ordering protocol uses
+    /// (febft is 0-indexed; the first ordered batch is `SeqNo(0)`). After the
+    /// first adoption the flag is cleared and normal in-order pushing applies.
+    fn adopt_baseline_if_fresh(&mut self, seq: SeqNo) {
+        if self.awaiting_first_confirmed {
+            self.update_queue.reset_with_seq(seq);
+            self.awaiting_first_confirmed = false;
+        }
     }
 }
 

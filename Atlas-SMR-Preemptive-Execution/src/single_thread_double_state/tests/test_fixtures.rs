@@ -97,4 +97,3 @@ pub fn make_batch(seq: u32, ops: &[u32]) -> UpdateBatch<u32> {
     }
     batch
 }
-

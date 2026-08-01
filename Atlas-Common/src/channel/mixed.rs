@@ -77,12 +77,18 @@ where
 
     #[inline]
     pub fn send_async(&self, value: T) -> ChannelTxFut<'_, T> {
-        ChannelTxFut::new(self.inner.send(value).into(), self.channel_identifier.clone())
+        ChannelTxFut::new(
+            self.inner.send(value).into(),
+            self.channel_identifier.clone(),
+        )
     }
 
     #[inline]
     pub fn send_async_return(&self, value: T) -> ChannelTxFut<'_, T> {
-        ChannelTxFut::new(self.inner.send(value).into(), self.channel_identifier.clone())
+        ChannelTxFut::new(
+            self.inner.send(value).into(),
+            self.channel_identifier.clone(),
+        )
     }
 
     #[inline]

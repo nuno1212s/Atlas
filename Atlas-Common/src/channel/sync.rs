@@ -183,7 +183,10 @@ pub fn new_bounded_sync<T>(
             channel_identifier: name.clone(),
             inner: tx,
         },
-        ChannelSyncRx { channel_identifier: name, inner: rx },
+        ChannelSyncRx {
+            channel_identifier: name,
+            inner: rx,
+        },
     )
 }
 
@@ -209,7 +212,10 @@ pub fn new_unbounded_sync<T>(
             channel_identifier: name.clone(),
             inner: tx,
         },
-        ChannelSyncRx { channel_identifier: name, inner: rx },
+        ChannelSyncRx {
+            channel_identifier: name,
+            inner: rx,
+        },
     )
 }
 

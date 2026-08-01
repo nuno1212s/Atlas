@@ -200,7 +200,10 @@ where
         for (pos, accesses, ..) in &parallel_results {
             progress_collision_state(&mut collision_state, *pos, accesses);
         }
-        metric_store_count(SCALABLE_COLLISION_COUNT_ID, collision_state.collisions.len());
+        metric_store_count(
+            SCALABLE_COLLISION_COUNT_ID,
+            collision_state.collisions.len(),
+        );
         metric_store_count(SCALABLE_OPS_PER_BATCH_ID, n);
         if n > 0 {
             metric_store_count(

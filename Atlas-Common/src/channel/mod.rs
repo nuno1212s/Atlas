@@ -170,7 +170,9 @@ impl<T> SendReturnError<T> {
     /// Attach the identifier of the channel that produced this error.
     pub fn with_channel(self, channel: Option<Arc<str>>) -> Self {
         match self {
-            SendReturnError::FailedToSend(value, _) => SendReturnError::FailedToSend(value, channel),
+            SendReturnError::FailedToSend(value, _) => {
+                SendReturnError::FailedToSend(value, channel)
+            }
         }
     }
 }

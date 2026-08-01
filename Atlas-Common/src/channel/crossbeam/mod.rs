@@ -2,13 +2,13 @@ use crate::Err;
 use crate::channel::{
     RecvError, SendError, SendReturnError, TryRecvError, TrySendError, TrySendReturnError,
 };
+use crossbeam_channel::internal::SelectHandle;
 use crossbeam_channel::{
     Receiver, RecvError as CBRecvError, RecvTimeoutError, SendTimeoutError, Sender,
 };
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
-use crossbeam_channel::internal::SelectHandle;
 
 pub struct ChannelSyncRx<T> {
     inner: crossbeam_channel::Receiver<T>,
@@ -53,9 +53,7 @@ impl<T> ChannelSyncTx<T> {
             Ok(_) => Ok(()),
             Err(err) => match err {
                 SendTimeoutError::Timeout(t) => Err(TrySendReturnError::Timeout(t, None)),
-                SendTimeoutError::Disconnected(t) => {
-                    Err(TrySendReturnError::Disconnected(t, None))
-                }
+                SendTimeoutError::Disconnected(t) => Err(TrySendReturnError::Disconnected(t, None)),
             },
         }
     }
@@ -227,9 +225,9 @@ impl From<CBRecvError> for RecvError {
 }
 
 impl RecvError {
-
     pub fn from_base_error_with_channel(_: CBRecvError, channel_name: Option<Arc<str>>) -> Self {
-        Self::ChannelDc { channel: channel_name }
+        Self::ChannelDc {
+            channel: channel_name,
+        }
     }
-
 }
