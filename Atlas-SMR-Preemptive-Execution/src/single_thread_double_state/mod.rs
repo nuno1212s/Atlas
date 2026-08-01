@@ -27,8 +27,9 @@ mod state_management;
 
 #[cfg(test)]
 pub mod tests {
+    /// End-to-end tests driving the preemptive/confirmed worker pair.
+    mod execution;
     pub mod test_fixtures;
-    mod tests;
 }
 
 const EXECUTING_BUFFER: usize = 16384;

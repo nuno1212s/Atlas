@@ -8,7 +8,6 @@ use atlas_common::maybe_vec::MaybeVec;
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_smr_application::state::monolithic_state::AppStateMessage;
 use getset::Getters;
-use std::fmt::{Debug, Formatter};
 
 const CONFIRMED_WORKER_SIZE: usize = 256;
 

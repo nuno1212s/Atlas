@@ -2,7 +2,6 @@ use crate::Err;
 use crate::channel::{
     RecvError, SendError, SendReturnError, TryRecvError, TrySendError, TrySendReturnError,
 };
-use crossbeam_channel::internal::SelectHandle;
 use crossbeam_channel::{
     Receiver, RecvError as CBRecvError, RecvTimeoutError, SendTimeoutError, Sender,
 };
