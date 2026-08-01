@@ -11,14 +11,18 @@ jobs:
     timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          # `Atlas-Tools/keygen` is a workspace member in `Cargo.toml`, but `Atlas-Tools`
+          # is a git submodule. Without this, the directory is empty and *every* cargo
+          # command dies with:
+          #   failed to load manifest for workspace member `.../Atlas-Tools/keygen`
+          submodules: recursive
       - uses: Swatinem/rust-cache@v2
       - name: Install capnproto
         run: sudo apt-get update && sudo apt-get install -y capnproto
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@nightly
         with:
-          profile: minimal
-          toolchain: nightly
           components: rustfmt, clippy
       - name: Check versions
         run: |
@@ -33,7 +37,8 @@ jobs:
         run: cargo clippy --all-targets --no-deps -- -D warnings
 
   unit-tests:
-    timeout-minutes: 5
+    # Cold-cache builds of the full workspace (plus capnp codegen) do not fit in 5 minutes.
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     env:
       # Shrink artifact size by not including debug info. Makes build faster and shrinks cache.
@@ -41,14 +46,13 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_TERM_COLOR: always
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: Swatinem/rust-cache@v2
       - name: Install capnproto
         run: sudo apt-get update && sudo apt-get install -y capnproto
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: taiki-e/install-action@nextest
       - run: cargo build --tests
       - run: cargo nextest run --no-tests pass

@@ -30,7 +30,9 @@ cargo clippy --all-targets --no-deps -- -D warnings
 ```
 
 **Requirements:**
-- Rust nightly (pinned in `rust-toolchain.toml`)
+- Rust nightly — `rust-toolchain.toml` declares `channel = "nightly"` (floating, not date-pinned),
+  so `rustup update` can move the compiler under you. Sibling repos differ: see the toolchain
+  table in the workspace-level `../CLAUDE.md`.
 - `capnproto` system dependency (required by `atlas-capnp`)
 
 ## Architecture Overview
