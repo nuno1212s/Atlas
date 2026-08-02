@@ -1,5 +1,5 @@
-use crate::metrics::metrics_thread::launch_metrics;
 use crate::metrics::MetricKind;
+use crate::metrics::metrics_thread::launch_metrics;
 use atlas_common::node_id::NodeId;
 
 pub mod benchmarks;

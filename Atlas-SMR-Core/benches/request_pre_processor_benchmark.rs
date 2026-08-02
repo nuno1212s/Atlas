@@ -9,11 +9,11 @@ mod pre_processor_benches {
     use atlas_communication::message::{Buf, StoredMessage, WireMessage};
     use atlas_core::request_pre_processing::PreProcessorOutput;
     use atlas_smr_application::serialize::ApplicationData;
+    use atlas_smr_core::SMRReq;
     use atlas_smr_core::message::OrderableMessage;
     use atlas_smr_core::request_pre_processing::worker::{
         PreProcessorWorkMessage, PreProcessorWorkMessageOuter, RequestPreProcessingWorker,
     };
-    use atlas_smr_core::SMRReq;
     use divan::Bencher;
     #[cfg(feature = "serialize_serde")]
     use serde::{Deserialize, Serialize};

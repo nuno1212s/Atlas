@@ -1,0 +1,65 @@
+@startuml atlas-persistent-log
+title atlas-persistent-log — Persistent Storage
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+' External trait references
+interface "atlas_core::OrderingProtocolLog" as OrderingProtocolLog
+interface "atlas_core::PermissionedOrderingProtocolLog" as PermissionedOrderingProtocolLog
+interface "atlas_smr_core::MonolithicStateLog" as MonolithicStateLog
+interface "atlas_smr_core::DivisibleStateLog" as DivisibleStateLog
+
+package "atlas-persistent-log" {
+
+  class PersistentLog<RQ, OPM, POPT, LS, STM> {
+    -mode: PersistentLogMode<RQ>
+    -db: KVDB
+    --
+    +write_committed_seq_no(seq: SeqNo) : Result<()>
+    +write_message(msg: StoredMessage) : Result<()>
+    +write_metadata(meta) : Result<()>
+    +write_proof(proof) : Result<()>
+    +invalidate_seq(seq: SeqNo) : Result<()>
+    +read_latest_state() : Result<Option<Checkpoint>>
+  }
+
+  enum PersistentLogMode<RQ> {
+    Strict(ConsensusBackLogHandle<RQ>)
+    Optimistic
+    None
+  }
+
+  interface PersistentLogModeTrait {
+    +init_persistent_log(config) : Result<PersistentLogMode>
+  }
+
+  interface TLoggedDecisionsHandle<RQ> {
+    +queue_decision(seq: SeqNo, decision: Decision) : Result<()>
+    +queue_proof(proof) : Result<()>
+  }
+
+  class ConsensusBackLogHandle<RQ> {
+    -tx: ChannelSyncTx<BacklogMsg<RQ>>
+    --
+    +queue_proof(proof) : Result<()>
+    +queue_invalidation(seq: SeqNo) : Result<()>
+  }
+
+  enum StrictPersistentLog
+  enum OptimisticPersistentLog
+  enum NoPersistentLog
+
+  StrictPersistentLog ..|> PersistentLogModeTrait
+  OptimisticPersistentLog ..|> PersistentLogModeTrait
+  NoPersistentLog ..|> PersistentLogModeTrait
+
+  PersistentLog ..|> OrderingProtocolLog
+  PersistentLog ..|> PermissionedOrderingProtocolLog
+  PersistentLog ..|> MonolithicStateLog
+  PersistentLog ..|> DivisibleStateLog
+  PersistentLog *-- PersistentLogMode
+  PersistentLogMode ..> ConsensusBackLogHandle : holds in Strict mode
+}
+
+@enduml

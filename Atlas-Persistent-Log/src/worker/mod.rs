@@ -3,8 +3,6 @@ use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Context;
-use log::error;
-
 use atlas_common::channel::oneshot::OneShotTx;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
@@ -22,11 +20,12 @@ use atlas_core::ordering_protocol::{
 };
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
-use atlas_logging_core::decision_log::{DecLog, DecLogMetadata, DecisionLogPersistenceHelper};
+use atlas_logging_core::decision_log::{DecLog, DecLogMetadata, TDecisionLogPersistenceHelper};
 use atlas_smr_application::state::divisible_state::DivisibleState;
+use tracing::error;
 
 use crate::stateful_logs::divisible_state::DivisibleStateMessage;
-use crate::{serialize, CallbackType, ChannelMsg, InstallState, PWMessage, ResponseMessage};
+use crate::{CallbackType, ChannelMsg, InstallState, PWMessage, ResponseMessage, serialize};
 
 pub(super) mod divisible_state_worker;
 pub(super) mod monolithic_worker;
@@ -108,7 +107,7 @@ where
     LS: DecisionLogMessage<RQ, OPM, POPT>,
     PSP: PersistableStateTransferProtocol + 'static,
     POPH: OrderProtocolLogHelper<RQ, OPM, POPT> + 'static,
-    DLPH: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
+    DLPH: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
 {
     request_rx: ChannelSyncRx<ChannelMsg<RQ, OPM, POPT, LS>>,
 
@@ -268,7 +267,7 @@ where
     LS: DecisionLogMessage<RQ, OPM, POPT> + 'static,
     PSP: PersistableStateTransferProtocol + 'static,
     PS: OrderProtocolLogHelper<RQ, OPM, POPT> + 'static,
-    DLPS: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
+    DLPS: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
 {
     pub fn new(
         request_rx: ChannelSyncRx<ChannelMsg<RQ, OPM, POPT, LS>>,
@@ -393,7 +392,7 @@ pub(super) fn read_latest_state<
     POPT: PersistentOrderProtocolTypes<RQ, OPM>,
     LS: DecisionLogMessage<RQ, OPM, POPT>,
     PS: OrderProtocolLogHelper<RQ, OPM, POPT>,
-    PLS: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS>,
+    PLS: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS>,
 >(
     db: &KVDB,
 ) -> Result<Option<InstallState<RQ, OPM, POPT, LS>>> {
@@ -464,7 +463,7 @@ fn read_decision_log<
     POPT: PersistentOrderProtocolTypes<RQ, OPM>,
     LS: DecisionLogMessage<RQ, OPM, POPT>,
     PS: OrderProtocolLogHelper<RQ, OPM, POPT>,
-    PLS: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS>,
+    PLS: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS>,
 >(
     db: &KVDB,
 ) -> Result<Option<DecLog<RQ, OPM, POPT, LS>>> {
@@ -579,7 +578,7 @@ pub(super) fn write_state<
     POPT: PersistentOrderProtocolTypes<RQ, OPM>,
     LS: DecisionLogMessage<RQ, OPM, POPT>,
     PS: OrderProtocolLogHelper<RQ, OPM, POPT>,
-    PLS: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS>,
+    PLS: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS>,
 >(
     db: &KVDB,
     dec_log: InstallState<RQ, OPM, POPT, LS>,
@@ -615,7 +614,7 @@ pub(super) fn write_dec_log<
     POPT: PersistentOrderProtocolTypes<RQ, OPM>,
     PS: OrderProtocolLogHelper<RQ, OPM, POPT>,
     LS: DecisionLogMessage<RQ, OPM, POPT>,
-    PLS: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS>,
+    PLS: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS>,
 >(
     db: &KVDB,
     dec_log: DecLog<RQ, OPM, POPT, LS>,

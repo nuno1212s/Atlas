@@ -6,22 +6,23 @@ use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::SeqNo;
+use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 use atlas_metrics::metrics::metric_duration;
-use atlas_smr_application::app::{
-    AppData, Application, BatchReplies, Reply, Request, UnorderedBatch, UpdateBatch,
-};
+use atlas_smr_application::app::{AppData, Application, Reply, Request};
 use atlas_smr_application::state::divisible_state::{
     AppState, AppStateMessage, DivisibleState, DivisibleStateDescriptor, InstallStateMessage,
 };
-use atlas_smr_application::{ExecutionRequest, ExecutorHandle};
-use atlas_smr_core::exec::ReplyNode;
 use atlas_smr_core::SMRReply;
+use atlas_smr_core::execution::reply::ReplyNode;
 
+use crate::DVStateInstallHandle;
+use crate::crud_states::CRUDApplication;
+use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
 use crate::metric::EXECUTION_LATENCY_TIME_ID;
+use crate::repliers::ExecutorReplier;
 use crate::scalable::{
-    sc_execute_op_batch, sc_execute_unordered_op_batch, CRUDState, ScalableApp, THREAD_POOL_THREADS,
+    CRUDState, THREAD_POOL_THREADS, sc_execute_op_batch, sc_execute_unordered_op_batch,
 };
-use crate::{DVStateInstallHandle, ExecutorHandles, ExecutorReplier};
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
@@ -31,8 +32,7 @@ const PARTS_PER_DELIVERY: usize = 4;
 pub struct ScalableDivisibleStateExecutor<S, A, NT>
 where
     S: DivisibleState + CRUDState + 'static + Send + Sync,
-    A: ScalableApp<S> + 'static,
-    NT: 'static,
+    A: CRUDApplication<S> + 'static,
 {
     application: A,
     state: S,
@@ -51,13 +51,13 @@ where
 impl<S, A, NT> ScalableDivisibleStateExecutor<S, A, NT>
 where
     S: DivisibleState + CRUDState + 'static + Sync,
-    A: ScalableApp<S> + 'static + Send,
+    A: CRUDApplication<S> + 'static + Send,
 {
-    pub fn init_handle() -> ExecutorHandles<A, S> {
+    pub fn init_handle() -> ExecutorHandle<Request<A, S>> {
         let (tx, rx) =
             channel::sync::new_bounded_sync(EXECUTING_BUFFER, Some("Scalable Work Handle"));
 
-        (ExecutorHandle::new(tx), rx)
+        ExecutorHandle::new(tx, rx)
     }
 
     pub fn init<T>(
@@ -115,7 +115,7 @@ where
         std::thread::Builder::new()
             .name("Executor thread".to_string())
             .spawn(move || self.worker::<T>())
-            .expect("Failed to start executor thread");
+            .expect("Failed to start execution thread");
     }
 
     fn worker<T>(&mut self)
@@ -133,7 +133,7 @@ where
                             InstallStateMessage::StatePart(state_part) => {
                                 self.state
                                     .accept_parts(state_part.into_vec())
-                                    .expect("Failed to install state parts into executor");
+                                    .expect("Failed to install state parts into execution");
                             }
                             InstallStateMessage::Done => break,
                         }
@@ -180,8 +180,8 @@ where
     #[inline(always)]
     fn execute_unordered_op_batch(
         &mut self,
-        batch: UnorderedBatch<Request<A, S>>,
-    ) -> BatchReplies<Reply<A, S>> {
+        batch: UnorderedUpdateBatch<Request<A, S>>,
+    ) -> ReplyBatch<Reply<A, S>> {
         sc_execute_unordered_op_batch(&mut self.thread_pool, &self.application, &self.state, batch)
     }
 
@@ -189,7 +189,7 @@ where
     fn execute_op_batch(
         &mut self,
         batch: UpdateBatch<Request<A, S>>,
-    ) -> (SeqNo, BatchReplies<Reply<A, S>>) {
+    ) -> (SeqNo, ReplyBatch<Reply<A, S>>) {
         sc_execute_op_batch(
             &mut self.thread_pool,
             &self.application,
@@ -237,7 +237,7 @@ where
             .expect("Failed to send checkpoint");
     }
 
-    fn execution_finished<T>(&self, seq: Option<SeqNo>, batch: BatchReplies<Reply<A, S>>)
+    fn execution_finished<T>(&self, seq: Option<SeqNo>, batch: ReplyBatch<Reply<A, S>>)
     where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
         T: ExecutorReplier + 'static,

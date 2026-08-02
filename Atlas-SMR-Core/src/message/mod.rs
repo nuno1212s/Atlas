@@ -11,7 +11,7 @@ use atlas_core::messages::{
 use atlas_logging_core::log_transfer::networking::LogTransfer;
 use atlas_smr_application::serialize::ApplicationData;
 
-use crate::exec::RequestType;
+use crate::execution::reply::RequestType;
 use crate::{SMRReply, SMRReq};
 
 ///A reply to an unordered request

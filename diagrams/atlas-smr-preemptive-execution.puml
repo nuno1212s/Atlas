@@ -1,0 +1,102 @@
+@startuml atlas-smr-preemptive-execution
+title atlas-smr-preemptive-execution — Preemptive Execution
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+' External trait references
+interface "atlas_smr_core::TExecutor" as TExecutor
+interface "atlas_smr_core::TMonolithicStateExecutor" as TMonolithicStateExecutor
+interface "atlas_smr_core::ReplyNode" as ReplyNode
+interface "atlas_smr_application::Application" as Application
+interface "atlas_smr_application::MonolithicState" as MonolithicState
+interface "atlas_smr_application::Request" as Request
+
+package "atlas-smr-preemptive-execution" {
+
+  class MonolithicPreemptiveExecutor {
+    Entry point struct; no fields.\n\
+    Implements TExecutor and TMonolithicStateExecutor.
+  }
+
+  MonolithicPreemptiveExecutor ..|> TExecutor
+  MonolithicPreemptiveExecutor ..|> TMonolithicStateExecutor
+
+  package "exec_handle" {
+    class PreemptiveExecutorHandle<RQ> {
+      -request_tx: ChannelSyncTx<PreemptiveMsg<RQ>>
+      -request_rx: Arc<ChannelSyncRx<PreemptiveMsg<RQ>>>
+      --
+      +queue_update(batch: UpdateBatch<RQ>) : Result<()>
+      +queue_preemptive_update(batch: UpdateBatch<RQ>) : Result<()>
+      +queue_preemptive_update_finalized(seq: SeqNo) : Result<()>
+      +queue_unordered(batch: UnorderedUpdateBatch<RQ>) : Result<()>
+      +get_request_receiver() : &Arc<ChannelSyncRx<PreemptiveMsg<RQ>>>
+    }
+
+    enum PreemptiveMsg<RQ> {
+      OrderedBatch(UpdateBatch<RQ>)
+      PreemptiveBatch(UpdateBatch<RQ>)
+      PreemptiveFinalized(SeqNo)
+      UnorderedBatch(UnorderedUpdateBatch<RQ>)
+    }
+  }
+
+  package "single_thread_double_state" {
+    class PreemptiveDuplicateStateMonolithicExecutor<S, A, NT> {
+      -confirmed_state: S
+      -preemptive_state: S
+      -service: A
+      -node: Arc<NT>
+      --
+      +init(rx, initial_state, service, node) : Result<MonStateInstallHandle<S>>
+    }
+
+    package "confirmed_worker" {
+      class ConfirmedWorker<S, A, NT> {
+        -state: S
+        -service: A
+        -node: Arc<NT>
+        -pending_unordered: VecDeque<UnorderedUpdateBatch<RQ>>
+        --
+        +work_loop(rx: ChannelSyncRx<ConfirmedMsg>)
+        +execute_batch(batch: UpdateBatch<RQ>)
+        +install_state(seq: SeqNo, state: S)
+        +execute_unordered(batch: UnorderedUpdateBatch<RQ>)
+      }
+
+      enum ConfirmedMsg<RQ> {
+        ExecuteBatch(UpdateBatch<RQ>)
+        InstallState(SeqNo, S)
+        ExecuteUnordered(UnorderedUpdateBatch<RQ>)
+      }
+    }
+
+    package "preemptive_worker" {
+      class PreemptiveWorker<S, A, NT> {
+        -preemptive_state: S
+        -service: A
+        -confirmed_tx: ChannelSyncTx<ConfirmedMsg>
+        --
+        +work_loop(rx: ChannelSyncRx<PreemptiveMsg>)
+        +execute_preemptive(batch: UpdateBatch<RQ>)
+        +finalize_preemptive(seq: SeqNo)
+        +rollback_preemptive(to_seq: SeqNo)
+      }
+    }
+
+    PreemptiveDuplicateStateMonolithicExecutor *-- ConfirmedWorker : spawns
+    PreemptiveDuplicateStateMonolithicExecutor *-- PreemptiveWorker : spawns
+    PreemptiveWorker ..> ConfirmedWorker : forwards confirmed batches
+  }
+
+  package "metric" {
+    note "Preemptive execution metrics IDs\nregistered with atlas-metrics" as MetricNote
+  }
+
+  MonolithicPreemptiveExecutor ..> PreemptiveExecutorHandle : creates as ExecutionHandle
+  MonolithicPreemptiveExecutor ..> PreemptiveDuplicateStateMonolithicExecutor : delegates init
+  PreemptiveExecutorHandle ..> PreemptiveMsg : sends
+}
+
+@enduml

@@ -23,7 +23,6 @@
 //! the user, that this is a BFT library, so software variation is encouraged;
 //! in a typical system setup, you would probably employ different backend
 //! libraries performing identical duties.
-#![feature(type_alias_impl_trait)]
 
 use crate::error::*;
 use crate::globals::Flag;
@@ -91,7 +90,9 @@ pub unsafe fn init(c: InitConfig) -> Result<Option<InitGuard>> {
         c.async_threads, c.threadpool_threads
     );
 
-    socket::init()?;
+    unsafe {
+        socket::init()?;
+    }
     INITIALIZED.set();
     Ok(Some(InitGuard))
 }
@@ -108,8 +109,10 @@ impl Drop for InitGuard {
 #[instrument]
 unsafe fn drop() -> Result<()> {
     INITIALIZED.unset();
-    threadpool::drop()?;
-    async_runtime::drop()?;
-    socket::drop()?;
+    unsafe {
+        threadpool::drop()?;
+        async_runtime::drop()?;
+        socket::drop()?;
+    }
     Ok(())
 }

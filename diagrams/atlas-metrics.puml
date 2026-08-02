@@ -1,0 +1,72 @@
+@startuml atlas-metrics
+title atlas-metrics — Instrumentation
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+package "atlas-metrics" {
+
+  class MetricsArgs {
+    +metrics_registers: Vec<MetricRegistryInfo>
+    +concurrency: usize
+    +metric_level: MetricLevel
+  }
+
+  class InfluxDBArgs {
+    +ip: String
+    +db_name: String
+    +user: String
+    +password: String
+    +node_id: NodeId
+    +extra: HashMap<String, String>
+  }
+
+  class MetricRegistryInfo {
+    +index: usize
+    +name: &'static str
+    +kind: MetricKind
+    +level: MetricLevel
+    +concurrency_override: Option<usize>
+  }
+
+  enum MetricLevel {
+    Disabled
+    Trace
+    Debug
+    Info
+  }
+
+  enum MetricKind {
+    Counter
+    Duration
+    Gauge
+    CounterWithBuckets
+  }
+
+  package "benchmarks" {
+    class BatchMeta {
+      +batch_size: usize
+      +propose_time: Instant
+      +sign_time: Duration
+    }
+
+    note right of BatchMeta
+      Attached to DecisionRequestBatch
+      to measure consensus latency
+    end note
+  }
+
+  MetricsArgs *-- MetricRegistryInfo
+  MetricRegistryInfo *-- MetricKind
+  MetricRegistryInfo *-- MetricLevel
+
+  note top of "atlas-metrics"
+    Key functions:
+    initialize_metrics(args: MetricsArgs, influx: Option<InfluxDBArgs>)
+    with_metrics(Vec<MetricRegistryInfo>) -> MetricsArgsFunc
+    with_concurrency(usize) -> MetricsArgsFunc
+    with_metric_level(MetricLevel) -> MetricsArgsFunc
+  end note
+}
+
+@enduml

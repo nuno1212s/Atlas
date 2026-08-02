@@ -1,8 +1,8 @@
 use crate::metrics::{Metric, MetricData};
 use dashmap::DashMap;
 use std::fmt::{Debug, Formatter};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Default)]
 pub(crate) struct CorrelationCounterTracker {

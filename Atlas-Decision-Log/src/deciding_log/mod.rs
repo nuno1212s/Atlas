@@ -1,10 +1,9 @@
 use crate::decisions::{CompletedDecision, OnGoingDecision};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
+use atlas_core::ordering_protocol::decision::DecisionRequests;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
-use atlas_core::ordering_protocol::{
-    DecisionAD, DecisionMetadata, ProtocolConsensusDecision, ShareableConsensusMessage,
-};
+use atlas_core::ordering_protocol::{DecisionAD, DecisionMetadata, ShareableConsensusMessage};
 use either::Either;
 use std::collections::VecDeque;
 use tracing::warn;
@@ -163,14 +162,28 @@ where
         }
     }
 
-    pub fn complete_decision(&mut self, seq: SeqNo, decision_info: ProtocolConsensusDecision<RQ>) {
+    pub fn handle_requests(&mut self, seq: SeqNo, requests: DecisionRequests<RQ>) {
         let index = seq.index(self.curr_seq);
 
         match index {
             Either::Right(index) => {
                 let decision = self.decision_at_index(index);
 
-                decision.insert_requests(decision_info);
+                decision.insert_requests(requests);
+            }
+            Either::Left(_) => {
+                warn!("Handling requests for decision that has already been decided")
+            }
+        }
+    }
+
+    pub fn complete_decision(&mut self, seq: SeqNo) {
+        let index = seq.index(self.curr_seq);
+
+        match index {
+            Either::Right(index) => {
+                let decision = self.decision_at_index(index);
+
                 decision.completed();
             }
             Either::Left(_) => {

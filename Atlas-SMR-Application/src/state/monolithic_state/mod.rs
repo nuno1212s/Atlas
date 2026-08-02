@@ -1,12 +1,20 @@
 use atlas_common::crypto::hash::{Context, Digest};
 use atlas_common::error::*;
 
-use atlas_common::ordering::SeqNo;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::NonSyncSerMsg;
 use std::io::{Read, Write};
 use std::mem::size_of;
 
-/// The type abstraction for a monolithic state (only needs to be serializable, in reality)
+/// The type abstraction for a monolithic state (only needs to be serializable, in reality)´
+///
+/// This represents one of the two available state implementations in Atlas.
+/// It will be completely held in memory, therefore it is heavily limited in size.
+/// It is, however, very fast and easy to use so it is recommended for small applications
+/// Which have little state or for experiments.
+///
+/// For more complex state handling, see [`super::divisible_state::DivisibleState`]
+///
 pub trait MonolithicState: NonSyncSerMsg {
     ///Serialize a request from your service, given the writer to serialize into
     ///  (either for network sending or persistent storing)
@@ -22,25 +30,17 @@ pub trait MonolithicState: NonSyncSerMsg {
         Self: Sized;
 }
 
-pub struct InstallStateMessage<S>
-where
-    S: MonolithicState,
-{
-    state: S,
-}
-
-pub struct AppStateMessage<S>
-where
-    S: MonolithicState,
-{
+pub struct InstallStateMessage<S> {
     seq: SeqNo,
     state: S,
 }
 
-impl<S> AppStateMessage<S>
-where
-    S: MonolithicState,
-{
+pub struct AppStateMessage<S> {
+    seq: SeqNo,
+    state: S,
+}
+
+impl<S> AppStateMessage<S> {
     pub fn new(seq: SeqNo, state: S) -> Self {
         AppStateMessage { seq, state }
     }
@@ -58,12 +58,9 @@ where
     }
 }
 
-impl<S> InstallStateMessage<S>
-where
-    S: MonolithicState,
-{
-    pub fn new(state: S) -> Self {
-        InstallStateMessage { state }
+impl<S> InstallStateMessage<S> {
+    pub fn new(seq_no: SeqNo, state: S) -> Self {
+        InstallStateMessage { seq: seq_no, state }
     }
 
     pub fn state(&self) -> &S {
@@ -72,6 +69,12 @@ where
 
     pub fn into_state(self) -> S {
         self.state
+    }
+}
+
+impl<S> Orderable for InstallStateMessage<S> {
+    fn sequence_number(&self) -> SeqNo {
+        self.seq
     }
 }
 

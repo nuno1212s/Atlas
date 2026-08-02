@@ -135,7 +135,7 @@ fn read_network_speed(
     let mut tx_speed = 0;
     let mut rx_speed = 0;
 
-    for (_inf, network) in networks.iter() {
+    for network in networks.values() {
         let received_bytes = network.received();
         let transmitted_bytes = network.transmitted();
 

@@ -4,7 +4,7 @@ use crate::config::TcpConfig;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::socket::MioSocket;
-use atlas_common::{channel, Err};
+use atlas_common::{Err, channel};
 use atlas_communication::lookup_table::MessageModule;
 use atlas_communication::message::{Header, MessageErrors, NetworkSerializedMessage, WireMessage};
 
@@ -142,7 +142,7 @@ pub(crate) fn try_write_until_block(
                     return Ok(ConnectionWriteWork::ConnectionBroken(
                         written_bytes,
                         total_bytes,
-                    ))
+                    ));
                 }
                 InternalWorkResult::Working => {}
                 InternalWorkResult::WouldBlock => break,
@@ -161,7 +161,7 @@ pub(crate) fn try_write_until_block(
                     return Ok(ConnectionWriteWork::ConnectionBroken(
                         written_bytes,
                         total_bytes,
-                    ))
+                    ));
                 }
                 InternalWorkResult::Working => {}
                 InternalWorkResult::WouldBlock => break,
@@ -180,7 +180,7 @@ pub(crate) fn try_write_until_block(
                     return Ok(ConnectionWriteWork::ConnectionBroken(
                         written_bytes,
                         total_bytes,
-                    ))
+                    ));
                 }
                 InternalWorkResult::Working => {}
                 InternalWorkResult::WouldBlock => break,
@@ -207,7 +207,7 @@ fn attempt_to_read_bytes_until_block(
                 return Ok(InternalWorkResult::ConnectionBroken(
                     *read_bytes,
                     bytes_to_read,
-                ))
+                ));
             }
             Ok(n) => n,
             Err(err) if would_block(&err) => return Ok(InternalWorkResult::WouldBlock),
@@ -263,7 +263,10 @@ pub(crate) fn read_until_block(
                     match socket.read(&mut read_info.reading_buffer[currently_read..]) {
                         Ok(0) => {
                             // Connection closed
-                            warn!("Connection closed while reading body bytes to read: {},  currently read: {}", bytes_to_read, currently_read);
+                            warn!(
+                                "Connection closed while reading body bytes to read: {},  currently read: {}",
+                                bytes_to_read, currently_read
+                            );
 
                             return Ok(ConnectionReadWork::ConnectionBroken(
                                 currently_read,
@@ -319,7 +322,10 @@ pub(crate) fn read_until_block(
                     match socket.read(&mut read_info.reading_buffer[currently_read..]) {
                         Ok(0) => {
                             // Connection closed
-                            warn!("Connection closed while reading message module bytes to read: {},  currently read: {}", bytes_to_read, currently_read);
+                            warn!(
+                                "Connection closed while reading message module bytes to read: {},  currently read: {}",
+                                bytes_to_read, currently_read
+                            );
 
                             return Ok(ConnectionReadWork::ConnectionBroken(
                                 currently_read,
@@ -379,7 +385,10 @@ pub(crate) fn read_until_block(
                 match socket.read(&mut read_info.reading_buffer[currently_read_bytes..]) {
                     Ok(0) => {
                         // Connection closed
-                        warn!("Connection closed while reading header bytes to read {}, current read bytes {}", bytes_to_read, currently_read_bytes);
+                        warn!(
+                            "Connection closed while reading header bytes to read {}, current read bytes {}",
+                            bytes_to_read, currently_read_bytes
+                        );
                         return Ok(ConnectionReadWork::ConnectionBroken(
                             currently_read_bytes,
                             bytes_to_read,

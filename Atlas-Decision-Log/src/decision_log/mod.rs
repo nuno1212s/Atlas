@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use atlas_common::error::*;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
-use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::PProof;
+use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::networking::serialize::{
     OrderProtocolProof, OrderingProtocolMessage,
 };
@@ -15,7 +15,7 @@ use atlas_logging_core::decision_log::serialize::OrderProtocolLog;
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 // Checkout https://serde.rs/attr-bound.html as to why we are using this
 #[serde(bound = "")]
-pub struct DecisionLog<RQ, OP, POP>
+pub struct InMemDecisionLog<RQ, OP, POP>
 where
     RQ: SerMsg,
     OP: OrderingProtocolMessage<RQ>,
@@ -25,7 +25,7 @@ where
     decided: Vec<PProof<RQ, OP, POP>>,
 }
 
-impl<RQ, OP, POP> Default for DecisionLog<RQ, OP, POP>
+impl<RQ, OP, POP> Default for InMemDecisionLog<RQ, OP, POP>
 where
     RQ: SerMsg,
     OP: OrderingProtocolMessage<RQ>,
@@ -36,7 +36,7 @@ where
     }
 }
 
-impl<RQ, OP, POP> DecisionLog<RQ, OP, POP>
+impl<RQ, OP, POP> InMemDecisionLog<RQ, OP, POP>
 where
     RQ: SerMsg,
     OP: OrderingProtocolMessage<RQ>,
@@ -170,7 +170,7 @@ where
     }
 }
 
-impl<RQ, OP, POP> Orderable for DecisionLog<RQ, OP, POP>
+impl<RQ, OP, POP> Orderable for InMemDecisionLog<RQ, OP, POP>
 where
     RQ: SerMsg,
     OP: OrderingProtocolMessage<RQ>,
@@ -181,7 +181,7 @@ where
     }
 }
 
-impl<RQ, OP, POP> OrderProtocolLog for DecisionLog<RQ, OP, POP>
+impl<RQ, OP, POP> OrderProtocolLog for InMemDecisionLog<RQ, OP, POP>
 where
     RQ: SerMsg,
     OP: OrderingProtocolMessage<RQ>,
@@ -194,14 +194,14 @@ where
     }
 }
 
-impl<RQ, OP, POP> Clone for DecisionLog<RQ, OP, POP>
+impl<RQ, OP, POP> Clone for InMemDecisionLog<RQ, OP, POP>
 where
     RQ: SerMsg,
     OP: OrderingProtocolMessage<RQ>,
     POP: PersistentOrderProtocolTypes<RQ, OP>,
 {
     fn clone(&self) -> Self {
-        DecisionLog {
+        InMemDecisionLog {
             last_exec: self.last_exec,
             decided: self.decided.clone(),
         }

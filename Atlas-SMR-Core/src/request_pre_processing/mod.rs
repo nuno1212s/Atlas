@@ -4,11 +4,11 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{instrument, Level};
+use tracing::{Level, instrument};
 
 use atlas_common::channel;
 use atlas_common::channel::mixed::{ChannelMixedRx, ChannelMixedTx};
-use atlas_common::channel::sync::{new_bounded_sync, ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx, new_bounded_sync};
 use atlas_common::error::Result;
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::StoredMessage;
@@ -18,12 +18,13 @@ use atlas_core::request_pre_processing::{
     BatchOutput, PreProcessorOutputMessage, RequestClientPreProcessing, RequestPProcessorAsync,
     RequestPProcessorSync, RequestPreProcessing, RequestPreProcessorTimeout, WorkPartitioner,
 };
-use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_core::timeouts::TimeoutID;
+use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
 use atlas_smr_application::serialize::ApplicationData;
 
-use crate::exec::RequestType;
+use crate::SMRReq;
+use crate::execution::reply::RequestType;
 use crate::message::OrderableMessage;
 use crate::metric::{
     RQ_PP_CLIENT_COUNT_ID, RQ_PP_CLIENT_MSG_ID, RQ_PP_CLONE_RQS_ID, RQ_PP_COLLECT_PENDING_ID,
@@ -34,7 +35,6 @@ use crate::request_pre_processing::worker::{
     PreProcessorWorkMessage, RequestPreProcessingWorkerHandle,
 };
 use crate::serialize::SMRSysMessage;
-use crate::SMRReq;
 
 mod tests;
 pub mod worker;

@@ -1,0 +1,65 @@
+@startuml atlas-decision-log
+title atlas-decision-log — Decision Logging
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+' External trait references
+interface "atlas_core::OrderingProtocol" as OrderingProtocol
+interface "atlas_core::OrderingProtocolMessage" as OrderingProtocolMessage
+interface "atlas_smr_core::TExecutor" as TExecutor
+
+package "atlas-decision-log" {
+
+  class Boule<RQ, OP, PL, EX> {
+    -deciding_log: DecidingLog<RQ, OP>
+    -decision_log: InMemDecisionLog<RQ, OP>
+    -persistent_log: PL
+    -executor_handle: EX
+    --
+    +install_proof(proof: Proof<RQ, OP>) : Result<()>
+    +install_decision(seq: SeqNo, decision: Decision) : Result<()>
+    +get_proof(seq: SeqNo) : Option<&Proof<RQ, OP>>
+    +latest_sequence_number() : SeqNo
+  }
+
+  class DecidingLog<RQ, OP> {
+    -in_progress: BTreeMap<SeqNo, PartialProof<RQ, OP>>
+    --
+    +insert_partial(seq, msg) : Result<Option<Proof>>
+    +complete_proof(seq) : Result<Proof>
+    +clear_seq(seq)
+  }
+
+  class InMemDecisionLog<RQ, OP> {
+    -decisions: BTreeMap<SeqNo, Proof<RQ, OP>>
+    -first_seq: SeqNo
+    --
+    +append(seq, proof) : Result<()>
+    +get(seq) : Option<&Proof<RQ, OP>>
+    +trim_until(seq)
+  }
+
+  interface TDecisionLogPersistenceHelper {
+    +write_proof(proof) : Result<()>
+    +write_invalidation(seq: SeqNo) : Result<()>
+  }
+
+  interface DecisionLogInitializer<RQ, OP, PL, EX> {
+    +initialize_decision_log(config, persistent_log, executor) : Result<Boule<RQ, OP, PL, EX>>
+  }
+
+  note top of "atlas-decision-log"
+    Type aliases:
+    LogSer<RQ, OP> = LogSerialization<RQ, OP::Serialization, OP::PersistableTypes>
+    Proof<RQ, OP>  = PProof<RQ, OP::Serialization, OP::PersistableTypes>
+  end note
+
+  Boule *-- DecidingLog
+  Boule *-- InMemDecisionLog
+  Boule ..> TDecisionLogPersistenceHelper : uses PL
+  Boule ..> TExecutor : uses EX
+  DecisionLogInitializer ..> Boule : creates
+}
+
+@enduml

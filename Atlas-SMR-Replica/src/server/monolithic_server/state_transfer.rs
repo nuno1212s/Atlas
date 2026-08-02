@@ -15,7 +15,7 @@ use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::state::monolithic_state::{
-    digest_state, AppStateMessage, InstallStateMessage, MonolithicState,
+    AppStateMessage, InstallStateMessage, MonolithicState, digest_state,
 };
 use atlas_smr_core::persistent_log::MonolithicStateLog;
 use atlas_smr_core::serialize::StateSys;
@@ -26,10 +26,10 @@ use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
 use atlas_smr_core::state_transfer::{Checkpoint, CstM};
 
 use crate::metric::{APP_STATE_DIGEST_TIME_ID, STATE_TRANSFER_PROCESS_TIME_ID};
+use crate::server::IterableProtocolRes;
 use crate::server::state_transfer::{
     StateTransferMngr, StateTransferThreadInnerHandle, StateTransferWorkMessage,
 };
-use crate::server::IterableProtocolRes;
 
 pub struct DigestedStateHandles<S: MonolithicState + 'static>(
     ChannelSyncTx<Arc<ReadOnly<Checkpoint<S>>>>,

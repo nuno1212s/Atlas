@@ -19,7 +19,7 @@ type InnerSyncChannelRx<T> = flume_mpmc::ChannelMixedRx<T>;
 type InnerSyncChannelTx<T> = flume_mpmc::ChannelMixedTx<T>;
 
 pub struct ChannelSyncRx<T> {
-    name: Option<Arc<str>>,
+    channel_identifier: Option<Arc<str>>,
     inner: InnerSyncChannelRx<T>,
 }
 
@@ -41,17 +41,27 @@ impl<T> ChannelSyncRx<T> {
 
     #[inline]
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        self.inner.try_recv()
+        self.inner
+            .try_recv()
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 
     #[inline]
     pub fn recv(&self) -> Result<T, RecvError> {
-        self.inner.recv()
+        self.inner
+            .recv()
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 
     #[inline]
     pub fn recv_timeout(&self, timeout: Duration) -> Result<T, TryRecvError> {
-        self.inner.recv_timeout(timeout)
+        self.inner
+            .recv_timeout(timeout)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
+    }
+
+    pub fn name(&self) -> Option<&Arc<str>> {
+        self.channel_identifier.as_ref()
     }
 }
 
@@ -68,17 +78,27 @@ impl<T> ChannelSyncTx<T> {
 
     #[inline]
     pub fn send(&self, value: T) -> Result<(), SendError> {
-        self.inner.send(value)
+        self.inner
+            .send(value)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 
     #[inline]
     pub fn send_timeout(&self, value: T, timeout: Duration) -> Result<(), TrySendError> {
-        self.inner.send_timeout(value, timeout)
+        self.inner
+            .send_timeout(value, timeout)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 
     #[inline]
     pub fn try_send(&self, value: T) -> Result<(), TrySendError> {
-        self.inner.try_send(value)
+        self.inner
+            .try_send(value)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
+    }
+
+    pub fn name(&self) -> Option<&Arc<str>> {
+        self.channel_identifier.as_ref()
     }
 }
 
@@ -90,30 +110,35 @@ impl<T> ChannelSyncTx<T> {
                 return Ok(());
             }
             Err(err) => match err {
-                TrySendReturnError::Full(value) => {
+                TrySendReturnError::Full(value, _) => {
                     tracing::error!(
                         channel = self.channel_identifier.as_deref().unwrap_or("Unknown"),
                         capacity = self.inner.capacity(),
                         current_occupation = self.inner.len(),
-                        "Failed to insert into channel. Channel is full and could not directly insert, blocking",);
+                        "Failed to insert into channel. Channel is full and could not directly insert, blocking",
+                    );
 
                     value
                 }
-                TrySendReturnError::Disconnected(value) => {
+                TrySendReturnError::Disconnected(value, _) => {
                     tracing::error!("Channel is disconnected");
 
                     value
                 }
-                TrySendReturnError::Timeout(value) => value,
+                TrySendReturnError::Timeout(value, _) => value,
             },
         };
 
-        self.inner.send_return(value)
+        self.inner
+            .send_return(value)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 
     #[inline]
     pub fn try_send_return(&self, value: T) -> Result<(), TrySendReturnError<T>> {
-        self.inner.try_send_return(value)
+        self.inner
+            .try_send_return(value)
+            .map_err(|err| err.with_channel(self.channel_identifier.clone()))
     }
 }
 
@@ -129,7 +154,7 @@ impl<T> Clone for ChannelSyncTx<T> {
 impl<T> Clone for ChannelSyncRx<T> {
     fn clone(&self) -> Self {
         ChannelSyncRx {
-            name: self.name.clone(),
+            channel_identifier: self.channel_identifier.clone(),
             inner: self.inner.clone(),
         }
     }
@@ -158,7 +183,10 @@ pub fn new_bounded_sync<T>(
             channel_identifier: name.clone(),
             inner: tx,
         },
-        ChannelSyncRx { name, inner: rx },
+        ChannelSyncRx {
+            channel_identifier: name,
+            inner: rx,
+        },
     )
 }
 
@@ -184,7 +212,10 @@ pub fn new_unbounded_sync<T>(
             channel_identifier: name.clone(),
             inner: tx,
         },
-        ChannelSyncRx { name, inner: rx },
+        ChannelSyncRx {
+            channel_identifier: name,
+            inner: rx,
+        },
     )
 }
 

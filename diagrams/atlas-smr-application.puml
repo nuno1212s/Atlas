@@ -1,0 +1,85 @@
+@startuml atlas-smr-application
+title atlas-smr-application — Application Traits
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+package "atlas-smr-application" {
+
+  package "app" {
+    interface ApplicationData {
+      +{abstract} type Request : Serializable + Send + Sync
+      +{abstract} type Reply : Serializable + Send + Sync
+    }
+
+    interface Application<S> {
+      +{abstract} type AppData : ApplicationData
+      --
+      +initial_state() : (S, Vec<Request<Self::AppData, S>>)
+      +update(state: &mut S, req: Request<Self::AppData, S>) : Reply<Self::AppData, S>
+      +unordered_execution(state: &S, req: Request<Self::AppData, S>) : Reply<Self::AppData, S>
+    }
+
+    note right of Application
+      S is the state type
+      (MonolithicState or DivisibleState)
+    end note
+  }
+
+  package "state" {
+    package "monolithic_state" {
+      interface MonolithicState {
+        +{abstract} serialize_state() : Result<Vec<u8>>
+        +{abstract} deserialize_state(bytes: &[u8]) : Result<Self>
+      }
+    }
+
+    package "divisible_state" {
+      interface DivisibleState {
+        +{abstract} type StatePart
+        +{abstract} type StateDescriptor
+        --
+        +get_descriptor() : Self::StateDescriptor
+        +accept_parts(descriptor, parts: Vec<Self::StatePart>) : Result<()>
+        +get_parts(descriptor) : Result<Vec<Self::StatePart>>
+      }
+    }
+  }
+
+  package "execution" {
+    interface TExecutionHandle<RQ> {
+      +poll_state_channel() : Result<()>
+      +catch_up_to_quorum(requests: MaybeVec<UpdateBatch<RQ>>) : Result<()>
+      +queue_unordered(requests: UnorderedUpdateBatch<RQ>) : Result<()>
+    }
+  }
+
+  package "serialize" {
+    interface AppSerializer<A> {
+      +serialize_request(req: &A::Request, w: &mut W) : Result<()>
+      +deserialize_request(r: &mut R) : Result<A::Request>
+      +serialize_reply(reply: &A::Reply, w: &mut W) : Result<()>
+      +deserialize_reply(r: &mut R) : Result<A::Reply>
+    }
+  }
+
+  package "deterministic_execution" {
+    interface TDeterministicApp<S> {
+      +queue_update(batch: UpdateBatch<RQ>) : Result<()>
+    }
+  }
+
+  package "preemptive_execution" {
+    interface TPreemptiveApp<S> {
+      +queue_preemptive_update(batch: UpdateBatch<RQ>) : Result<()>
+      +queue_preemptive_update_finalized(seq: SeqNo) : Result<()>
+    }
+    TPreemptiveApp --|> TDeterministicApp
+  }
+
+  Application ..> ApplicationData : uses AppData
+  Application ..> MonolithicState : state bound
+  Application ..> DivisibleState : state bound
+}
+
+@enduml

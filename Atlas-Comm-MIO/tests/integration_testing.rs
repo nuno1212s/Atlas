@@ -5,9 +5,9 @@ use std::iter;
 
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Context};
-use atlas_comm_mio::config::{MIOConfig, TcpConfig, TlsConfig};
+use anyhow::{Context, anyhow};
 use atlas_comm_mio::ByteStubType;
+use atlas_comm_mio::config::{MIOConfig, TcpConfig, TlsConfig};
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
@@ -20,7 +20,7 @@ use atlas_communication::reconfiguration::NetworkInformationProvider;
 use getset::Getters;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
-use rustls_pemfile::{read_one, Item};
+use rustls_pemfile::{Item, read_one};
 use thiserror::Error;
 use tracing::{debug, info};
 
@@ -348,9 +348,9 @@ mod conn_test {
     use std::sync::Arc;
 
     use crate::{
-        default_config, MockNetworkInfo, MockNetworkInfoFactory, MockStubController, MockStubInput,
+        MockNetworkInfo, MockNetworkInfoFactory, MockStubController, MockStubInput, default_config,
     };
-    use anyhow::{anyhow, Context};
+    use anyhow::{Context, anyhow};
     use atlas_comm_mio::MIOTCPNode;
     use atlas_common::error::*;
     use atlas_common::node_id::NodeId;

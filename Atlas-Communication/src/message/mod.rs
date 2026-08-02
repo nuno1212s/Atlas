@@ -1,10 +1,10 @@
 use crate::lookup_table::MessageModule;
 
+use atlas_common::Err;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::crypto::signature::{KeyPair, PublicKey, Signature, VerifyError};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::Err;
 use bytes::Bytes;
 use futures::{AsyncWrite, AsyncWriteExt};
 use serde::{Deserialize, Serialize};
@@ -186,7 +186,8 @@ impl Header {
             self.to = self.to.to_le();
             self.length = self.length.to_le();
         }
-        let hdr: [u8; Self::LENGTH] = std::mem::transmute::<Header, [u8; Self::LENGTH]>(self);
+        let hdr: [u8; Self::LENGTH] =
+            unsafe { std::mem::transmute::<Header, [u8; Self::LENGTH]>(self) };
         buf[..Self::LENGTH].copy_from_slice(&hdr[..]);
     }
 
@@ -200,7 +201,7 @@ impl Header {
     }
 
     unsafe fn deserialize_from_unchecked(buf: &[u8]) -> Self {
-        let mut hdr: [u8; Self::LENGTH] = {
+        let mut hdr: [u8; Self::LENGTH] = unsafe {
             let hdr = MaybeUninit::uninit();
             hdr.assume_init()
         };
@@ -213,7 +214,7 @@ impl Header {
             hdr.to = hdr.to.to_le();
             hdr.length = hdr.length.to_be();
         }
-        std::mem::transmute(hdr)
+        unsafe { std::mem::transmute(hdr) }
     }
 
     /// Deserialize a `Header` from a byte buffer of appropriate size.
@@ -466,7 +467,9 @@ impl Debug for Header {
         let from = self.from;
         let to = self.to;
 
-        write!(f, "Header {{ version: {version}, length: {length}, signature: {signature:x?}, digest: {digest:x?}, nonce: {nonce}, from: {from}, to: {to} }}"
+        write!(
+            f,
+            "Header {{ version: {version}, length: {length}, signature: {signature:x?}, digest: {digest:x?}, nonce: {nonce}, from: {from}, to: {to} }}"
         )
     }
 }

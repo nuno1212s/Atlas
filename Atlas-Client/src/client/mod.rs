@@ -22,13 +22,13 @@ use crate::metric::{
     CLIENT_RQ_TIMEOUT_ID, CLIENT_UNORDERED_RQ_LATENCY_ID,
 };
 use crate::timeout_handler::CLITimeoutHandler;
-use atlas_common::channel::sync::ChannelSyncRx;
 use atlas_common::channel::RecvError;
+use atlas_common::channel::sync::ChannelSyncRx;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{channel, Err};
+use atlas_common::{Err, channel};
 use atlas_communication::stub::{
     ModuleIncomingStub, ModuleOutgoingStub, NetworkStub, RegularNetworkStub,
 };
@@ -685,9 +685,9 @@ where
                         ClientAwaker::GenCallback(request) => {
                             if request.timed_out.load(Ordering::Relaxed) {
                                 error!(
-                            "{:?} // Received response to timed out request {:?} on session {:?}",
-                            node_id, operation_id, session_id,
-                        );
+                                    "{:?} // Received response to timed out request {:?} on session {:?}",
+                                    node_id, operation_id, session_id,
+                                );
                             }
 
                             match request.callback {
@@ -711,8 +711,10 @@ where
                         request.payload = Some(Ok(payload));
 
                         if request.timed_out.load(Ordering::Relaxed) {
-                            error!("{:?} // Received response to timed out request {:?} on session {:?}",
-                                        node_id,operation_id, session_id, );
+                            error!(
+                                "{:?} // Received response to timed out request {:?} on session {:?}",
+                                node_id, operation_id, session_id,
+                            );
                         }
 
                         // try to wake up the waiting task
@@ -774,9 +776,9 @@ where
                         ClientAwaker::GenCallback(request) => {
                             if request.timed_out.load(Ordering::Relaxed) {
                                 error!(
-                            "{:?} // Received response to timed out request {:?} on session {:?}",
-                            node_id, operation_id, session_id,
-                        );
+                                    "{:?} // Received response to timed out request {:?} on session {:?}",
+                                    node_id, operation_id, session_id,
+                                );
                             }
 
                             match request.callback {
@@ -800,8 +802,10 @@ where
                         request.payload = Some(err_msg);
 
                         if request.timed_out.load(Ordering::Relaxed) {
-                            error!("{:?} // Received response to timed out request {:?} on session {:?}",
-                                    node_id,operation_id, session_id, );
+                            error!(
+                                "{:?} // Received response to timed out request {:?} on session {:?}",
+                                node_id, operation_id, session_id,
+                            );
                         }
 
                         // try to wake up the waiting task
@@ -931,7 +935,7 @@ where
 
                         let mut total_count: usize = 0;
 
-                        for (_, count) in votes.digests.iter() {
+                        for count in votes.digests.values() {
                             total_count += count;
                         }
 

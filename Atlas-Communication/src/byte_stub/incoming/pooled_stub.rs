@@ -6,10 +6,10 @@ use crate::metric::{
     CLIENT_POOL_COLLECT_TIME_ID, CLIENT_POOL_SLEEP_TIME_ID, RQ_CLIENT_POOL_TIME_SPENT_ID,
 };
 use crate::stub::BatchedModuleIncomingStub;
-use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
-use atlas_common::channel::TryRecvError;
-use atlas_common::node_id::NodeId;
 use atlas_common::Err;
+use atlas_common::channel::TryRecvError;
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::node_id::NodeId;
 
 use atlas_metrics::metrics::metric_duration;
 use std::collections::BTreeMap;
@@ -382,9 +382,6 @@ where
             replacement_vec = rqs_dumped;
 
             if index > 0 && index % connected_peers.len() == 0 {
-                //We have done a full circle on the requests
-                collected_requests_per_revolution = 0;
-
                 if batch.len() >= batch_target_size {
                     //We only check on each complete revolution since if we didn't do that
                     //We could have a situation where a single client's requests were
@@ -410,6 +407,9 @@ where
                         std::thread::yield_now();
                     }
                 }
+
+                //We have done a full circle on the requests
+                collected_requests_per_revolution = 0;
             }
         }
 
@@ -565,8 +565,8 @@ where
             None => match self.0.try_recv() {
                 Ok(message) => Ok(Some(message)),
                 Err(err) => match err {
-                    TryRecvError::ChannelEmpty => Ok(None),
-                    TryRecvError::ChannelDc | TryRecvError::Timeout => {
+                    TryRecvError::ChannelEmpty { .. } => Ok(None),
+                    TryRecvError::ChannelDc { .. } | TryRecvError::Timeout { .. } => {
                         Err!(err)
                     }
                 },
@@ -574,8 +574,8 @@ where
             Some(duration) => match self.0.recv_timeout(duration) {
                 Ok(message) => Ok(Some(message)),
                 Err(err) => match err {
-                    TryRecvError::ChannelEmpty | TryRecvError::Timeout => Ok(None),
-                    TryRecvError::ChannelDc => {
+                    TryRecvError::ChannelEmpty { .. } | TryRecvError::Timeout { .. } => Ok(None),
+                    TryRecvError::ChannelDc { .. } => {
                         Err!(err)
                     }
                 },

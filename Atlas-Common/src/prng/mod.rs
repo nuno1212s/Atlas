@@ -4,8 +4,8 @@
 //! from David Blackman and Sebastiano Vigna. This source code is a one-to-one translation of their
 //! C code, released to the public domain.
 
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use std::cell::RefCell;
 use thread_local::ThreadLocal;
 
@@ -120,6 +120,6 @@ impl Iterator for State {
 }
 
 #[inline]
-fn rotl(x: u64, k: u64) -> u64 {
-    (x << k) | (x >> (64 - k))
+fn rotl(x: u64, k: u32) -> u64 {
+    x.rotate_left(k)
 }

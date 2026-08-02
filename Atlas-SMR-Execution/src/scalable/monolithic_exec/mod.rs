@@ -1,23 +1,24 @@
+use crate::MonStateInstallHandle;
 use crate::metric::EXECUTION_LATENCY_TIME_ID;
-use crate::scalable::{sc_execute_op_batch, sc_execute_unordered_op_batch, CRUDState, ScalableApp};
-use crate::{ExecutorHandles, ExecutorReplier, MonStateInstallHandle};
+use crate::scalable::{CRUDState, sc_execute_op_batch, sc_execute_unordered_op_batch};
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_metrics::metrics::metric_duration;
-use atlas_smr_application::app::{
-    AppData, Application, BatchReplies, Reply, Request, UnorderedBatch, UpdateBatch,
-};
+use atlas_smr_application::app::{AppData, Application, Reply, Request};
 use atlas_smr_application::state::monolithic_state::{
     AppStateMessage, InstallStateMessage, MonolithicState,
 };
-use atlas_smr_application::{ExecutionRequest, ExecutorHandle};
-use atlas_smr_core::exec::ReplyNode;
 use atlas_smr_core::SMRReply;
+use atlas_smr_core::execution::reply::ReplyNode;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
 
+use crate::crud_states::CRUDApplication;
+use crate::exec_handle::{ExecutionRequest, ExecutorHandle};
+use crate::repliers::ExecutorReplier;
+use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch};
 use tracing::info;
 
 const EXECUTING_BUFFER: usize = 16384;
@@ -43,16 +44,15 @@ where
 impl<S, A, NT> ScalableMonolithicExecutor<S, A, NT>
 where
     S: MonolithicState + CRUDState + 'static + Send + Sync,
-    A: ScalableApp<S> + 'static + Send,
-    NT: 'static,
+    A: CRUDApplication<S> + 'static + Send,
 {
-    pub fn init_handle() -> ExecutorHandles<A, S> {
+    pub fn init_handle() -> ExecutorHandle<Request<A, S>> {
         let (tx, rx) = channel::sync::new_bounded_sync(
             EXECUTING_BUFFER,
             Some("Scalable Mon Exec Work Channel"),
         );
 
-        (ExecutorHandle::new(tx), rx)
+        ExecutorHandle::new(tx, rx)
     }
 
     pub fn init<T>(
@@ -106,7 +106,7 @@ where
         std::thread::Builder::new()
             .name("Executor Manager Thread".to_string())
             .spawn(move || self.worker::<T>())
-            .expect("Failed to start executor thread");
+            .expect("Failed to start execution thread");
     }
 
     fn worker<T>(&mut self)
@@ -164,8 +164,8 @@ where
     #[inline(always)]
     fn execute_unordered_op_batch(
         &mut self,
-        batch: UnorderedBatch<Request<A, S>>,
-    ) -> BatchReplies<Reply<A, S>> {
+        batch: UnorderedUpdateBatch<Request<A, S>>,
+    ) -> ReplyBatch<Reply<A, S>> {
         sc_execute_unordered_op_batch(&mut self.thread_pool, &self.application, &self.state, batch)
     }
 
@@ -173,7 +173,7 @@ where
     fn execute_op_batch(
         &mut self,
         batch: UpdateBatch<Request<A, S>>,
-    ) -> (SeqNo, BatchReplies<Reply<A, S>>) {
+    ) -> (SeqNo, ReplyBatch<Reply<A, S>>) {
         sc_execute_op_batch(
             &mut self.thread_pool,
             &self.application,
@@ -192,7 +192,7 @@ where
             .expect("Failed to send checkpoint");
     }
 
-    fn execution_finished<T>(&self, seq: Option<SeqNo>, batch: BatchReplies<Reply<A, S>>)
+    fn execution_finished<T>(&self, seq: Option<SeqNo>, batch: ReplyBatch<Reply<A, S>>)
     where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
         T: ExecutorReplier + 'static,

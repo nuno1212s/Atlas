@@ -286,7 +286,10 @@ where
                 return;
             }
 
-            warn!("Failed to send message to node {:?} immediately, retrying for the {} time with a circuit breaker pattern", to, circuits);
+            warn!(
+                "Failed to send message to node {:?} immediately, retrying for the {} time with a circuit breaker pattern",
+                to, circuits
+            );
 
             handle_failed_message_delivery_circuit(stub, message, to, circuits + 1);
         } else {

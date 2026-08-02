@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 use std::sync::Mutex;
 
+use atlas_common::Err;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
-use atlas_common::Err;
 use atlas_communication::byte_stub::connections::NetworkConnectionController;
 use atlas_communication::stub::NetworkStub;
 use atlas_core::messages::RequestMessage;

@@ -1,39 +1,39 @@
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tracing::error;
 
 use atlas_common::error::*;
 use atlas_common::phantom::FPhantom;
-use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
+use atlas_core::ordering_protocol::loggable::TLoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::ordering_protocol::permissioned::{
     ViewTransferProtocol, ViewTransferProtocolInitializer,
 };
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_logging_core::decision_log::{DecisionLog, DecisionLogInitializer};
+use atlas_logging_core::decision_log::{DecisionLogInitializer, TDecisionLog};
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::Application;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
-use atlas_smr_core::exec::WrappedExecHandle;
+use atlas_smr_core::SMRReq;
+use atlas_smr_core::execution::executors::monolithic_state::TMonolithicStateExecutor;
+use atlas_smr_core::execution::{SMRExecWrapper, TExecutor};
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::MonolithicStateLog;
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
 use atlas_smr_core::state_transfer::monolithic_state::{
     MonolithicStateTransfer, MonolithicStateTransferInitializer,
 };
-use atlas_smr_core::SMRReq;
-use atlas_smr_execution::TMonolithicStateExecutor;
 
 use crate::config::MonolithicStateReplicaConfig;
 use crate::metric::RUN_LATENCY_TIME_ID;
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::monolithic_server::state_transfer::MonStateTransfer;
 use crate::server::state_transfer::init_state_transfer_handles;
-use crate::server::{Exec, PermissionedProtocolHandling, Replica};
+use crate::server::{PermissionedProtocolHandling, Replica};
 
 mod state_transfer;
 
@@ -43,8 +43,9 @@ where
     RP: ReconfigurationProtocol + 'static,
     S: MonolithicState + 'static,
     A: Application<S> + Send,
-    OP: LoggableOrderProtocol<SMRReq<A::AppData>>,
-    DL: DecisionLog<SMRReq<A::AppData>, OP>,
+    ME: TExecutor<A, S>,
+    OP: TLoggableOrderProtocol<SMRReq<A::AppData>>,
+    DL: TDecisionLog<SMRReq<A::AppData>, OP>,
     LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL>,
     VT: ViewTransferProtocol<OP>,
     ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol,
@@ -63,7 +64,9 @@ where
 {
     p: FPhantom<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
-    inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>,
+    #[allow(clippy::type_complexity)]
+    inner_replica:
+        Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL, SMRExecWrapper<ME::ExecutionHandle>>,
 }
 
 impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
@@ -72,8 +75,8 @@ where
     ME: TMonolithicStateExecutor<A, S, NT::ApplicationNode> + 'static,
     S: MonolithicState + 'static,
     A: Application<S> + Send + 'static,
-    OP: LoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
-    DL: DecisionLog<SMRReq<A::AppData>, OP> + 'static,
+    OP: TLoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
+    DL: TDecisionLog<SMRReq<A::AppData>, OP> + 'static,
     LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL> + 'static,
     VT: ViewTransferProtocol<OP> + 'static,
     ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol + Send + 'static,
@@ -95,20 +98,20 @@ where
     ) -> Result<Self>
     where
         OP: NetworkedOrderProtocolInitializer<
-            SMRReq<A::AppData>,
-            RequestPreProcessor<SMRReq<A::AppData>>,
-            NT::ProtocolNode,
-        >,
+                SMRReq<A::AppData>,
+                RequestPreProcessor<SMRReq<A::AppData>>,
+                NT::ProtocolNode,
+            >,
         VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
         LT: LogTransferProtocolInitializer<
-            SMRReq<A::AppData>,
-            OP,
-            DL,
-            PL,
-            Exec<A::AppData>,
-            NT::ProtocolNode,
-        >,
-        DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>>,
+                SMRReq<A::AppData>,
+                OP,
+                DL,
+                PL,
+                SMRExecWrapper<ME::ExecutionHandle>,
+                NT::ProtocolNode,
+            >,
+        DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, SMRExecWrapper<ME::ExecutionHandle>>,
         ST: MonolithicStateTransferInitializer<S, NT::StateTransferNode, PL>,
     {
         let MonolithicStateReplicaConfig {
@@ -117,33 +120,62 @@ where
             st_config,
         } = cfg;
 
-        let (executor_handle, executor_receiver) = ME::init_handle();
+        let executor_handle = ME::init_handle();
 
-        let executor_handle = WrappedExecHandle(executor_handle);
+        let wrapped_handle = SMRExecWrapper(executor_handle.clone());
 
         let (handle, inner_handle) = init_state_transfer_handles();
 
-        let inner_replica = Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>::bootstrap(
-            replica_config,
-            executor_handle.clone(),
-            handle,
-        )
+        let inner_replica = Replica::<
+            RP,
+            S,
+            A::AppData,
+            OP,
+            DL,
+            ST,
+            LT,
+            VT,
+            NT,
+            PL,
+            SMRExecWrapper<ME::ExecutionHandle>,
+        >::bootstrap(replica_config, wrapped_handle.clone(), handle)
         .await?;
 
         let node = inner_replica.node.clone();
 
         let (state_tx, checkpoint_rx) =
-            ME::init(executor_receiver, None, service, node.app_node().clone())?;
+            ME::init(executor_handle, None, service, node.app_node().clone())?;
 
-        MonStateTransfer
-            ::<<Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL> as PermissionedProtocolHandling<A::AppData, VT, OP, NT>>::View,
-            S, NT::StateTransferNode, PL, ST>
-        ::init_state_transfer_thread(state_tx, checkpoint_rx, st_config,
-                                     node.state_transfer_node().clone(),
-                                     inner_replica.timeouts.gen_mod_handle_with_name(ST::mod_name()),
-                                     inner_replica.persistent_log.clone(),
-                                     inner_handle,
-                                     inner_replica.view());
+        MonStateTransfer::<
+            <Replica<
+                RP,
+                S,
+                A::AppData,
+                OP,
+                DL,
+                ST,
+                LT,
+                VT,
+                NT,
+                PL,
+                SMRExecWrapper<ME::ExecutionHandle>,
+            > as PermissionedProtocolHandling<A::AppData, VT, OP, NT>>::View,
+            S,
+            NT::StateTransferNode,
+            PL,
+            ST,
+        >::init_state_transfer_thread(
+            state_tx,
+            checkpoint_rx,
+            st_config,
+            node.state_transfer_node().clone(),
+            inner_replica
+                .timeouts
+                .gen_mod_handle_with_name(ST::mod_name()),
+            inner_replica.persistent_log.clone(),
+            inner_handle,
+            inner_replica.view(),
+        );
 
         let mut replica = Self {
             p: PhantomData,
@@ -172,10 +204,10 @@ where
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
 
-            if let Some(trigger) = trigger.as_ref() {
-                if trigger.load(Ordering::Relaxed) {
-                    break Ok(()); // Exit the loop
-                }
+            if let Some(trigger) = trigger.as_ref()
+                && trigger.load(Ordering::Relaxed)
+            {
+                break Ok(()); // Exit the loop
             }
 
             metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());

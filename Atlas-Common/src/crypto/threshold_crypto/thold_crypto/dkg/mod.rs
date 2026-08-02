@@ -4,8 +4,8 @@
 
 use super::PrivateKeyPart;
 use super::PublicKeySet;
-use crate::error::*;
 use crate::Err;
+use crate::error::*;
 use getset::{CopyGetters, Getters, MutGetters, Setters};
 
 use bincode::config::Configuration;
@@ -310,7 +310,7 @@ impl DistributedKeyGenerator {
         )
         .unwrap()
         .0
-         .0;
+        .0;
 
         eprintln!(
             "Dealer ack {}: Received ack from dealer {}: {:?} in ID {}",
@@ -400,9 +400,7 @@ impl DKGParams {
 
 #[derive(Debug, Error)]
 pub enum DKGError {
-    #[error(
-        "There were not enough finished dealers to finalize the DKG protocol {0} (needed {1})"
-    )]
+    #[error("There were not enough finished dealers to finalize the DKG protocol {0} (needed {1})")]
     NotEnoughFinishedDealers(usize, usize),
 }
 
@@ -420,7 +418,9 @@ pub enum AckError {
 
 #[derive(Debug, Error)]
 pub enum DealerPartError {
-    #[error("We have received a dealer part with an amount of rows that is not equal to the amount of dealers")]
+    #[error(
+        "We have received a dealer part with an amount of rows that is not equal to the amount of dealers"
+    )]
     WrongPartCount,
     #[error("We have already received another part from this dealer {0}")]
     AlreadyReceived(usize),

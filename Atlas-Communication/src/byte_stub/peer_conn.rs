@@ -2,8 +2,8 @@ use crate::byte_stub::incoming::PeerIncomingConnection;
 use crate::byte_stub::outgoing::PeerOutgoingConnection;
 use crate::serialization::Serializable;
 use getset::Getters;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// The connection manager for a given peer
 ///

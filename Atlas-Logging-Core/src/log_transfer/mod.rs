@@ -7,11 +7,11 @@ use atlas_common::ordering::SeqNo;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 
-use crate::decision_log::{DecisionLog, LoggedDecision};
-use crate::log_transfer::networking::serialize::LogTransferMessage;
+use crate::decision_log::{LoggedDecision, TDecisionLog};
 use crate::log_transfer::networking::LogTransferSendNode;
+use crate::log_transfer::networking::serialize::LogTransferMessage;
 use crate::persistent_log::PersistentDecisionLog;
-use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
+use atlas_core::ordering_protocol::loggable::TLoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::timeouts::timeout::{TimeoutModHandle, TimeoutableMod};
 
@@ -52,23 +52,23 @@ pub enum LTPollResult<LT, RQ> {
 }
 
 /// Log transfer protocol.
-/// This protocol is meant to work in tandem with the [DecisionLog] abstraction, meaning
+/// This protocol is meant to work in tandem with the [TDecisionLog] abstraction, meaning
 /// it has to actually "hook" into it and directly use functions from the DecisionLog.
-/// Examples are, for example using the [DecisionLog::snapshot_log] when wanting a snapshot
-/// of the current log, [DecisionLog::install_log] when we want to install a log that
+/// Examples are, for example using the [TDecisionLog::snapshot_log] when wanting a snapshot
+/// of the current log, [TDecisionLog::install_log] when we want to install a log that
 /// we have received.
 /// This level of coupling exists because we need to be able to reference the decision log
 /// in order to obtain the current log (cloning it and passing it to this function every time
 /// would be extremely expensive) and since this protocol only makes sense when paired with
-/// the [DecisionLog], we decided that it makes sense for them to be more tightly coupled.
+/// the [TDecisionLog], we decided that it makes sense for them to be more tightly coupled.
 ///TODO: Work on Getting partial log installations integrated with this log transfer
 /// trait via [PartiallyWriteableDecLog]
 #[allow(clippy::type_complexity)]
 pub trait LogTransferProtocol<RQ, OP, DL>: TimeoutableMod<LTTimeoutResult> + Send
 where
     RQ: SerMsg,
-    OP: LoggableOrderProtocol<RQ>,
-    DL: DecisionLog<RQ, OP>,
+    OP: TLoggableOrderProtocol<RQ>,
+    DL: TDecisionLog<RQ, OP>,
 {
     /// The type which implements StateTransferMessage, to be implemented by the developer
     type Serialization: LogTransferMessage<RQ, OP::Serialization> + 'static;
@@ -113,8 +113,8 @@ pub trait LogTransferProtocolInitializer<RQ, OP, DL, PL, EX, NT>:
     LogTransferProtocol<RQ, OP, DL>
 where
     RQ: SerMsg,
-    OP: LoggableOrderProtocol<RQ>,
-    DL: DecisionLog<RQ, OP>,
+    OP: TLoggableOrderProtocol<RQ>,
+    DL: TDecisionLog<RQ, OP>,
 {
     fn initialize(
         config: Self::Config,
@@ -124,12 +124,7 @@ where
     ) -> Result<Self>
     where
         Self: Sized,
-        PL: PersistentDecisionLog<
-            RQ,
-            OP::Serialization,
-            OP::PersistableTypes,
-            DL::LogSerialization,
-        >,
+        PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
         NT: LogTransferSendNode<RQ, OP::Serialization, Self::Serialization>;
 }
 

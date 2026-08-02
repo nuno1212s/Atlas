@@ -6,32 +6,58 @@
 
 #[macro_export]
 macro_rules! Err {
-    ($err:expr $(,)?) => {{
-        Err(From::from($err))
-    }};
+    ($err:expr $(,)?) => {{ Err(From::from($err)) }};
 }
 
 #[macro_export]
 macro_rules! quiet_unwrap {
+    // NOTE: the `match` must not be followed by a semicolon. A trailing semicolon expands the
+    // macro in statement position, which triggers `semicolon_in_expressions_from_non_local_macros`
+    // at every call site that uses the result as a value (a future hard error, see rust#79813).
     ($err:expr) => {
         match $err {
             Ok(value) => value,
             Err(err) => {
-                error!("{} ({:?})", err, err);
+                tracing::error!("{} ({:?})", err, err);
 
                 return;
             }
-        };
+        }
     };
     ($err:expr, $ret:expr) => {
         match $err {
             Ok(value) => value,
             Err(err) => {
-                error!("{} ({:?})", err, err);
+                tracing::error!("{} ({:?})", err, err);
 
                 return $ret;
             }
-        };
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! quiet_opt_unwrap {
+    // See the note on `quiet_unwrap`: no trailing semicolon after the `match`.
+    ($err:expr) => {
+        match $err {
+            Some(value) => value,
+            None => {
+                tracing::error!("Expected value in object but was not found");
+
+                return;
+            }
+        }
+    };
+    ($err:expr, $ret:expr) => {
+        match $err {
+            Some(value) => value,
+            None => {
+                tracing::error!("Expected value in object but was not found");
+
+                return $ret;
+            }
+        }
     };
 }
 

@@ -1,6 +1,7 @@
 //mod v2;
 
-use crate::scalable::{Access, AccessType, CRUDState};
+use crate::crud_states::Access;
+use crate::scalable::{AccessType, CRUDState};
 use atlas_common::collections::HashMap;
 use atlas_common::ordering::SeqNo;
 use getset::{CopyGetters, Getters};
@@ -21,6 +22,9 @@ where
     /// The position of this request within the general batch
     pub(super) position_in_batch: usize,
     /// The data accesses this request wants to perform
+    /// We need this RefCell since this execution unit replaces the state and is
+    /// immutable when being passed into read operations. However, we still need
+    /// to track the accesses done by the operation.
     pub(super) accesses: RefCell<Vec<Access>>,
     /// A cache containing all of the overwritten values by this operation,
     /// So we don't read stale values from the state.
@@ -45,7 +49,7 @@ where
     fn create(&mut self, column: &str, key: &[u8], value: &[u8]) -> bool {
         self.accesses
             .borrow_mut()
-            .push(Access::init(column, key.to_vec(), AccessType::Write));
+            .push(Access::new(column, key.to_vec(), AccessType::Write));
 
         if self.cache.contains_key(column) {
             let column = self.cache.get_mut(column).unwrap();
@@ -70,7 +74,7 @@ where
     fn read(&self, column: &str, key: &[u8]) -> Option<Vec<u8>> {
         self.accesses
             .borrow_mut()
-            .push(Access::init(column, key.to_vec(), AccessType::Read));
+            .push(Access::new(column, key.to_vec(), AccessType::Read));
 
         if self.cache.contains_key(column) {
             let column = self.cache.get(column).unwrap();
@@ -84,7 +88,7 @@ where
     fn update(&mut self, column: &str, key: &[u8], value: &[u8]) -> Option<Vec<u8>> {
         self.accesses
             .borrow_mut()
-            .push(Access::init(column, key.to_vec(), AccessType::Write));
+            .push(Access::new(column, key.to_vec(), AccessType::Write));
 
         if self.cache.contains_key(column) {
             let column = self.cache.get_mut(column).unwrap();
@@ -104,7 +108,7 @@ where
     fn delete(&mut self, column: &str, key: &[u8]) -> Option<Vec<u8>> {
         self.accesses
             .borrow_mut()
-            .push(Access::init(column, key.to_vec(), AccessType::Delete));
+            .push(Access::new(column, key.to_vec(), AccessType::Delete));
 
         if self.cache.contains_key(column) {
             let column = self.cache.get_mut(column).unwrap();
@@ -164,9 +168,9 @@ pub(super) fn progress_collision_state(state: &mut CollisionState, unit: &Execut
     let mut collided = false;
 
     unit.alterations.iter().for_each(|access| {
-        if let Some((accesses, operation_seq)) = state.accessed.get_mut(&access.key) {
+        if let Some((accesses, operation_seq)) = state.accessed.get_mut(access.key()) {
             for access_type in accesses.iter() {
-                if access_type.is_collision(&access.access_type) {
+                if access_type.is_collision(&access.access_type()) {
                     state.collisions.insert(unit.position_in_batch);
 
                     for seq in operation_seq.iter() {
@@ -178,17 +182,17 @@ pub(super) fn progress_collision_state(state: &mut CollisionState, unit: &Execut
             }
 
             operation_seq.insert(unit.position_in_batch);
-            accesses.insert(access.access_type);
+            accesses.insert(access.access_type());
         } else {
             let mut accesses = BTreeSet::new();
             let mut accessors = BTreeSet::new();
 
             accessors.insert(unit.position_in_batch);
-            accesses.insert(access.access_type);
+            accesses.insert(access.access_type());
 
             state
                 .accessed
-                .insert(access.key.clone(), (accesses, accessors));
+                .insert(access.key().clone(), (accesses, accessors));
         }
     });
 
@@ -209,10 +213,10 @@ where
 
     for unit in execution_units {
         unit.accesses.borrow().iter().for_each(|access| {
-            if let Some(accesses) = accessed.get_mut(&access.column) {
-                if let Some((accesses, operation_seq)) = accesses.get_mut(&access.key) {
+            if let Some(accesses) = accessed.get_mut(access.column()) {
+                if let Some((accesses, operation_seq)) = accesses.get_mut(access.key()) {
                     for access_type in accesses.iter() {
-                        if access_type.is_collision(&access.access_type) {
+                        if access_type.is_collision(&access.access_type()) {
                             collisions.insert(unit.position_in_batch);
 
                             for seq in operation_seq.iter() {
@@ -222,11 +226,11 @@ where
                     }
 
                     operation_seq.push(unit.position_in_batch);
-                    accesses.push(access.access_type);
+                    accesses.push(access.access_type());
                 } else {
                     accesses.insert(
-                        access.key.clone(),
-                        (vec![access.access_type], vec![unit.position_in_batch]),
+                        access.key().clone(),
+                        (vec![access.access_type()], vec![unit.position_in_batch]),
                     );
                 }
             } else {
@@ -234,11 +238,11 @@ where
                     Default::default();
 
                 accesses.insert(
-                    access.key.clone(),
-                    (vec![access.access_type], vec![unit.position_in_batch]),
+                    access.key().clone(),
+                    (vec![access.access_type()], vec![unit.position_in_batch]),
                 );
 
-                accessed.insert(access.column.clone(), accesses);
+                accessed.insert(access.column().clone(), accesses);
             }
         });
     }

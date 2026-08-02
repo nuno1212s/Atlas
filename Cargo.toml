@@ -7,7 +7,7 @@ documentation = "https://docs.rs/atlas"
 readme = "README.md"
 
 [workspace]
-
+resolver = "3"
 members = [
     "Atlas-Common",
     "Atlas-Core",
@@ -23,7 +23,10 @@ members = [
     "Atlas-Persistent-Log",
     "Atlas-Log-Transfer",
     "Atlas-SMR-Application",
-    "Atlas-View-Transfer"]
+    "Atlas-View-Transfer",
+    "Atlas-SMR-Preemptive-Execution",
+    "Atlas-Tools/keygen"
+]
 
 
 # https://doc.rust-lang.org/cargo/reference/profiles.html

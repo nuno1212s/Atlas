@@ -2,9 +2,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use crate::Err;
 use crate::channel::{RecvError, SendError, SendReturnError};
 use crate::error::*;
-use crate::Err;
 use async_channel::{Receiver, Recv, Sender};
 use futures::future::FusedFuture;
 use futures::stream::{FusedStream, Stream};

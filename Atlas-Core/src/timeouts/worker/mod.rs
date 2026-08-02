@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use getset::{CopyGetters, Getters};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -8,16 +6,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, SystemTimeError};
 
-use atlas_common::channel::sync::ChannelSyncRx;
-use atlas_common::channel::TryRecvError;
-use atlas_common::collections::HashMap;
-use atlas_common::node_id::NodeId;
-use thiserror::Error;
-use tracing::error;
-
 use crate::timeouts::{
     Timeout, TimeoutAck, TimeoutIdentification, TimeoutRequest, TimeoutWorkerResponder,
 };
+use atlas_common::channel::TryRecvError;
+use atlas_common::channel::sync::ChannelSyncRx;
+use atlas_common::collections::HashMap;
+use atlas_common::node_id::NodeId;
+use atlas_common::quiet_opt_unwrap;
+use thiserror::Error;
+use tracing::error;
 
 #[derive(Debug)]
 pub enum WorkerMessage {
@@ -31,6 +29,7 @@ pub enum WorkerMessage {
     ResetAll(Arc<str>),
 }
 
+#[allow(dead_code)]
 enum TimeoutPhase {
     // This request has never timed out
     NeverTimedOut,
@@ -44,6 +43,7 @@ struct RegisteredTimeout {
     #[get]
     timeout_phase: TimeoutPhase,
     #[get]
+    #[allow(dead_code)]
     time_made: SystemTime,
     #[get]
     acks_received: BTreeSet<NodeId>,
@@ -52,7 +52,9 @@ struct RegisteredTimeout {
 }
 
 pub struct TimeoutWorker<WR> {
+    #[allow(dead_code)]
     our_node_id: NodeId,
+    #[allow(dead_code)]
     worker_id: u32,
     default_timeout_duration: Duration,
 
@@ -130,7 +132,7 @@ where
                     self.process_message(message)?;
                 }
                 Err(e) => {
-                    if let TryRecvError::Timeout = e {
+                    if let TryRecvError::Timeout { .. } = e {
                     } else {
                         error!("Error receiving message: {:?}", e);
                     }
@@ -278,7 +280,10 @@ where
                 break;
             }
 
-            let (_, requests) = self.pending_timeout_heap.pop_first().unwrap();
+            let (_, requests) = quiet_opt_unwrap!(
+                self.pending_timeout_heap.pop_first(),
+                Err(TimeoutError::MapPopFailed)
+            );
 
             requests
                 .iter()
@@ -333,10 +338,10 @@ where
         mod_name: Arc<str>,
     ) -> Result<(), ClearAllOcurrencesError> {
         self.watched_requests
-            .retain(|k, _v| !Arc::ptr_eq(k.mod_id(), &mod_name));
+            .retain(|k, _v| !cmp_mod_name(&mod_name, k.mod_id()));
 
         self.pending_timeout_heap.iter_mut().for_each(|(_, v)| {
-            v.retain(|_k, rq| !Arc::ptr_eq(rq.borrow().request().id().mod_id(), &mod_name))
+            v.retain(|_k, rq| !cmp_mod_name(rq.borrow().request().id().mod_id(), &mod_name))
         });
 
         Ok(())
@@ -348,7 +353,7 @@ where
             .values_mut()
             .flat_map(|timeouts| {
                 timeouts.extract_if(|_rq_id, rq| {
-                    Arc::ptr_eq(rq.borrow().request().id().mod_id(), &mod_name)
+                    cmp_mod_name(rq.borrow().request().id().mod_id(), &mod_name)
                 })
             })
             .collect();
@@ -390,6 +395,7 @@ impl TimeoutPhase {
         }
     }
 
+    #[allow(dead_code)]
     fn last_timeout_time(&self) -> Option<SystemTime> {
         match self {
             Self::NeverTimedOut => None,
@@ -426,6 +432,10 @@ impl RegisteredTimeout {
     fn timed_out(&mut self) {
         self.timeout_phase = self.timeout_phase.next_timeout();
     }
+}
+
+fn cmp_mod_name(mod_name_1: impl AsRef<str>, mod_name_2: impl AsRef<str>) -> bool {
+    mod_name_1.as_ref() == mod_name_2.as_ref()
 }
 
 #[derive(Error, Debug)]
@@ -471,4 +481,6 @@ pub enum TimeoutError {
     MessageProcess(#[from] ProcessTimeoutMessageError),
     #[error("Failed to notify of timeouts {0}")]
     Notifier(#[from] anyhow::Error),
+    #[error("Failed to obtain timeouts from map")]
+    MapPopFailed,
 }

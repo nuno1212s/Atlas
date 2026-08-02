@@ -6,35 +6,36 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::SeqNo;
 use atlas_common::persistentdb::KVDB;
+use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::{OrderProtocolLogHelper, PProof};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::ordering_protocol::{
-    BatchedDecision, DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
+    DecisionAD, DecisionMetadata, ProtocolMessage, ShareableMessage,
 };
 use atlas_core::persistent_log::{
     OperationMode, OrderingProtocolLog, PersistableStateTransferProtocol,
 };
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
 use atlas_logging_core::decision_log::{
-    DecLog, DecLogMetadata, DecisionLogPersistenceHelper, LoggingDecision,
+    DecLog, DecLogMetadata, DecisionSummaryForPersistence, TDecisionLogPersistenceHelper,
 };
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
-use atlas_smr_core::exec::WrappedExecHandle;
-use atlas_smr_core::persistent_log::MonolithicStateLog;
-use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
-use atlas_smr_core::state_transfer::Checkpoint;
 use atlas_smr_core::SMRReq;
+use atlas_smr_core::persistent_log::MonolithicStateLog;
+use atlas_smr_core::state_transfer::Checkpoint;
+use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 
+use crate::execution_handle::TLoggedDecisionsHandle;
 use crate::worker::monolithic_worker::{
-    read_mon_state, MonStatePersistentLogWorker, PersistentMonolithicStateHandle,
-    PersistentMonolithicStateStub,
+    MonStatePersistentLogWorker, PersistentMonolithicStateHandle, PersistentMonolithicStateStub,
+    read_mon_state,
 };
 use crate::worker::{
-    PersistentLogWorker, PersistentLogWorkerHandle, PersistentLogWriteStub, COLUMN_FAMILY_OTHER,
-    COLUMN_FAMILY_PROOFS,
+    COLUMN_FAMILY_OTHER, COLUMN_FAMILY_PROOFS, PersistentLogWorker, PersistentLogWorkerHandle,
+    PersistentLogWriteStub,
 };
 use crate::{PersistentLog, PersistentLogMode, PersistentLogModeTrait};
 
@@ -61,8 +62,8 @@ pub struct MonolithicStateMessage<S: MonolithicState> {
 
 /// This stupid amount of generics is because we basically interact with all of the
 /// protocols in the persistent log, so we have to receive all of it
-pub fn initialize_mon_persistent_log<S, D, K, T, OPM, POPT, LS, STM, PS, PSP, DLPH>(
-    executor: WrappedExecHandle<D::Request>,
+pub fn initialize_mon_persistent_log<S, D, K, T, OPM, POPT, LS, STM, PS, PSP, DLPH, EX>(
+    executor: EX,
     db_path: K,
 ) -> Result<MonStatePersistentLog<S, D, OPM, POPT, LS, STM>>
 where
@@ -76,9 +77,10 @@ where
     STM: StateTransferMessage + 'static,
     PS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT>,
     PSP: PersistableStateTransferProtocol + Send + 'static,
-    DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
+    DLPH: TDecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
+    EX: TLoggedDecisionsHandle<SMRReq<D>>,
 {
-    MonStatePersistentLog::init_mon_log::<K, T, PS, PSP, DLPH>(executor, db_path)
+    MonStatePersistentLog::init_mon_log::<K, T, PS, PSP, DLPH, EX>(executor, db_path)
 }
 
 impl<S, D, OPM, POPT, LS, STM> MonStatePersistentLog<S, D, OPM, POPT, LS, STM>
@@ -90,16 +92,14 @@ where
     LS: DecisionLogMessage<SMRReq<D>, OPM, POPT> + 'static,
     STM: StateTransferMessage + 'static,
 {
-    fn init_mon_log<K, T, POS, PSP, DLPH>(
-        executor: WrappedExecHandle<D::Request>,
-        db_path: K,
-    ) -> Result<Self>
+    fn init_mon_log<K, T, POS, PSP, DLPH, EX>(executor: EX, db_path: K) -> Result<Self>
     where
         K: AsRef<Path>,
         T: PersistentLogModeTrait,
         POS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT>,
         PSP: PersistableStateTransferProtocol + Send + 'static,
-        DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
+        DLPH: TDecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
+        EX: TLoggedDecisionsHandle<SMRReq<D>>,
     {
         let mut message_types = POS::message_types();
 
@@ -322,9 +322,9 @@ where
 
     fn wait_for_full_persistence(
         &self,
-        batch: BatchedDecision<SMRReq<D>>,
-        decision_logging: LoggingDecision,
-    ) -> Result<Option<BatchedDecision<SMRReq<D>>>> {
+        batch: DecisionRequestBatch<SMRReq<D>>,
+        decision_logging: DecisionSummaryForPersistence,
+    ) -> Result<Option<DecisionRequestBatch<SMRReq<D>>>> {
         self.inner_log
             .wait_for_full_persistence(batch, decision_logging)
     }

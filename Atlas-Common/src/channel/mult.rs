@@ -1,4 +1,4 @@
-use crate::channel::{custom_dump, SendReturnError};
+use crate::channel::{SendReturnError, custom_dump};
 
 /// Channel with capability of dumping multiple members in a couple of CAS operations
 pub struct ChannelMultTx<T> {

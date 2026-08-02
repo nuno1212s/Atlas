@@ -47,7 +47,7 @@ pub struct Follower<S: Service + 'static, NT: Node<PBFT<S::Data>> + 'static> {
     phase: FollowerPhase,
     phase_stack: Option<FollowerPhase>,
 
-    //The handle to the current state and the executor of the service, so we
+    //The handle to the current state and the execution of the service, so we
     //can keep up and respond to requests
     executor: ExecutorHandle<S::Data>,
     //A consensus instance for the followers
@@ -146,7 +146,7 @@ impl<S: Service + 'static, NT: Node<PBFT<S::Data>> + 'static> Follower<S, NT> {
 
         //TODO: Listen to this rx
 
-        // start executor
+        // start execution
         Executor::<S, FollowerReplier, NT>::new(
             reply_handle,
             handle,

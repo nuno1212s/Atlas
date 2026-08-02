@@ -126,6 +126,7 @@ impl<P> ReplyMessage<P> {
 
 /// The client request information about a given request
 #[derive(Eq, PartialEq, Ord, Clone, PartialOrd, Debug)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct ClientRqInfo {
     //The UNIQUE digest of the request in question
     pub digest: Digest,
@@ -143,6 +144,67 @@ impl TimeOutable for ClientRqInfo {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+impl Orderable for ClientRqInfo {
+    fn sequence_number(&self) -> SeqNo {
+        self.seq_no
+    }
+}
+
+impl ClientRqInfo {
+    pub fn new(digest: Digest, sender: NodeId, seqno: SeqNo, session: SeqNo) -> Self {
+        Self {
+            digest,
+            sender,
+            seq_no: seqno,
+            session,
+        }
+    }
+
+    pub fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    pub fn sender(&self) -> NodeId {
+        self.sender
+    }
+
+    pub fn session(&self) -> SeqNo {
+        self.session
+    }
+}
+
+impl<O> From<&StoredMessage<O>> for ClientRqInfo
+where
+    O: SessionBased,
+{
+    fn from(message: &StoredMessage<O>) -> Self {
+        let digest = message.header().unique_digest();
+        let sender = message.header().from();
+
+        let session = message.message().session_number();
+        let seq_no = message.message().sequence_number();
+
+        Self {
+            digest,
+            sender,
+            seq_no,
+            session,
+        }
+    }
+}
+
+impl Hash for ClientRqInfo {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.digest.hash(state);
+    }
+}
+
+impl SessionBased for ClientRqInfo {
+    fn session_number(&self) -> SeqNo {
+        self.session
     }
 }
 
@@ -172,6 +234,15 @@ impl<P> Deref for Protocol<P> {
 
     fn deref(&self) -> &Self::Target {
         &self.payload
+    }
+}
+
+impl<P> Debug for Protocol<P>
+where
+    P: Debug,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.payload)
     }
 }
 
@@ -261,76 +332,6 @@ impl<P> ForwardedProtocolMessage<P> {
 
     pub fn into_inner(self) -> StoredMessage<Protocol<P>> {
         self.message
-    }
-}
-
-impl Orderable for ClientRqInfo {
-    fn sequence_number(&self) -> SeqNo {
-        self.seq_no
-    }
-}
-
-impl ClientRqInfo {
-    pub fn new(digest: Digest, sender: NodeId, seqno: SeqNo, session: SeqNo) -> Self {
-        Self {
-            digest,
-            sender,
-            seq_no: seqno,
-            session,
-        }
-    }
-
-    pub fn digest(&self) -> Digest {
-        self.digest
-    }
-
-    pub fn sender(&self) -> NodeId {
-        self.sender
-    }
-
-    pub fn session(&self) -> SeqNo {
-        self.session
-    }
-}
-
-impl<O> From<&StoredMessage<O>> for ClientRqInfo
-where
-    O: SessionBased,
-{
-    fn from(message: &StoredMessage<O>) -> Self {
-        let digest = message.header().unique_digest();
-        let sender = message.header().from();
-
-        let session = message.message().session_number();
-        let seq_no = message.message().sequence_number();
-
-        Self {
-            digest,
-            sender,
-            seq_no,
-            session,
-        }
-    }
-}
-
-impl Hash for ClientRqInfo {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.digest.hash(state);
-    }
-}
-
-impl<P> Debug for Protocol<P>
-where
-    P: Debug,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.payload)
-    }
-}
-
-impl SessionBased for ClientRqInfo {
-    fn session_number(&self) -> SeqNo {
-        self.session
     }
 }
 

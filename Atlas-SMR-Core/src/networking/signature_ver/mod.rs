@@ -10,9 +10,9 @@ use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_logging_core::log_transfer::networking::signature_ver::LogTransferVerificationHelper;
 use atlas_smr_application::serialize::ApplicationData;
 
+use crate::SMRReq;
 use crate::message::{OrderableMessage, SystemMessage};
 use crate::serialize::{SMRSysMsg, Service};
-use crate::SMRReq;
 
 type CPhantom<T> = PhantomData<fn() -> T>;
 

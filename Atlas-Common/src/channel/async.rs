@@ -1,6 +1,6 @@
 use crate::channel::{RecvError, SendError};
 use std::future::Future;
-use std::pin::{pin, Pin};
+use std::pin::{Pin, pin};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
@@ -30,7 +30,15 @@ type InnerChannelRxFut<'a, T> = crate::channel::async_channel_mpmc::ChannelRxFut
 
 /// Future for a general purpose channel's receiving operation.
 pub struct ChannelRxFut<'a, T> {
+    pub(crate) channel: Option<Arc<str>>,
     pub(crate) inner: InnerChannelRxFut<'a, T>,
+}
+
+impl<'a, T> ChannelRxFut<'a, T> {
+    #[inline]
+    pub(crate) fn new(inner: InnerChannelRxFut<'a, T>, channel: Option<Arc<str>>) -> Self {
+        Self { channel, inner }
+    }
 }
 
 #[cfg(feature = "channel_flume_mpmc")]
@@ -40,7 +48,15 @@ type InnerChannelTxFut<'a, T> = super::flume_mpmc::ChannelTxFut<'a, T>;
 type InnerChannelTxFut<'a, T> = crate::channel::async_channel_mpmc::ChannelTxFut<'a, T>;
 
 pub struct ChannelTxFut<'a, T> {
+    pub(crate) channel: Option<Arc<str>>,
     pub(crate) inner: InnerChannelTxFut<'a, T>,
+}
+
+impl<'a, T> ChannelTxFut<'a, T> {
+    #[inline]
+    pub(crate) fn new(inner: InnerChannelTxFut<'a, T>, channel: Option<Arc<str>>) -> Self {
+        Self { channel, inner }
+    }
 }
 
 impl<T> Clone for ChannelAsyncTx<T> {
@@ -71,7 +87,7 @@ impl<T> ChannelAsyncTx<T> {
     //Asynchronously send message through channel
     #[inline]
     pub fn send(&mut self, message: T) -> ChannelTxFut<'_, T> {
-        self.inner.send(message).into()
+        ChannelTxFut::new(self.inner.send(message), self.name.clone())
     }
 }
 
@@ -79,7 +95,7 @@ impl<T> ChannelAsyncRx<T> {
     //Asynchronously recv message from channel
     #[inline]
     pub fn recv(&mut self) -> ChannelRxFut<'_, T> {
-        self.inner.recv().into()
+        ChannelRxFut::new(self.inner.recv(), self.name.clone())
     }
 }
 
@@ -88,7 +104,10 @@ impl<'a, T> Future for ChannelRxFut<'a, T> {
 
     #[inline]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<T, RecvError>> {
-        pin!(&mut self.inner).poll(cx)
+        let channel = self.channel.clone();
+        pin!(&mut self.inner)
+            .poll(cx)
+            .map(|res| res.map_err(|err| err.with_channel(channel)))
     }
 }
 
@@ -97,9 +116,10 @@ impl<'a, T> Future for ChannelTxFut<'a, T> {
 
     #[inline]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let channel = self.channel.clone();
         pin!(&mut self.inner).poll(cx).map(|r| match r {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError::FailedToSend),
+            Err(_) => Err(SendError::FailedToSend { channel }),
         })
     }
 }

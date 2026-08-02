@@ -1,10 +1,10 @@
 #![cfg(test)]
 mod rq_pre_processing_tests {
+    use crate::SMRReq;
     use crate::request_pre_processing::{
-        initialize_request_pre_processor, OrderedRqHandles, UnorderedRqHandles,
+        OrderedRqHandles, UnorderedRqHandles, initialize_request_pre_processor,
     };
     use crate::serialize::SMRSysMessage;
-    use crate::SMRReq;
     use anyhow::Context;
     use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
     use atlas_communication::message::StoredMessage;

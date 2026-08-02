@@ -2,6 +2,9 @@
 #![allow(dead_code)]
 #![allow(clippy::non_canonical_partial_ord_impl)]
 
+pub mod singular_tbo_queue;
+pub mod tbo_queue;
+
 use std::cmp::{Ordering, PartialEq, PartialOrd};
 use std::collections::VecDeque;
 use std::ops::{Add, AddAssign};
@@ -11,8 +14,9 @@ use either::{Either, Left, Right};
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
-pub const PERIOD: u32 = 100000000;
+pub const PERIOD: u32 = 50000;
 
 /// Represents a sequence number attributed to a client request
 /// during a `Consensus` instance.
@@ -24,8 +28,11 @@ pub struct SeqNo(i32);
 ///Can be translated
 pub struct ThreadSafeSeqNo(AtomicI32);
 
+#[derive(Error, Debug)]
 pub enum InvalidSeqNo {
+    #[error("Sequence number is too small")]
     Small,
+    #[error("Sequence number is too big")]
     Big,
 }
 
@@ -120,23 +127,9 @@ impl SeqNo {
     /// Takes into account how far ahead the messages are and if they are too far ahead, we will ignore them
     #[inline]
     pub fn index(self, other: SeqNo) -> Either<InvalidSeqNo, usize> {
-        // TODO: add config param for these consts
-        const OVERFLOW_THRES_POS: i32 = 10000;
-        const OVERFLOW_THRES_NEG: i32 = -OVERFLOW_THRES_POS;
         const DROP_SEQNO_THRES: i32 = (PERIOD + (PERIOD >> 1)) as i32;
 
-        let index = {
-            //TODO: Figure this out correctly
-            /*if index < OVERFLOW_THRES_NEG || index > OVERFLOW_THRES_POS {
-                // guard against overflows
-                i32::MAX
-                    .wrapping_add(index)
-                    .wrapping_add(1)
-            } else {
-                index
-            }*/
-            (self.0).wrapping_sub(other.0)
-        };
+        let index = self.0.wrapping_sub(other.0);
 
         if !(0..=DROP_SEQNO_THRES).contains(&index) {
             // drop old messages or messages whose seq no. is too

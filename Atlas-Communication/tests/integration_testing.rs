@@ -119,8 +119,10 @@ impl MockNetworkInfoFactory {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[allow(dead_code)]
 struct MockMessage;
 
+#[allow(dead_code)]
 struct MockProtocol;
 
 impl Serializable for MockProtocol {
@@ -128,6 +130,7 @@ impl Serializable for MockProtocol {
     type Verifier = MockVerifier;
 }
 
+#[allow(dead_code)]
 struct MockVerifier;
 
 impl InternalMessageVerifier<MockMessage> for MockVerifier {
@@ -160,7 +163,9 @@ impl ByteNetworkStub for MockByteStub {
     }
 }
 
+#[allow(dead_code)]
 type LookupTable = EnumLookupTable<MockProtocol, MockProtocol, MockProtocol, MockProtocol>;
+#[allow(dead_code)]
 type PeerCNNMngmt = PeerConnectionManager<
     MockNetworkInfo,
     MockByteStub,
@@ -171,6 +176,7 @@ type PeerCNNMngmt = PeerConnectionManager<
     LookupTable,
 >;
 
+#[allow(dead_code)]
 type PeerInnCnn =
     PeerIncomingConnection<MockProtocol, MockProtocol, MockProtocol, MockProtocol, LookupTable>;
 
@@ -179,6 +185,7 @@ type PeerInnCnn =
 /// to actually handle all communication that was meant to be sent over the wire.
 ///
 #[derive(Clone)]
+#[allow(dead_code)]
 struct MockByteController {
     connection_controller: Arc<MockByteConnectionController>,
 }
@@ -252,8 +259,12 @@ impl NetworkConnectionController for MockByteConnectionController {
     }
 }
 
+/// Stub error for the test connection controller. Used only in type position (the
+/// `Error`/`IndConnError`/`ConnectionError` associated types) — the stub never actually fails,
+/// so it is never constructed.
 #[derive(Error, Debug)]
 #[error("Failed to make connection")]
+#[allow(dead_code)]
 struct ConnErr;
 
 /// The factory for connection controllers

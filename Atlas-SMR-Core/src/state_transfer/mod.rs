@@ -9,8 +9,8 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
-use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::ExecutionResult;
+use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::timeouts::timeout::TimeoutableMod;
 
 use crate::state_transfer::networking::serialize::StateTransferMessage;
@@ -90,7 +90,7 @@ pub enum STResult {
     StateTransferRunning,
     /// The message was processed successfully and the ST protocol
     /// is running but there is already a partial state ready to
-    /// be received by the executor
+    /// be received by the execution
     StateTransferReady,
     /// The message was processed successfully and the ST protocol
     /// has finished

@@ -9,7 +9,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use atlas_common::channel::sync::{new_bounded_sync, ChannelSyncTx};
+use atlas_common::channel::sync::{ChannelSyncTx, new_bounded_sync};
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 

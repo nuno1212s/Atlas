@@ -1,10 +1,9 @@
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
+use atlas_core::ordering_protocol::decision::DecisionRequests;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
-use atlas_core::ordering_protocol::{
-    DecisionAD, DecisionMetadata, ProtocolConsensusDecision, ShareableConsensusMessage,
-};
-use atlas_logging_core::decision_log::LoggingDecision;
+use atlas_core::ordering_protocol::{DecisionAD, DecisionMetadata, ShareableConsensusMessage};
+use atlas_logging_core::decision_log::DecisionSummaryForPersistence;
 
 /// A struct to store the ongoing decision known parameters
 pub struct OnGoingDecision<RQ, OP>
@@ -22,12 +21,12 @@ where
     // The messages that compose this decision, to be transformed into a given proof
     messages: Vec<ShareableConsensusMessage<RQ, OP>>,
     // The decision information from the ordering protocol
-    protocol_decision: Option<ProtocolConsensusDecision<RQ>>,
+    protocol_decision: Option<DecisionRequests<RQ>>,
     // The information about the decision that is being logged.
     // This is what is going to be used to send to the persistent
     // Logging layer in order to better control when a given sequence
     // number is completely persisted
-    logging_decision: LoggingDecision,
+    logging_decision: DecisionSummaryForPersistence,
 }
 
 /// The completed decision object with all necessary information to be transformed
@@ -41,8 +40,8 @@ where
     metadata: DecisionMetadata<RQ, OP>,
     additional_data: Vec<DecisionAD<RQ, OP>>,
     messages: Vec<ShareableConsensusMessage<RQ, OP>>,
-    protocol_decision: ProtocolConsensusDecision<RQ>,
-    logged_info: LoggingDecision,
+    protocol_decision: DecisionRequests<RQ>,
+    logged_info: DecisionSummaryForPersistence,
 }
 
 impl<RQ, OP> Orderable for OnGoingDecision<RQ, OP>
@@ -68,7 +67,7 @@ where
             additional_data: vec![],
             messages: vec![],
             protocol_decision: None,
-            logging_decision: LoggingDecision::init_empty(seq),
+            logging_decision: DecisionSummaryForPersistence::init_empty(seq),
         }
     }
 
@@ -86,7 +85,7 @@ where
         self.messages.push(partial);
     }
 
-    pub fn insert_requests(&mut self, protocol_decision: ProtocolConsensusDecision<RQ>) {
+    pub fn insert_requests(&mut self, protocol_decision: DecisionRequests<RQ>) {
         self.protocol_decision = Some(protocol_decision)
     }
 
@@ -123,8 +122,8 @@ where
         DecisionMetadata<RQ, OP>,
         Vec<DecisionAD<RQ, OP>>,
         Vec<ShareableConsensusMessage<RQ, OP>>,
-        ProtocolConsensusDecision<RQ>,
-        LoggingDecision,
+        DecisionRequests<RQ>,
+        DecisionSummaryForPersistence,
     ) {
         (
             self.seq,

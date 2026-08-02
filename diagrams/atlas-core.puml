@@ -1,0 +1,243 @@
+@startuml atlas-core
+title atlas-core — Protocol Trait Definitions
+
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+package "atlas-core" {
+
+  package "ordering_protocol" {
+
+    class OrderingProtocolArgs<R, RQPP, NT> {
+      +0: NodeId
+      +1: TimeoutModHandle
+      +2: RQPP
+      +3: BatchOutput<R>
+      +4: Arc<NT>
+      +5: Vec<NodeId>
+    }
+
+    interface OrderingProtocol<RQ> {
+      +{abstract} type Serialization
+      +{abstract} type Config
+      --
+      +poll() : OPResult<RQ, Self::Serialization>
+      +process_message(msg) : OPExResult<RQ, Self::Serialization>
+      +install_seq_no(seq: SeqNo)
+      +handle_off_ctx_message(msg)
+      +handle_execution_changed(is_executing: bool)
+    }
+
+    interface OrderProtocolTolerance {
+      +get_n_for_f(f: usize) : usize
+      +get_quorum_for_n(n: usize) : usize
+      +get_f_for_n(n: usize) : usize
+    }
+
+    interface PermissionedOrderingProtocol {
+      +{abstract} type PermissionedSerialization
+      --
+      +view() : View
+      +install_view(view: View)
+    }
+
+    interface OrderingProtocolMessage<RQ> {
+      +{abstract} type ProtocolMessage
+      +{abstract} type DecisionMetadata
+      +{abstract} type DecisionAdditionalInfo
+    }
+
+    interface PermissionedOrderingProtocolMessage {
+      +{abstract} type ViewInfo : NetworkView
+    }
+
+    interface NetworkView {
+      +primary() : NodeId
+      +quorum() : usize
+      +quorum_members() : &[NodeId]
+      +f() : usize
+      +n() : usize
+    }
+
+    interface OrderProtocolVerificationHelper {
+      +verify_request_message(header, msg) : Result<()>
+      +verify_protocol_message(header, msg) : Result<()>
+    }
+
+    enum OPPollResult<MD, DAD, P, O> {
+      RunCst
+      ReceiveMsg
+      Exec(Decision<MD, DAD, P, O>)
+      ProgressedDecision(Decision<MD, DAD, P, O>)
+      QuorumJoined(JoinInfo)
+      RePoll
+    }
+
+    enum OPExecResult<MD, DAD, P, O> {
+      MessageDropped
+      MessageQueued
+      MessageProcessedNoUpdate
+      ProgressedDecision(DecisionsAhead, Decision<MD, DAD, P, O>)
+      QuorumJoined(JoinInfo)
+      RunCst
+    }
+
+    enum DecisionsAhead {
+      Ignore
+      ClearAhead
+    }
+  }
+
+  package "ordering_protocol/decision" {
+    class Decision<MD, DAD, PM, RQ> {
+      -seq: SeqNo
+      -decision_parts: MaybeOrderedVec<DecisionPart<MD, DAD, PM, RQ>>
+      --
+      +decision_from_message(seq, msg) : Decision
+      +decision_done(seq) : Decision
+      +full_decision_info(seq, metadata, data, msgs, requests) : Decision
+      +merge_decisions(other) : Result<()>
+    }
+
+    class DecisionRequests<O> {
+      -seq: SeqNo
+      -batch_digest: Digest
+      -contained_requests: Vec<ClientRqInfo>
+      -executable_batch: DecisionRequestBatch<O>
+    }
+
+    class DecisionRequestBatch<RQ> {
+      -seq: SeqNo
+      -inner: Vec<StoredMessage<RQ>>
+      -meta: Option<BatchMeta>
+    }
+
+    class PartialDecisionInformation<DAD, PM> {
+      -message_partial_info: MaybeVec<DAD>
+      -messages: MaybeVec<ShareableMessage<PM>>
+    }
+
+    enum DecisionPart<MD, DAD, PM, RQ> {
+      DecisionMetadata(MD)
+      PartialDecisionInformation(PartialDecisionInformation)
+      DecisionRequests(DecisionRequests)
+      DecisionDone
+    }
+
+    class JoinInfo {
+      +node: NodeId
+      +new_quorum: Vec<NodeId>
+    }
+
+    Decision "1" *-- "many" DecisionPart
+    DecisionPart ..> DecisionRequests
+    DecisionPart ..> PartialDecisionInformation
+    DecisionRequests *-- DecisionRequestBatch
+  }
+
+  package "execution" {
+    interface TExecutorDecisionHandle<RQ> {
+      +catch_up_to_quorum(requests: MaybeVec<UpdateBatch<RQ>>) : Result<()>
+      +queue_update_unordered(requests: UnorderedUpdateBatch<RQ>) : Result<()>
+    }
+
+    interface TDeterministicExecutorDecisionHandle<RQ> {
+      +queue_update(batch: UpdateBatch<RQ>) : Result<()>
+    }
+
+    interface TPreemptiveExecutorDecisionHandle<RQ> {
+      +queue_preemptive_update(batch: UpdateBatch<RQ>) : Result<()>
+      +queue_preemptive_update_finalized(seq: SeqNo) : Result<()>
+    }
+
+    TDeterministicExecutorDecisionHandle --|> TExecutorDecisionHandle
+    TPreemptiveExecutorDecisionHandle --|> TDeterministicExecutorDecisionHandle
+  }
+
+  package "timeouts" {
+    class TimeoutsHandle {
+      +request_timeout(req: TimeoutRequest) : Result<()>
+      +cancel_timeout(id: TimeoutIdentification) : Result<()>
+    }
+
+    class TimeoutRequest {
+      +id: TimeoutIdentification
+      +duration: Duration
+      +needed_acks: usize
+      +is_cumulative: bool
+    }
+
+    class TimeoutIdentification {
+      +mod_id: Arc<str>
+      +timeout_id: TimeoutID
+    }
+
+    class Timeout {
+      +id: TimeoutIdentification
+      +timeout_count: usize
+      +timeout_time: Instant
+    }
+
+    class TimeoutAck {
+      +id: TimeoutIdentification
+      +from: NodeId
+    }
+
+    enum TimeoutID {
+      SeqNoBased(SeqNo)
+      SessionBased { session: SeqNo, seq_no: SeqNo, from: NodeId }
+    }
+
+    interface TimeoutableMod<R> {
+      +handle_timeout(timeouts: Vec<ModTimeout>) : Result<R>
+    }
+
+    interface TimeoutWorkerResponder {
+      +deliver_timeout(timeout: Timeout)
+      +deliver_ack(ack: TimeoutAck)
+    }
+
+    TimeoutIdentification *-- TimeoutID
+    TimeoutRequest *-- TimeoutIdentification
+    Timeout *-- TimeoutIdentification
+    TimeoutAck *-- TimeoutIdentification
+  }
+
+  package "request_pre_processing" {
+    interface WorkPartitioner {
+      +partition_work(from: NodeId, session: SeqNo) : usize
+    }
+
+    interface RequestPreProcessing<O> {
+      +process_forwarded_requests(requests) : Result<()>
+      +process_stopped_requests(requests) : Result<()>
+      +process_decided_batch(batch: UpdateBatch<O>) : Result<()>
+    }
+
+    class BatchOutput<O> {
+      +receive_batch() : Result<UpdateBatch<O>>
+      +try_receive_batch() : Result<Option<UpdateBatch<O>>>
+    }
+  }
+
+  package "persistent_log" {
+    interface OrderingProtocolLog<RQ, OP> {
+      +write_committed_seq_no(seq: SeqNo) : Result<()>
+      +write_message(msg: StoredMessage) : Result<()>
+      +write_metadata(meta) : Result<()>
+      +write_proof(proof) : Result<()>
+      +invalidate_seq(seq: SeqNo) : Result<()>
+    }
+
+    interface PermissionedOrderingProtocolLog<POP> {
+      +write_view(view) : Result<()>
+    }
+  }
+}
+
+OrderingProtocol ..> OPPollResult : returns
+OrderingProtocol ..> OPExecResult : returns
+PermissionedOrderingProtocol --|> OrderingProtocol
+OrderingProtocol ..> Decision : produces
+
+@enduml

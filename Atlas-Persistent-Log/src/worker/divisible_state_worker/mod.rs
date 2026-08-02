@@ -1,29 +1,29 @@
+use crate::ResponseMessage;
 use crate::serialize::{
     deserialize_state_descriptor, deserialize_state_part, serialize_state_descriptor,
     serialize_state_part, serialize_state_part_descriptor,
 };
 use crate::stateful_logs::divisible_state::DivisibleStateMessage;
-use crate::worker::{PersistentLogWorker, COLUMN_FAMILY_STATE};
-use crate::ResponseMessage;
+use crate::worker::{COLUMN_FAMILY_STATE, PersistentLogWorker};
 use anyhow::Context;
-use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::TryRecvError;
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::persistentdb::KVDB;
 use atlas_common::quiet_unwrap;
 use atlas_common::serialization_helper::SerMsg;
-use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::OrderProtocolLogHelper;
+use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
+use atlas_logging_core::decision_log::TDecisionLogPersistenceHelper;
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
-use atlas_logging_core::decision_log::DecisionLogPersistenceHelper;
 use atlas_smr_application::state::divisible_state::{DivisibleState, StatePart};
-use log::error;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tracing::error;
 
 #[derive(Clone)]
 pub struct PersistentDivStateStub<S: DivisibleState> {
@@ -101,7 +101,7 @@ where
     LS: DecisionLogMessage<RQ, OPM, POPT> + 'static,
     POP: OrderProtocolLogHelper<RQ, OPM, POPT>,
     PSP: PersistableStateTransferProtocol + 'static,
-    DLPH: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
+    DLPH: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
 {
     rx: ChannelSyncRx<DivisibleStateMessage<S>>,
     worker: PersistentLogWorker<RQ, OPM, POPT, LS, PSP, POP, DLPH>,
@@ -119,7 +119,7 @@ where
     LS: DecisionLogMessage<RQ, OPM, POPT> + 'static,
     POP: OrderProtocolLogHelper<RQ, OPM, POPT>,
     PSP: PersistableStateTransferProtocol + 'static,
-    DLPH: DecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
+    DLPH: TDecisionLogPersistenceHelper<RQ, OPM, POPT, LS> + 'static,
 {
     pub fn new(
         request_rx: ChannelSyncRx<DivisibleStateMessage<S>>,
@@ -143,8 +143,8 @@ where
                     continue;
                 }
                 Err(err) => match err {
-                    TryRecvError::ChannelEmpty => {}
-                    TryRecvError::ChannelDc | TryRecvError::Timeout => {
+                    TryRecvError::ChannelEmpty { .. } => {}
+                    TryRecvError::ChannelDc { .. } | TryRecvError::Timeout { .. } => {
                         error!("Error receiving message: {err:?}");
                     }
                 },

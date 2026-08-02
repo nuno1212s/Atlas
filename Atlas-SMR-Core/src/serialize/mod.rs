@@ -14,11 +14,11 @@ use atlas_core::serialize::NoProtocol;
 use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_smr_application::serialize::ApplicationData;
 
+use crate::SMRReq;
 use crate::message::{OrderableMessage, SystemMessage};
 use crate::networking::signature_ver::SigVerifier;
 use crate::state_transfer::networking::serialize::StateTransferMessage;
 use crate::state_transfer::networking::signature_ver::StateTransferVerificationHelper;
-use crate::SMRReq;
 
 /// The type that encapsulates all the serializing, so we don't have to constantly use SystemMessage
 pub struct Service<

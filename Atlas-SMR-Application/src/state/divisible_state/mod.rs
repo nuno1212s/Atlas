@@ -5,7 +5,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 
 /// Messages to be sent from the state transfer module to the
-/// executor module
+/// execution module
 pub enum InstallStateMessage<S>
 where
     S: DivisibleState,
@@ -18,7 +18,7 @@ where
     Done,
 }
 
-/// Messages to be sent by the executor for the state transfer module, notifying of a given
+/// Messages to be sent by the execution for the state transfer module, notifying of a given
 /// checkpoint being made
 pub enum AppState<S>
 where
@@ -60,9 +60,16 @@ pub trait StatePart<S: DivisibleState> {
     fn descriptor(&self) -> S::PartDescription;
 }
 
-///
 /// The trait that represents a divisible state, to be used by the state transfer protocol
 ///
+/// Divisible states are states that can be split into multiple parts which can be transferred separately.
+/// It is composed of 3 parts:
+///  - The State Descriptor: This is the description of the state, which is used to compare the state between multiple replicas.
+///    This will contain information about individual parts as well as a global description of the state.
+///  - The State Parts: These are the parts of the state that are transferred separately. Each part is identified by a part description.
+///  - The part descriptions: These are the descriptions of the parts of the state. Each part is identified by a part description.
+///
+/// Underlying implementations can choose to store the state in disk, RAM or both (using cache to speed up execution)
 pub trait DivisibleState: Sized + Send {
     type PartDescription: PartId + SerMsg;
 

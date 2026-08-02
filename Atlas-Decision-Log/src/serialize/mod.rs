@@ -1,10 +1,10 @@
-use crate::decision_log::DecisionLog;
+use crate::decision_log::InMemDecisionLog;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::phantom::FPhantom;
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::reconfiguration::NetworkInformationProvider;
-use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::loggable::PProof;
+use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::networking::serialize::{
     OrderProtocolVerificationHelper, OrderingProtocolMessage,
 };
@@ -57,7 +57,7 @@ where
     POP: PersistentOrderProtocolTypes<RQ, OP>,
 {
     type DecLogMetadata = ();
-    type DecLog = DecisionLog<RQ, OP, POP>;
+    type DecLog = InMemDecisionLog<RQ, OP, POP>;
     type DecLogPart = DecisionLogPart<RQ, OP, POP>;
 
     fn verify_decision_log<NI, OPVH>(
@@ -78,7 +78,7 @@ where
             proofs.push(proof);
         }
 
-        Ok(DecisionLog::from_ordered_proofs(proofs))
+        Ok(InMemDecisionLog::from_ordered_proofs(proofs))
     }
 }
 
