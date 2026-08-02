@@ -259,8 +259,12 @@ impl NetworkConnectionController for MockByteConnectionController {
     }
 }
 
+/// Stub error for the test connection controller. Used only in type position (the
+/// `Error`/`IndConnError`/`ConnectionError` associated types) — the stub never actually fails,
+/// so it is never constructed.
 #[derive(Error, Debug)]
 #[error("Failed to make connection")]
+#[allow(dead_code)]
 struct ConnErr;
 
 /// The factory for connection controllers

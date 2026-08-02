@@ -451,21 +451,19 @@ fn increase_welford_method(metric: &Metric, duration: u64) {
 
             sum.fetch_add(duration, Ordering::Relaxed);
 
-            let old_m = m
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |m| {
-                    Some(m + (duration - m) / k as i64)
-                })
-                .expect("Failed to update sum");
+            // `update` (stable since 1.95) replaces the deprecated `fetch_update`. Both closures
+            // here are infallible, so the previous `Some(..)` wrapping and the `.expect()` on a
+            // result that could never be `Err` are gone.
+            let old_m = m.update(Ordering::Relaxed, Ordering::Relaxed, |m| {
+                m + (duration - m) / k as i64
+            });
 
             let new_m = old_m + (duration - old_m) / k as i64;
 
-            s.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
-                Some(
-                    s.overflowing_add((duration - new_m).overflowing_mul(duration - old_m).0)
-                        .0,
-                )
-            })
-            .expect("Failed to update sum_sqrs");
+            s.update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+                s.overflowing_add((duration - new_m).overflowing_mul(duration - old_m).0)
+                    .0
+            });
         }
         _ => unreachable!("Metric is not a duration metric"),
     }

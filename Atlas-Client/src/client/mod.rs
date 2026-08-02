@@ -935,7 +935,7 @@ where
 
                         let mut total_count: usize = 0;
 
-                        for (_, count) in votes.digests.iter() {
+                        for count in votes.digests.values() {
                             total_count += count;
                         }
 
