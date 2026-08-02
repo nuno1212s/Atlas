@@ -61,29 +61,5 @@ macro_rules! quiet_opt_unwrap {
     };
 }
 
-#[macro_export]
-macro_rules! quiet_opt_unwrap {
-    ($err:expr) => {
-        match $err {
-            Some(value) => value,
-            None => {
-                tracing::error!("Expected value in object but was not found");
-
-                return;
-            }
-        };
-    };
-    ($err:expr, $ret:expr) => {
-        match $err {
-            Some(value) => value,
-            None => {
-                tracing::error!("Expected value in object but was not found");
-
-                return $ret;
-            }
-        };
-    };
-}
-
 /// Wrapper result type for `std::result::Result`.
 pub type Result<T> = anyhow::Result<T>;

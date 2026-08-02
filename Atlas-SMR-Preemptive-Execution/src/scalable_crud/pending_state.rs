@@ -205,11 +205,8 @@ where
             collision_state.collisions.len(),
         );
         metric_store_count(SCALABLE_OPS_PER_BATCH_ID, n);
-        if n > 0 {
-            metric_store_count(
-                SCALABLE_COLLISION_RATE_ID,
-                collision_state.collisions.len() * 1000 / n,
-            );
+        if let Some(rate) = (collision_state.collisions.len() * 1000).checked_div(n) {
+            metric_store_count(SCALABLE_COLLISION_RATE_ID, rate);
         }
 
         // Step 3 & 4: Partition results into non-colliders and colliders (both in batch order
