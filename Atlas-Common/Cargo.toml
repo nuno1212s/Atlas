@@ -148,3 +148,7 @@ harness = false
 [[bench]]
 name = "tbo_queue_bench"
 harness = false
+
+[[bench]]
+name = "sync_select_bench"
+harness = false
