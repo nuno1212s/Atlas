@@ -5,7 +5,6 @@ use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::error::*;
 use async_std::net::{TcpListener, TcpStream};
 
 pub struct Listener {
@@ -16,16 +15,15 @@ pub struct Socket {
     inner: TcpStream,
 }
 
-pub async fn bind<A: Into<SocketAddr>>(addr: A) -> Result<Listener> {
+pub async fn bind<A: Into<SocketAddr>>(addr: A) -> Result<Listener, io::Error> {
     let inner = TcpListener::bind(addr.into()).await?;
     Ok(Listener { inner })
 }
 
-pub async fn connect<A: Into<SocketAddr>>(addr: A) -> Result<Socket> {
-    TcpStream::connect(addr.into())
-        .await
-        .map(|inner| Socket { inner })
-        .into()
+pub async fn connect<A: Into<SocketAddr>>(addr: A) -> Result<Socket, io::Error> {
+    let inner = TcpStream::connect(addr.into()).await?;
+
+    Ok(Socket { inner })
 }
 
 impl AsyncRead for Socket {
@@ -57,12 +55,10 @@ impl AsyncWrite for Socket {
 }
 
 impl Listener {
-    pub async fn accept(&self) -> Result<Socket> {
-        self.inner
-            .accept()
-            .await
-            .map(|(inner, _)| Socket { inner })
-            .into()
+    pub async fn accept(&self) -> Result<Socket, io::Error> {
+        let (inner, _) = self.inner.accept().await?;
+
+        Ok(Socket { inner })
     }
 }
 
@@ -98,7 +94,13 @@ impl Deref for ReadHalf {
     }
 }
 
-impl AsyncRead for Socket {
+impl DerefMut for ReadHalf {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl AsyncRead for ReadHalf {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -108,7 +110,7 @@ impl AsyncRead for Socket {
     }
 }
 
-impl AsyncWrite for Socket {
+impl AsyncWrite for WriteHalf {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

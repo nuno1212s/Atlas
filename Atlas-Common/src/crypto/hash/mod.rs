@@ -11,7 +11,7 @@ use crate::error::*;
 #[cfg(feature = "crypto_hash_ring_sha2")]
 mod ring_sha2;
 
-#[cfg(feature = "crypto_hash_blake3_blake3")]
+#[cfg(not(feature = "crypto_hash_ring_sha2"))]
 mod blake3_blake3;
 
 /// The type `Context` represents an on-going hash digest calculation.
@@ -19,7 +19,7 @@ pub struct Context {
     #[cfg(feature = "crypto_hash_ring_sha2")]
     inner: ring_sha2::Context,
 
-    #[cfg(feature = "crypto_hash_blake3_blake3")]
+    #[cfg(not(feature = "crypto_hash_ring_sha2"))]
     inner: blake3_blake3::Context,
 }
 
@@ -31,7 +31,7 @@ pub struct Digest {
     #[cfg(feature = "crypto_hash_ring_sha2")]
     inner: ring_sha2::Digest,
 
-    #[cfg(feature = "crypto_hash_blake3_blake3")]
+    #[cfg(not(feature = "crypto_hash_ring_sha2"))]
     inner: blake3_blake3::Digest,
 }
 
@@ -52,7 +52,7 @@ impl Context {
                 ring_sha2::Context::new()
             }
 
-            #[cfg(feature = "crypto_hash_blake3_blake3")]
+            #[cfg(not(feature = "crypto_hash_ring_sha2"))]
             {
                 blake3_blake3::Context::new()
             }
@@ -82,7 +82,7 @@ impl Digest {
             ring_sha2::Digest::LENGTH
         }
 
-        #[cfg(feature = "crypto_hash_blake3_blake3")]
+        #[cfg(not(feature = "crypto_hash_ring_sha2"))]
         {
             blake3_blake3::Digest::LENGTH
         }
@@ -96,7 +96,7 @@ impl Digest {
                 ring_sha2::Digest::from_bytes(raw_bytes)
             }
 
-            #[cfg(feature = "crypto_hash_blake3_blake3")]
+            #[cfg(not(feature = "crypto_hash_ring_sha2"))]
             {
                 blake3_blake3::Digest::from_bytes(raw_bytes)
             }

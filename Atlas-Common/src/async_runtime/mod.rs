@@ -1,6 +1,6 @@
 //! Abstractions over different async runtimes in the Rust ecosystem.
 
-#[cfg(feature = "async_runtime_tokio")]
+#[cfg(not(feature = "async_runtime_async_std"))]
 mod tokio;
 
 #[cfg(feature = "async_runtime_async_std")]
@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::sync::OnceLock;
 use std::task::{Context as Cntx, Poll};
 
-#[cfg(feature = "async_runtime_tokio")]
+#[cfg(not(feature = "async_runtime_async_std"))]
 static RUNTIME: OnceLock<tokio::Runtime> = OnceLock::new();
 
 #[cfg(feature = "async_runtime_async_std")]
@@ -31,7 +31,7 @@ macro_rules! runtime {
 /// i.e. when the underlying async task associated with the
 /// `JoinHandle` completes.
 pub struct JoinHandle<T> {
-    #[cfg(feature = "async_runtime_tokio")]
+    #[cfg(not(feature = "async_runtime_async_std"))]
     inner: tokio::JoinHandle<T>,
 
     #[cfg(feature = "async_runtime_async_std")]
@@ -45,7 +45,7 @@ pub struct JoinHandle<T> {
 /// # Safety
 /// This is safe when it's the first called function and when it's only called once
 pub fn init(num_threads: usize) -> Result<()> {
-    #[cfg(feature = "async_runtime_tokio")]
+    #[cfg(not(feature = "async_runtime_async_std"))]
     {
         let runtime = tokio::init(num_threads)?;
 
@@ -56,7 +56,7 @@ pub fn init(num_threads: usize) -> Result<()> {
 
     #[cfg(feature = "async_runtime_async_std")]
     {
-        let runtime = async_std::init(num_threads);
+        let runtime = async_std::init(num_threads)?;
 
         RUNTIME
             .set(runtime)

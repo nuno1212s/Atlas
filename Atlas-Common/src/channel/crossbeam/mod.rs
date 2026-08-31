@@ -2,11 +2,7 @@ use crate::Err;
 use crate::channel::{
     RecvError, SendError, SendReturnError, TryRecvError, TrySendError, TrySendReturnError,
 };
-use crossbeam_channel::{
-    Receiver, RecvError as CBRecvError, RecvTimeoutError, SendTimeoutError, Sender,
-};
-use std::ops::Deref;
-use std::sync::Arc;
+use crossbeam_channel::{RecvError as CBRecvError, RecvTimeoutError, SendTimeoutError};
 use std::time::Duration;
 
 pub struct ChannelSyncRx<T> {
@@ -35,25 +31,21 @@ impl<T> Clone for ChannelSyncRx<T> {
 
 impl<T> ChannelSyncTx<T> {
     #[inline]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// `None` for an unbounded channel.
+    #[inline]
+    pub fn capacity(&self) -> Option<usize> {
+        self.inner.capacity()
+    }
+
+    #[inline]
     pub fn send_return(&self, value: T) -> std::result::Result<(), SendReturnError<T>> {
         match self.inner.send(value) {
             Ok(_) => Ok(()),
             Err(err) => Err(SendReturnError::FailedToSend(err.into_inner(), None)),
-        }
-    }
-
-    #[inline]
-    pub fn send_return_timeout(
-        &self,
-        value: T,
-        timeout: Duration,
-    ) -> Result<(), TrySendReturnError<T>> {
-        match self.inner.send_timeout(value, timeout) {
-            Ok(_) => Ok(()),
-            Err(err) => match err {
-                SendTimeoutError::Timeout(t) => Err(TrySendReturnError::Timeout(t, None)),
-                SendTimeoutError::Disconnected(t) => Err(TrySendReturnError::Disconnected(t, None)),
-            },
         }
     }
 
@@ -112,6 +104,19 @@ impl<T> ChannelSyncTx<T> {
 }
 
 impl<T> ChannelSyncRx<T> {
+    /// The underlying handle, for `channel::sync::__select` only. Deliberately
+    /// crate-internal: nothing outside `atlas-common` should ever name the
+    /// backend's types.
+    #[inline]
+    pub(in crate::channel) fn raw(&self) -> &crossbeam_channel::Receiver<T> {
+        &self.inner
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
     #[inline]
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         match self.inner.try_recv() {
@@ -150,23 +155,6 @@ impl<T> ChannelSyncRx<T> {
     }
 }
 
-//TODO: Maybe make this actually implement the methods so we can return our own errors?
-impl<T> Deref for ChannelSyncRx<T> {
-    type Target = Receiver<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<T> Deref for ChannelSyncTx<T> {
-    type Target = Sender<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
 #[inline]
 pub(super) fn new_bounded<T>(bound: usize) -> (ChannelSyncTx<T>, ChannelSyncRx<T>) {
     let (tx, rx) = crossbeam_channel::bounded(bound);
@@ -181,52 +169,8 @@ pub(super) fn new_unbounded<T>() -> (ChannelSyncTx<T>, ChannelSyncRx<T>) {
     (ChannelSyncTx { inner: tx }, ChannelSyncRx { inner: rx })
 }
 
-impl<T> From<Sender<T>> for ChannelSyncTx<T> {
-    fn from(value: Sender<T>) -> Self {
-        Self { inner: value }
-    }
-}
-
-impl<T> From<Receiver<T>> for ChannelSyncRx<T> {
-    fn from(value: Receiver<T>) -> Self {
-        Self { inner: value }
-    }
-}
-
-impl<T> From<ChannelSyncTx<T>> for Sender<T> {
-    fn from(value: ChannelSyncTx<T>) -> Self {
-        value.inner
-    }
-}
-
-impl<T> From<ChannelSyncRx<T>> for Receiver<T> {
-    fn from(value: ChannelSyncRx<T>) -> Self {
-        value.inner
-    }
-}
-
-impl<T> AsRef<Sender<T>> for ChannelSyncTx<T> {
-    fn as_ref(&self) -> &Sender<T> {
-        &self.inner
-    }
-}
-
-impl<T> AsRef<Receiver<T>> for ChannelSyncRx<T> {
-    fn as_ref(&self) -> &Receiver<T> {
-        &self.inner
-    }
-}
-
 impl From<CBRecvError> for RecvError {
     fn from(_: CBRecvError) -> Self {
         Self::ChannelDc { channel: None }
-    }
-}
-
-impl RecvError {
-    pub fn from_base_error_with_channel(_: CBRecvError, channel_name: Option<Arc<str>>) -> Self {
-        Self::ChannelDc {
-            channel: channel_name,
-        }
     }
 }

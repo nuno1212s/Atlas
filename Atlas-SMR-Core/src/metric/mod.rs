@@ -55,8 +55,28 @@ pub(crate) const RQ_PP_ORCHESTRATOR_MESSAGES_PROCESSED: &str =
     "RQ_PRE_PROCESS_ORCHESTRATOR_MESSAGES_PROCESSED";
 pub(crate) const RQ_PP_ORCHESTRATOR_MESSAGES_PROCESSED_ID: usize = 25;
 
+/// Time a batch spent waiting on consensus: from when the ordering protocol first knew
+/// the batch's requests (pre-prepare complete) to when the batch was handed to the executor.
+///
+/// Recorded at the single shared conversion point every executor funnels through, so the
+/// baseline and all preemptive variants report it identically and comparably. Expected to be
+/// near-zero for preemptive execution (which starts on the proposal) and roughly a consensus
+/// round trip for the baseline (which waits for the commit).
+///
+/// NOTE: IDs here share one flat registry with `atlas-core` (which uses 21, 23, 24, 30-34),
+/// since both crates are registered into the same binary. 26-29 are free in both.
+pub const CONSENSUS_WAIT_TIME: &str = "CONSENSUS_WAIT_TIME";
+pub const CONSENSUS_WAIT_TIME_ID: usize = 26;
+
 pub fn metrics() -> Vec<MetricRegistry> {
     vec![
+        (
+            CONSENSUS_WAIT_TIME_ID,
+            CONSENSUS_WAIT_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Debug,
+        )
+            .into(),
         (
             RQ_PP_CLIENT_MSG_ID,
             RQ_PP_CLIENT_MSG.to_string(),

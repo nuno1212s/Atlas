@@ -1,32 +1,55 @@
-//! This crate, `atlas-common` takes advantage of the feature flags
-//! in `Cargo.toml` to provide a super flexible, modular API.
+//! This crate, `atlas-common`, provides the pluggable backends the rest of
+//! Atlas is built on: the async runtime, thread pool, sockets, channels, hashing,
+//! the `HashMap` hasher, and the persistent key-value store.
 //!
-//! # Feature flags
+//! # Choosing a backend
 //!
-//! At the moment, a user is able to customize:
+//! Every group has a default that is selected by the *absence* of a feature
+//! flag, so a plain `cargo build` gets the standard stack and there is nothing
+//! to configure to get started. To change one, enable its flag anywhere in the
+//! dependency graph -- including from the final binary's `Cargo.toml`:
 //!
-//! - The asynchronous runtime used by this crate:
-//!     + E.g. To use `tokio`, enter the feature flag `async_runtime_tokio`.
-//! - The thread pool used to execute CPU intensive tasks:
-//!     + E.g. `threadpool_cthpool`.
-//! - The sockets library used to communicate with other nodes:
-//!     + E.g. `socket_async_std_tcp`.
-//! - If the serialization of wire messages is possible with `serde`:
-//!     + With `serialize_serde`.
-//! - The crypto library used to perform public key crypto operations:
-//!     + E.g. `crypto_signature_ring_ed25519`.
-//! - The crypto library used to calculate hash digests of messages:
-//!     + E.g. `crypto_hash_ring_sha2`.
+//! ```toml
+//! atlas-common = { path = "...", features = ["threadpool_crossbeam"] }
+//! ```
 //!
-//! However, for convenience, some sane default feature flags are already
-//! configured, which should perform well under any environment. Mind you,
-//! the user, that this is a BFT library, so software variation is encouraged;
-//! in a typical system setup, you would probably employ different backend
-//! libraries performing identical duties.
+//! | group                 | default | override with                                  |
+//! |-----------------------|---------|------------------------------------------------|
+//! | async runtime         | tokio   | `async_runtime_async_std`                       |
+//! | socket                | tokio   | `socket_async_std_tcp`, `socket_rio_tcp`        |
+//! | thread pool           | rayon   | `threadpool_crossbeam`                          |
+//! | hash                  | blake3  | `crypto_hash_ring_sha2`                         |
+//! | async channel         | flume   | `channel_async_channel_mpmc`                    |
+//! | sync channel          | crossbeam | `channel_sync_flume`                          |
+//! | dump queue            | mqueue  | `channel_custom_dump_lfb`                       |
+//! | `RandomState`         | fxhash  | `collections_randomstate_{std,twox_hash,gxhash}` |
+//! | persistent db         | sled    | `persistent_db_rocksdb`, `persistent_db_disabled` |
+//!
+//! There is deliberately **no backend in `default`**. Cargo features are
+//! additive and unioned across the whole dependency graph, so a positive default
+//! could only be switched off with `default-features = false` on every one of
+//! the ~20 edges that reach this crate. Expressing the default as "no override
+//! selected" instead means a single flag, anywhere, wins.
+//!
+//! Selecting two backends from one group is rejected by `build.rs` with a
+//! readable message rather than a wall of duplicate-definition errors.
+//!
+//! Signing (`ring` Ed25519), the mixed channel and the multi-dump channel have a
+//! single implementation each and so have no flag at all.
+//!
+//! `serialize_serde` is the one remaining default feature: it is a cross-cutting
+//! derive gate rather than a backend choice, and it is forwarded by roughly a
+//! dozen sibling crates.
 
 use crate::error::*;
 use crate::globals::Flag;
 use tracing::{debug, instrument};
+
+/// Re-exported for `sync_select!`, which expands in the caller's crate where
+/// `flume` is not a direct dependency.
+#[cfg(feature = "channel_sync_flume")]
+#[doc(hidden)]
+pub use flume as __flume;
 
 pub mod async_runtime;
 pub mod channel;

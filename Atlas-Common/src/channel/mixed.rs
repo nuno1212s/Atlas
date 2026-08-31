@@ -1,16 +1,72 @@
-use crate::channel::{RecvError, SendReturnError, TryRecvError, TrySendReturnError};
+use crate::channel::{RecvError, SendError, SendReturnError, TryRecvError, TrySendReturnError};
+use std::future::Future;
+use std::pin::{Pin, pin};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-/**
-Async and sync mixed channels (Allows us to connect async and sync environments together)
- */
-use super::r#async::{ChannelRxFut, ChannelTxFut};
+// Async and sync mixed channels (Allows us to connect async and sync
+// environments together)
 
-#[cfg(feature = "channel_mixed_flume")]
+/// Future returned by [`ChannelMixedRx::recv_async`].
+///
+/// The mixed channel is always backed by flume, whichever backend the async
+/// channel group selects, so this wraps the flume future directly instead of
+/// reusing `async::ChannelRxFut` (whose inner type follows the async group).
+pub struct ChannelRxFut<'a, T> {
+    channel: Option<Arc<str>>,
+    inner: super::flume_mpmc::ChannelRxFut<'a, T>,
+}
+
+/// Future returned by [`ChannelMixedTx::send_async`]. See [`ChannelRxFut`].
+pub struct ChannelTxFut<'a, T> {
+    channel: Option<Arc<str>>,
+    inner: super::flume_mpmc::ChannelTxFut<'a, T>,
+}
+
+impl<'a, T> Future for ChannelRxFut<'a, T> {
+    type Output = Result<T, RecvError>;
+
+    #[inline]
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let channel = self.channel.clone();
+
+        pin!(&mut self.inner)
+            .poll(cx)
+            .map(|res| res.map_err(|err| err.with_channel(channel)))
+    }
+}
+
+impl<'a, T> Future for ChannelTxFut<'a, T> {
+    type Output = Result<(), SendError>;
+
+    #[inline]
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let channel = self.channel.clone();
+
+        pin!(&mut self.inner).poll(cx).map(|r| match r {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError::FailedToSend { channel }),
+        })
+    }
+}
+
+impl<'a, T> ChannelRxFut<'a, T> {
+    #[inline]
+    fn new(inner: super::flume_mpmc::ChannelRxFut<'a, T>, channel: Option<Arc<str>>) -> Self {
+        Self { channel, inner }
+    }
+}
+
+impl<'a, T> ChannelTxFut<'a, T> {
+    #[inline]
+    fn new(inner: super::flume_mpmc::ChannelTxFut<'a, T>, channel: Option<Arc<str>>) -> Self {
+        Self { channel, inner }
+    }
+}
+
 type InnerChannelMixedRx<T> = super::flume_mpmc::ChannelMixedRx<T>;
 
-#[cfg(feature = "channel_mixed_flume")]
 type InnerChannelMixedTx<T> = super::flume_mpmc::ChannelMixedTx<T>;
 
 pub struct ChannelMixedRx<T> {
@@ -143,12 +199,7 @@ pub fn new_bounded_mixed<T>(
 ) -> (ChannelMixedTx<T>, ChannelMixedRx<T>) {
     let name = name.map(|string| Arc::from(string.into()));
 
-    let (tx, rx) = {
-        #[cfg(feature = "channel_mixed_flume")]
-        {
-            super::flume_mpmc::new_bounded(bound)
-        }
-    };
+    let (tx, rx) = super::flume_mpmc::new_bounded(bound);
 
     (
         ChannelMixedTx {

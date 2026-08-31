@@ -14,7 +14,7 @@ use atlas_common::circuit_breaker::CircuitBreaker;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{channel, exhaust_and_consume, unwrap_channel};
+use atlas_common::{channel, exhaust_and_consume};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkUpdatedMessage, ReconfigurationNetworkCommunication,
@@ -156,6 +156,12 @@ where
                     };
                 }
                 ReconfigurableNodeState::QuorumReconfigurationProtocol => {
+                    // Keep driving the network reconfiguration protocol even once quorum setup
+                    // has begun, so it keeps retrying introduction with any bootstrap node it
+                    // hasn't confirmed yet (reaching quorum does not mean every node was reachable).
+                    self.node
+                        .iterate(&mut self.seq_gen, &self.network_node, &self.timeouts)?;
+
                     let node_wrap = QuorumConfigNetworkWrapper::from(self.network_node.clone());
 
                     match self.node_type.iterate(&node_wrap)? {
@@ -167,10 +173,14 @@ where
                     }
                 }
                 ReconfigurableNodeState::Stable => {
+                    // Still needed so the network reconfiguration protocol keeps retrying
+                    // introduction with any bootstrap node it hasn't confirmed yet.
+                    self.node
+                        .iterate(&mut self.seq_gen, &self.network_node, &self.timeouts)?;
+
                     let node_wrap = QuorumConfigNetworkWrapper::from(self.network_node.clone());
 
                     // We still want to iterate the quorum protocol in order to receive new updates from the ordering protocol
-                    // The network reconfiguration protocol is now only request based, so it does not need to be iterated
                     self.node_type.iterate(&node_wrap)?;
                 }
             }
@@ -190,20 +200,15 @@ where
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
-        channel::sync::sync_select_biased! {
-            recv(unwrap_channel!(self.channel_rx)) -> orchestrator_message => {
+        channel::sync::sync_select! {
+            recv(self.channel_rx) -> orchestrator_message => {
                 self.handle_message_from_orchestrator(orchestrator_message.context("Orchestrator message")?)
             }
-            recv(unwrap_channel!(self.reconfig_network.network_update_receiver())) -> network_update_message => {
+            recv(self.reconfig_network.network_update_receiver()) -> network_update_message => {
                 self.handle_network_update_message(network_update_message.context("Update message")?)
             }
-            recv(unwrap_channel!(self.network_node.incoming_stub().as_ref())) -> network_msg => {
-                exhaust_and_consume!(
-                    network_msg.context("Network stub receive")?,
-                    self.network_node.incoming_stub().as_ref(),
-                    self,
-                    handle_network_message
-                )
+            recv_exhaust(self.network_node.incoming_stub().as_ref()) -> network_msg => {
+                self.handle_network_message(network_msg)
             }
             default(*MESSAGE_SLEEP) => Ok(())
         }

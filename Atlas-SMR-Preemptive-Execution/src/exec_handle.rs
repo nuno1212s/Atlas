@@ -148,3 +148,30 @@ impl<RQ> Clone for PreemptiveExecutorHandle<RQ> {
         }
     }
 }
+
+#[cfg(test)]
+mod specialization_guard {
+    use super::PreemptiveExecutorHandle;
+    use atlas_core::execution::TPreemptiveExecutorDecisionHandle;
+    use atlas_smr_core::SMRRawReq;
+    use atlas_smr_core::execution::SMRExecWrapper;
+    use atlas_smr_core::execution::state_management::TPreemptiveExecutorStateHandle;
+
+    /// Guards the wiring that makes preemptive execution actually happen.
+    ///
+    /// `atlas-smr-replica`'s decision log picks its preemptive code path via Rust
+    /// specialization, bounded on these two traits. Specialization fails *silently*: if
+    /// `SMRExecWrapper<PreemptiveExecutorHandle<_>>` stops satisfying them, the replica
+    /// quietly falls back to the deterministic post-commit path and every executor in this
+    /// crate stops executing speculatively -- while still building, running, and producing
+    /// plausible-looking benchmark numbers.
+    ///
+    /// These assertions turn that silent regression into a compile error.
+    fn _assert_preemptive_path_is_reachable<RQ: Send + 'static>() {
+        fn requires_decision_handle<RQ, T: TPreemptiveExecutorDecisionHandle<SMRRawReq<RQ>>>() {}
+        fn requires_state_handle<RQ, T: TPreemptiveExecutorStateHandle<SMRRawReq<RQ>>>() {}
+
+        requires_decision_handle::<RQ, SMRExecWrapper<PreemptiveExecutorHandle<RQ>>>();
+        requires_state_handle::<RQ, SMRExecWrapper<PreemptiveExecutorHandle<RQ>>>();
+    }
+}

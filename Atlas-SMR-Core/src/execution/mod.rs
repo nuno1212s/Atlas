@@ -7,20 +7,28 @@ pub mod reply;
 pub mod state_management;
 
 use crate::SMRRawReq;
-use crate::execution::state_management::{TDeterministicExecutorStateHandle, TExecutorStateHandle};
+use crate::execution::state_management::{
+    TDeterministicExecutorStateHandle, TExecutorStateHandle, TPreemptiveExecutorStateHandle,
+};
+use crate::metric::CONSENSUS_WAIT_TIME_ID;
 use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
-use atlas_common::ordering::Orderable;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
 use atlas_core::execution::requests::{
     IncrementableUpdateBatch, UnorderedUpdateBatch, UpdateBatch, UpdateInfo,
 };
-use atlas_core::execution::{TDeterministicExecutorDecisionHandle, TExecutorDecisionHandle};
+use atlas_core::execution::{
+    TDeterministicExecutorDecisionHandle, TExecutorDecisionHandle,
+    TPreemptiveExecutorDecisionHandle,
+};
 use atlas_core::messages::SessionBased;
 use atlas_core::ordering_protocol::decision::DecisionRequestBatch;
+use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::TExecutionHandle;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::deterministic_execution::TDeterministicExecutionHandle;
+use atlas_smr_application::preemptive_execution::TPreemptiveExecutionHandle;
 use std::ops::Deref;
 
 pub trait TExecutor<A, S>
@@ -49,6 +57,13 @@ impl<E> SMRExecWrapper<E> {
     pub fn transform_update_batch<RQ>(
         decision: DecisionRequestBatch<SMRRawReq<RQ>>,
     ) -> UpdateBatch<RQ> {
+        // Every executor -- baseline and preemptive alike -- converts its batches here, so
+        // this one call site yields a directly comparable consensus-wait measurement for all
+        // of them. Absent for batches replayed from a persisted proof, which never waited.
+        if let Some(ready_at) = decision.decision_requests_ready_at() {
+            metric_duration(CONSENSUS_WAIT_TIME_ID, ready_at.elapsed());
+        }
+
         let update_batch = UpdateBatch::new_with_cap(decision.sequence_number(), decision.len());
 
         decision
@@ -118,6 +133,36 @@ where
     ) -> Result<()> {
         self.0
             .queue_update_and_get_appstate(Self::transform_update_batch(batch))
+    }
+}
+
+/// Bridges the ordering protocol's preemptive decision handle onto a preemptive
+/// execution handle.
+///
+/// Without this impl the specialized (preemptive) `DecisionLogManagement` impl in
+/// `atlas-smr-replica` can never apply, and Rust's specialization silently falls back
+/// to the deterministic (post-commit) path -- meaning the speculative executors would
+/// never actually execute speculatively.
+impl<E, RQ> TPreemptiveExecutorDecisionHandle<SMRRawReq<RQ>> for SMRExecWrapper<E>
+where
+    E: TPreemptiveExecutionHandle<RQ> + TDeterministicExecutionHandle<RQ> + Send + 'static,
+{
+    fn queue_preemptive_update(&self, batch: DecisionRequestBatch<SMRRawReq<RQ>>) -> Result<()> {
+        self.0
+            .queue_preemptive_update(Self::transform_update_batch(batch))
+    }
+
+    fn queue_preemptive_update_finalized(&self, seq: SeqNo) -> Result<()> {
+        self.0.queue_update_finalized(seq)
+    }
+}
+
+impl<E, RQ> TPreemptiveExecutorStateHandle<SMRRawReq<RQ>> for SMRExecWrapper<E>
+where
+    E: TPreemptiveExecutionHandle<RQ> + TDeterministicExecutionHandle<RQ> + Send + 'static,
+{
+    fn queue_preemptive_update_finalized_and_get_appstate(&self, seq: SeqNo) -> Result<()> {
+        self.0.queue_update_finalized_and_get_appstate(seq)
     }
 }
 

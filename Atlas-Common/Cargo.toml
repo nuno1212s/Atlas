@@ -14,74 +14,73 @@ readme = "README.md"
 
 [features]
 
-default = [
-    "async_runtime_tokio",
-    "threadpool_rayon",
-    "socket_tokio_tcp",
-    "channel_flume_mpmc",
-    "channel_sync_crossbeam",
-    "channel_mixed_flume",
-    "channel_mult_custom_dump",
-    "crypto_signature_ring_ed25519",
-    "crypto_hash_blake3_blake3",
-    "collections_randomstate_fxhash",
-    "persistent_db_sled",
-    "serialize_serde"
-]
+# There is deliberately no backend in `default`. Each group below picks its
+# implementation at compile time from the *absence* of an override flag, so a
+# plain build gets the standard stack, and adding one feature anywhere in the
+# dependency graph switches that group. Cargo features are additive and unioned
+# graph-wide, so a positive default could only be turned off with
+# `default-features = false` on every one of the ~20 edges that reach this crate
+# -- which is what this arrangement exists to avoid.
+#
+# The consequence is that each group's default backend is a non-optional
+# dependency: Cargo cannot enable an optional dependency from the absence of a
+# feature (neither from here nor from a build script).
+#
+# | group            | default when no flag is set | override with                          |
+# |------------------|-----------------------------|----------------------------------------|
+# | async runtime    | tokio                       | async_runtime_async_std                |
+# | socket           | tokio TCP                   | socket_async_std_tcp, socket_rio_tcp   |
+# | threadpool       | rayon                       | threadpool_crossbeam                   |
+# | hash             | blake3                      | crypto_hash_ring_sha2                  |
+# | async channel    | flume                       | channel_async_channel_mpmc             |
+# | sync channel     | crossbeam                   | channel_sync_flume                     |
+# | dump queue       | mqueue                      | channel_custom_dump_lfb                |
+# | RandomState      | fxhash                      | collections_randomstate_{std,twox_hash,gxhash} |
+# | persistent db    | sled                        | persistent_db_rocksdb, persistent_db_disabled  |
+#
+# Selecting two backends from the same group is rejected by build.rs.
+#
+# `serialize_serde` is the one deliberate exception: it is not a backend choice
+# but a cross-cutting derive gate, wired through ~12 sibling crates, so it stays
+# a positive default feature.
+default = ["serialize_serde"]
 
-#Async socket alternatives, choose one
-socket_tokio_tcp = ["tokio", "tokio-util"]
+# Async socket alternatives; omit for tokio TCP
 socket_async_std_tcp = ["async-std"]
 socket_rio_tcp = ["rio"]
 
-# Async runtime alternatives, choose one
-async_runtime_tokio = ["tokio"]
+# Async runtime alternatives; omit for tokio
 async_runtime_async_std = ["async-std"]
 
-#Crypto alternatives, choose one
-crypto_hash_ring_sha2 = ["ring"]
-crypto_hash_blake3_blake3 = ["blake3"]
+# Hash alternatives; omit for blake3
+crypto_hash_ring_sha2 = []
 
-#Signature alternatives, choose one
-crypto_signature_ring_ed25519 = ["ring"]
-
-#Threadpool alternatives, choose one
+# Threadpool alternatives; omit for rayon
 threadpool_crossbeam = ["threadpool-crossbeam-channel"]
-threadpool_rayon = ["rayon"]
 
-#Async channel alternatives, choose one
-channel_futures_mpsc = []
-channel_flume_mpmc = ["flume"]
+# Async channel alternatives; omit for flume
 channel_async_channel_mpmc = ["async-channel"]
 
-#Sync channel alternatives
-channel_sync_crossbeam = ["crossbeam-channel"]
-channel_sync_flume = ["flume"]
+# Sync channel alternatives; omit for crossbeam
+channel_sync_flume = []
 
-#Mixed channel alternatives
-channel_mixed_flume = ["flume"]
+# Queue backing the multiple-dumping channel; omit for mqueue
+channel_custom_dump_lfb = []
 
-#Mutiple dumping channel alternatives
-channel_mult_custom_dump = ["dsrust"]
-
-#Alternatives for the multiple dumping channel (You can leave these out,
-#defaults to mqueue channel type)
-channel_custom_dump = ["dsrust"]
-channel_custom_dump_lfb = ["dsrust"]
-channel_custom_dump_mqueue = ["dsrust"]
-
-#Choose RandomState functions
+# RandomState alternatives; omit for fxhash
 collections_randomstate_std = []
-collections_randomstate_fxhash = ["rustc-hash"]
 collections_randomstate_twox_hash = ["twox-hash"]
+# Requires AES + SSE2 intrinsics, i.e. build with
+#   RUSTFLAGS="-C target-feature=+aes,+sse2"   (or -C target-cpu=native)
+# otherwise gxhash itself fails to compile. There is no way to express this from
+# a manifest, so it has to be set in the environment or a .cargo/config.toml.
 collections_randomstate_gxhash = ["gxhash"]
 
-# Alternatives for the persistent db type.
-# If no type of this category is presented, it will default to disabled,
-# But the default features do include sled
+# Persistent db alternatives; omit for sled.
+# `persistent_db_disabled` swaps in a no-op store that drops every write, which
+# is useful when benchmarking without persistence in the way.
 persistent_db_rocksdb = ["rocksdb"]
-#persistent_db_redb = ["redb"]
-persistent_db_sled = ["sled"]
+persistent_db_disabled = []
 
 serialize_serde = ["serde", "serde-big-array"]
 # Currently not working due to missing implementations after big refactor
@@ -100,9 +99,9 @@ linked-hash-map = "0.5"
 
 mio = { version = "*", features = ["os-poll", "net"] }
 async-std = { version = "1", optional = true }
-tokio = { version = "1", features = ["full"], optional = true }
-tokio-util = { version = "0.7", features = ["compat"], optional = true }
-ring = { version = "0.17", optional = true }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+ring = { version = "0.17" }
 threadpool-crossbeam-channel = { version = "1.8.0", optional = true }
 
 serde = { version = "*", features = ["derive", "rc"], optional = true }
@@ -110,19 +109,19 @@ serde-big-array = { version = "0.5.0", optional = true }
 bincode = { version = "2", features = ["default", "serde"] }
 tracing = "0"
 
-rayon = { version = "*", optional = true }
+rayon = { version = "*" }
 rio = { version = "0.9", optional = true }
-blake3 = { version = "1", optional = true }
-flume = { version = "0", optional = true }
+blake3 = { version = "1" }
+flume = { version = "0" }
 async-channel = { version = "2", optional = true }
+pin-project-lite = "0.2"
 twox-hash = { version = "2", optional = true }
-rustc-hash = { version = "*", optional = true }
+rustc-hash = { version = "*" }
 gxhash = { version = "*", optional = true }
-dsrust = { version = "0.1.9", git = "https://github.com/nuno1212s/DSRust", optional = true }
-crossbeam-channel = { version = "0.5", optional = true }
+dsrust = { version = "0.1.9", git = "https://github.com/nuno1212s/DSRust" }
+crossbeam-channel = { version = "0.5" }
 rocksdb = { version = "0", optional = true }
-redb = { version = "*", optional = true }
-sled = { version = "*", optional = true }
+sled = { version = "*" }
 oneshot = { version = "*", features = ["std", "async"] }
 anyhow = "1"
 thiserror = "2"

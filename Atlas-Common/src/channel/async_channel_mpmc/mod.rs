@@ -1,13 +1,15 @@
+//! Async MPMC channel backed by `async-channel`.
+//!
+//! `async-channel`'s `Receiver`/`Sender` and their `Recv`/`Send` futures are all
+//! deliberately `!Unpin`, so both wrappers hold the backend future and project
+//! into it rather than re-pinning a `&mut` each poll.
+
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::Err;
-use crate::channel::{RecvError, SendError, SendReturnError};
-use crate::error::*;
-use async_channel::{Receiver, Recv, Sender};
-use futures::future::FusedFuture;
-use futures::stream::{FusedStream, Stream};
+use crate::channel::{RecvError, SendReturnError};
+use async_channel::{Receiver, Sender};
 
 pub struct ChannelAsyncTx<T> {
     inner: Sender<T>,
@@ -17,93 +19,106 @@ pub struct ChannelAsyncRx<T> {
     inner: Receiver<T>,
 }
 
-pub struct ChannelRxFut<'a, T> {
-    inner: async_channel::Recv<'a, T>,
+pin_project_lite::pin_project! {
+    pub struct ChannelRxFut<'a, T> {
+        #[pin]
+        inner: async_channel::Recv<'a, T>,
+    }
 }
 
-pub struct ChannelTxFut<'a, T> {
-    inner: async_channel::Send<'a, T>,
+pin_project_lite::pin_project! {
+    pub struct ChannelTxFut<'a, T> {
+        #[pin]
+        inner: async_channel::Send<'a, T>,
+    }
 }
 
 impl<T> Clone for ChannelAsyncTx<T> {
     fn clone(&self) -> Self {
-        let inner = self.inner.clone();
-        Self { inner }
+        Self {
+            inner: self.inner.clone(),
+        }
     }
 }
 
 impl<T> Clone for ChannelAsyncRx<T> {
     fn clone(&self) -> Self {
-        let inner = self.inner.clone();
-        Self { inner }
+        Self {
+            inner: self.inner.clone(),
+        }
     }
-}
-
-pub fn new_bounded<T>(bound: usize) -> (ChannelAsyncTx<T>, ChannelAsyncRx<T>) {
-    let (tx, rx) = async_channel::bounded(bound);
-    let tx = ChannelAsyncTx { inner: tx };
-    let rx = ChannelAsyncRx { inner: rx };
-    (tx, rx)
 }
 
 impl<T> ChannelAsyncTx<T> {
     #[inline]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    #[inline]
+    pub fn is_dc(&self) -> bool {
+        self.inner.is_closed()
+    }
+
+    #[inline]
     pub fn send(&mut self, message: T) -> ChannelTxFut<'_, T> {
-        self.inner.send(message).into()
+        ChannelTxFut {
+            inner: self.inner.send(message),
+        }
     }
 }
 
 impl<T> ChannelAsyncRx<T> {
     #[inline]
-    pub fn recv<'a>(&'a mut self) -> ChannelRxFut<'a, T> {
-        self.inner.recv().into()
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    #[inline]
+    pub fn is_dc(&self) -> bool {
+        self.inner.is_closed()
+    }
+
+    #[inline]
+    pub fn recv(&mut self) -> ChannelRxFut<'_, T> {
+        ChannelRxFut {
+            inner: self.inner.recv(),
+        }
     }
 }
 
 impl<'a, T> Future for ChannelRxFut<'a, T> {
-    type Output = Result<T>;
+    type Output = Result<T, RecvError>;
 
     #[inline]
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<T>> {
-        Pin::new(&mut self.inner)
-            .poll_next(cx)
-            .map(|opt| opt.ok_or(RecvError::ChannelDc.into()))
-    }
-}
-
-impl<'a, T> FusedFuture for ChannelRxFut<'a, T> {
-    #[inline]
-    fn is_terminated(&self) -> bool {
-        self.inner.is_terminated()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.project()
+            .inner
+            .poll(cx)
+            .map(|res| res.map_err(|_| RecvError::ChannelDc { channel: None }))
     }
 }
 
 impl<'a, T> Future for ChannelTxFut<'a, T> {
-    type Output = Result<()>;
+    type Output = Result<(), SendReturnError<T>>;
 
     #[inline]
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        Pin::new(&mut self.inner)
-            .poll_next(cx)
-            .map(|opt| opt.ok_or(SendError::ChannelDc.into()))
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.project().inner.poll(cx).map(|r| match r {
+            Ok(()) => Ok(()),
+            Err(async_channel::SendError(value)) => Err(SendReturnError::FailedToSend(value, None)),
+        })
     }
 }
 
-impl<'a, T> FusedFuture for ChannelTxFut<'a, T> {
-    #[inline]
-    fn is_terminated(&self) -> bool {
-        self.inner.is_terminated()
-    }
+pub fn new_bounded<T>(bound: usize) -> (ChannelAsyncTx<T>, ChannelAsyncRx<T>) {
+    let (tx, rx) = async_channel::bounded(bound);
+
+    (ChannelAsyncTx { inner: tx }, ChannelAsyncRx { inner: rx })
 }
 
-impl<'a, T> From<Recv<'a, T>> for ChannelRxFut<'a, T> {
-    fn from(inner: Recv<'a, T>) -> Self {
-        Self { inner }
-    }
-}
+pub fn new_unbounded<T>() -> (ChannelAsyncTx<T>, ChannelAsyncRx<T>) {
+    let (tx, rx) = async_channel::unbounded();
 
-impl<'a, T> From<async_channel::Send<'a, T>> for ChannelTxFut<'a, T> {
-    fn from(inner: async_channel::Send<'a, T>) -> Self {
-        Self { inner }
-    }
+    (ChannelAsyncTx { inner: tx }, ChannelAsyncRx { inner: rx })
 }

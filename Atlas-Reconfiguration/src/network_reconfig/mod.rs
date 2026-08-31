@@ -2,6 +2,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::IntoFuture;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use futures::future::join_all;
 use thiserror::Error;
@@ -424,6 +425,15 @@ pub struct GeneralNodeInfo {
     current_state: NetworkNodeState,
     /// The network update channel to send updates about newly discovered nodes
     network_update: ChannelSyncTx<NodeConnectionUpdateMessage>,
+    /// Bootstrap nodes that have sent us a `NetworkJoinResponse` or `NetworkHelloReply`,
+    /// tracked independently of `current_state`/quorum thresholds. We reach our own quorum
+    /// (`StableMember`) once `> 2/3` of bootstrap nodes have confirmed us, but that leaves no
+    /// guarantee the remaining stragglers ever received our join/hello broadcast (e.g. they
+    /// were simply still starting up) - see `retry_unconfirmed_bootstrap_nodes`.
+    confirmed_nodes: BTreeSet<NodeId>,
+    /// Last time we (re)sent an introduction message to a given bootstrap node, to rate limit
+    /// retries in `retry_unconfirmed_bootstrap_nodes`.
+    last_introduction_attempt: BTreeMap<NodeId, Instant>,
 }
 
 impl GeneralNodeInfo {
@@ -512,13 +522,80 @@ impl GeneralNodeInfo {
 
                 return Ok(NetworkProtocolResponse::Nil);
             }
-            NetworkNodeState::IntroductionPhase { .. } => {}
-            NetworkNodeState::JoiningNetwork { .. } => {}
-            NetworkNodeState::StableMember => {}
+            NetworkNodeState::IntroductionPhase { .. } => {
+                self.retry_unconfirmed_bootstrap_nodes(seq, network_node);
+            }
+            NetworkNodeState::JoiningNetwork { .. } => {
+                self.retry_unconfirmed_bootstrap_nodes(seq, network_node);
+            }
+            NetworkNodeState::StableMember => {
+                self.retry_unconfirmed_bootstrap_nodes(seq, network_node);
+            }
             NetworkNodeState::LeavingNetwork => {}
         }
 
         Ok(NetworkProtocolResponse::Nil)
+    }
+
+    /// Retry introducing ourselves to any bootstrap node we haven't yet received a
+    /// `NetworkJoinResponse`/`NetworkHelloReply` from.
+    ///
+    /// We reach `StableMember` once a BFT quorum (`> 2/3`) of bootstrap nodes confirm us, which
+    /// is enough to make progress safely - but in a distributed system we have no way of knowing
+    /// whether the remaining stragglers are unreachable or just slow to start. Left alone, a
+    /// straggler that never received our one-shot join/hello broadcast (e.g. because our
+    /// connection to it wasn't up yet at broadcast time) would never authenticate us, and would
+    /// reject every future message from us as coming from an unauthenticated peer, forever. So
+    /// this keeps retrying indefinitely, rate limited per node, regardless of `current_state`.
+    fn retry_unconfirmed_bootstrap_nodes<NT>(&mut self, seq: &mut SeqNoGen, network_node: &Arc<NT>)
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
+    {
+        let now = Instant::now();
+
+        let missing: Vec<NodeId> = self
+            .network_view
+            .bootstrap_nodes()
+            .iter()
+            .copied()
+            .filter(|node| *node != self.network_view.node_id())
+            .filter(|node| !self.confirmed_nodes.contains(node))
+            .filter(|node| match self.last_introduction_attempt.get(node) {
+                Some(last) => now.duration_since(*last) >= TIMEOUT_DUR,
+                None => true,
+            })
+            .collect();
+
+        if missing.is_empty() {
+            return;
+        }
+
+        warn!(
+            "{:?} // Still missing introduction confirmation from bootstrap nodes {:?}, retrying",
+            self.network_view.node_id(),
+            missing
+        );
+
+        for node in &missing {
+            if !network_node.connections().has_connection(node) {
+                let _ = network_node.connections().connect_to_node(*node);
+            }
+        }
+
+        let join_req = NetworkReconfigMessage::new(
+            seq.next_seq(),
+            NetworkReconfigMessageType::NetworkJoinRequest(self.network_view.node_triple()),
+        );
+
+        let join_message = ReconfigurationMessage::NetworkReconfig(join_req);
+
+        let _ = network_node
+            .outgoing_stub()
+            .broadcast_signed(join_message, missing.iter().copied());
+
+        for node in missing {
+            self.last_introduction_attempt.insert(node, now);
+        }
     }
 
     pub(super) fn handle_timeout<NT>(
@@ -624,16 +701,22 @@ impl GeneralNodeInfo {
 
     pub(super) fn is_response_to_request(
         &self,
-        _seq_gen: &SeqNoGen,
+        seq_gen: &SeqNoGen,
         _header: &Header,
-        _seq: SeqNo,
+        seq: SeqNo,
         message: &NetworkReconfigMessageType,
     ) -> bool {
-        matches!(
-            message,
-            NetworkReconfigMessageType::NetworkJoinResponse(_)
-                | NetworkReconfigMessageType::NetworkHelloReply(_)
-        )
+        // Only the most recently sent request has an associated tracked timeout (see
+        // `handle_message_from_orchestrator`'s own `seq != curr_seq()` check). Responses to
+        // `retry_unconfirmed_bootstrap_nodes`'s background retries intentionally don't register
+        // a timeout, so they must not be acked as if they did - the seq_gen check keeps this
+        // consistent with the rest of the module instead of erroring on an untracked timeout.
+        seq == seq_gen.curr_seq()
+            && matches!(
+                message,
+                NetworkReconfigMessageType::NetworkJoinResponse(_)
+                    | NetworkReconfigMessageType::NetworkHelloReply(_)
+            )
     }
 
     pub(super) fn handle_network_reconfig_msg<NT>(
@@ -679,6 +762,8 @@ impl GeneralNodeInfo {
                                     signature,
                                     network_information,
                                 ) => {
+                                    self.confirmed_nodes.insert(header.from());
+
                                     info!(
                                         "We were accepted into the network by the node {:?}, current certificate count {:?}",
                                         header.from(),
@@ -818,6 +903,8 @@ impl GeneralNodeInfo {
                         )
                     }
                     NetworkReconfigMessageType::NetworkHelloReply(known_nodes) => {
+                        self.confirmed_nodes.insert(header.from());
+
                         if responded.insert(header.from()) {
                             let unknown_nodes =
                                 self.network_view.handle_received_network_view(known_nodes);
@@ -869,7 +956,9 @@ impl GeneralNodeInfo {
                         );
                     }
                     NetworkReconfigMessageType::NetworkJoinResponse(_) => {
-                        // Ignored, we are already a stable member of the network
+                        // We are already a stable member of the network, but still record the
+                        // confirmation so retry_unconfirmed_bootstrap_nodes stops retrying this peer.
+                        self.confirmed_nodes.insert(header.from());
                     }
                     NetworkReconfigMessageType::NetworkHelloRequest(sender_info, confirmations) => {
                         self.handle_hello_request(
@@ -882,7 +971,9 @@ impl GeneralNodeInfo {
                         );
                     }
                     NetworkReconfigMessageType::NetworkHelloReply(_) => {
-                        // Ignored, we are already a stable member of the network
+                        // We are already a stable member of the network, but still record the
+                        // confirmation so retry_unconfirmed_bootstrap_nodes stops retrying this peer.
+                        self.confirmed_nodes.insert(header.from());
                     }
                 }
 
@@ -1066,6 +1157,8 @@ impl GeneralNodeInfo {
             network_view,
             current_state,
             network_update,
+            confirmed_nodes: Default::default(),
+            last_introduction_attempt: Default::default(),
         }
     }
 }

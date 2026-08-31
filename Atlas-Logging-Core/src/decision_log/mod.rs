@@ -283,6 +283,12 @@ impl<O> Debug for LoggedDecision<O> {
 /// If we return [ExecutionInstructions<O>::ExecutionNotNeeded],
 /// we assume that the execution handling of the requests will be done
 /// by the decision log
+// The `Execute` variant is inherently large -- it carries a whole request batch -- and this
+// enum is constructed and moved once per decision rather than held in bulk, so the size gap
+// costs a single stack move that is dwarfed by the batch's own heap contents. Boxing it, as
+// the lint suggests, would add a heap allocation directly on the decision-to-execution path
+// this crate is on, which is precisely the latency being measured elsewhere.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum ExecutionInstructions<O> {
     Execute(DecisionRequestBatch<O>),

@@ -37,7 +37,7 @@ impl Digest {
 
     pub fn from_bytes(raw_bytes: &[u8]) -> Result<Self> {
         if raw_bytes.len() < Self::LENGTH {
-            return Err!(HashError::DigestLen(raw_bytes.len()));
+            return Err!(HashError::DigestLengthErr(raw_bytes.len()));
         }
 
         Ok(Self::from_bytes_unchecked(raw_bytes))

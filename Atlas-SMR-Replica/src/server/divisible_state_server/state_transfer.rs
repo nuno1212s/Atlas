@@ -117,12 +117,12 @@ where
     /*fn receive_from_all_channels_select(&mut self) -> Result<()> {
         let inner_handle = self.inner_state.handle();
 
-        channel::sync::sync_select_biased! {
-            recv(unwrap_channel!(inner_handle.work_rx())) -> work_msg =>
+        channel::sync::sync_select! {
+            recv(inner_handle.work_rx()) -> work_msg =>
             self.inner_state.handle_work_message(&mut self.state_transfer_protocol, work_msg?),
-            recv(unwrap_channel!(self.checkpoint_rx_from_app)) -> checkpoint_msg =>
+            recv(self.checkpoint_rx_from_app) -> checkpoint_msg =>
             self.handle_checkpoint_message(checkpoint_msg?),
-            recv(unwrap_channel!(self.inner_state.node().incoming_stub().as_ref())) -> network_msg =>
+            recv(self.inner_state.node().incoming_stub().as_ref()) -> network_msg =>
             self.inner_state.handle_network_message(&mut self.state_transfer_protocol, network_msg?),
         }
     }*/
