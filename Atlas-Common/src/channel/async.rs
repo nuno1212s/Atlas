@@ -1,14 +1,19 @@
 use crate::channel::{RecvError, SendError};
 use std::future::Future;
-use std::pin::{Pin, pin};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
 /// ASYNCHRONOUS CHANNEL
-#[cfg(feature = "channel_flume_mpmc")]
+#[cfg(not(feature = "channel_async_channel_mpmc"))]
 type InnerAsyncChannelTx<T> = super::flume_mpmc::ChannelMixedTx<T>;
-#[cfg(feature = "channel_flume_mpmc")]
+#[cfg(not(feature = "channel_async_channel_mpmc"))]
 type InnerAsyncChannelRx<T> = super::flume_mpmc::ChannelMixedRx<T>;
+
+#[cfg(feature = "channel_async_channel_mpmc")]
+type InnerAsyncChannelTx<T> = super::async_channel_mpmc::ChannelAsyncTx<T>;
+#[cfg(feature = "channel_async_channel_mpmc")]
+type InnerAsyncChannelRx<T> = super::async_channel_mpmc::ChannelAsyncRx<T>;
 
 /// General purpose channel's sending half.
 pub struct ChannelAsyncTx<T> {
@@ -22,16 +27,19 @@ pub struct ChannelAsyncRx<T> {
     inner: InnerAsyncChannelRx<T>,
 }
 
-#[cfg(feature = "channel_flume_mpmc")]
+#[cfg(not(feature = "channel_async_channel_mpmc"))]
 type InnerChannelRxFut<'a, T> = super::flume_mpmc::ChannelRxFut<'a, T>;
 
 #[cfg(feature = "channel_async_channel_mpmc")]
 type InnerChannelRxFut<'a, T> = crate::channel::async_channel_mpmc::ChannelRxFut<'a, T>;
 
-/// Future for a general purpose channel's receiving operation.
-pub struct ChannelRxFut<'a, T> {
-    pub(crate) channel: Option<Arc<str>>,
-    pub(crate) inner: InnerChannelRxFut<'a, T>,
+pin_project_lite::pin_project! {
+    /// Future for a general purpose channel's receiving operation.
+    pub struct ChannelRxFut<'a, T> {
+        pub(crate) channel: Option<Arc<str>>,
+        #[pin]
+        pub(crate) inner: InnerChannelRxFut<'a, T>,
+    }
 }
 
 impl<'a, T> ChannelRxFut<'a, T> {
@@ -41,15 +49,19 @@ impl<'a, T> ChannelRxFut<'a, T> {
     }
 }
 
-#[cfg(feature = "channel_flume_mpmc")]
+#[cfg(not(feature = "channel_async_channel_mpmc"))]
 type InnerChannelTxFut<'a, T> = super::flume_mpmc::ChannelTxFut<'a, T>;
 
 #[cfg(feature = "channel_async_channel_mpmc")]
 type InnerChannelTxFut<'a, T> = crate::channel::async_channel_mpmc::ChannelTxFut<'a, T>;
 
-pub struct ChannelTxFut<'a, T> {
-    pub(crate) channel: Option<Arc<str>>,
-    pub(crate) inner: InnerChannelTxFut<'a, T>,
+pin_project_lite::pin_project! {
+    /// Future for a general purpose channel's sending operation.
+    pub struct ChannelTxFut<'a, T> {
+        pub(crate) channel: Option<Arc<str>>,
+        #[pin]
+        pub(crate) inner: InnerChannelTxFut<'a, T>,
+    }
 }
 
 impl<'a, T> ChannelTxFut<'a, T> {
@@ -103,9 +115,11 @@ impl<'a, T> Future for ChannelRxFut<'a, T> {
     type Output = Result<T, RecvError>;
 
     #[inline]
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<T, RecvError>> {
-        let channel = self.channel.clone();
-        pin!(&mut self.inner)
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<T, RecvError>> {
+        let this = self.project();
+        let channel = this.channel.clone();
+
+        this.inner
             .poll(cx)
             .map(|res| res.map_err(|err| err.with_channel(channel)))
     }
@@ -115,9 +129,11 @@ impl<'a, T> Future for ChannelTxFut<'a, T> {
     type Output = Result<(), SendError>;
 
     #[inline]
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let channel = self.channel.clone();
-        pin!(&mut self.inner).poll(cx).map(|r| match r {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = self.project();
+        let channel = this.channel.clone();
+
+        this.inner.poll(cx).map(|r| match r {
             Ok(_) => Ok(()),
             Err(_) => Err(SendError::FailedToSend { channel }),
         })
@@ -134,7 +150,7 @@ pub fn new_bounded_async<T>(
     let name = name.map(|string| Arc::from(string.into()));
 
     let (tx, rx) = {
-        #[cfg(feature = "channel_flume_mpmc")]
+        #[cfg(not(feature = "channel_async_channel_mpmc"))]
         {
             super::flume_mpmc::new_bounded(bound)
         }

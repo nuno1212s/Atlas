@@ -24,7 +24,7 @@ use tokio_util::compat::{
     Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt,
 };
 
-#[cfg(feature = "socket_tokio_tcp")]
+#[cfg(not(any(feature = "socket_async_std_tcp", feature = "socket_rio_tcp")))]
 mod tokio_tcp;
 
 #[cfg(feature = "socket_async_std_tcp")]
@@ -41,7 +41,7 @@ const READ_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 /// A `Listener` represents a socket listening on new communications
 /// initiated by peer nodes in the BFT system.
 pub struct AsyncListener {
-    #[cfg(feature = "socket_tokio_tcp")]
+    #[cfg(not(any(feature = "socket_async_std_tcp", feature = "socket_rio_tcp")))]
     inner: tokio_tcp::Listener,
 
     #[cfg(feature = "socket_async_std_tcp")]
@@ -61,7 +61,7 @@ pub struct SyncListener {
 /// in the BFT system.
 /// This is an asynchronous socket
 pub struct AsyncSocket {
-    #[cfg(feature = "socket_tokio_tcp")]
+    #[cfg(not(any(feature = "socket_async_std_tcp", feature = "socket_rio_tcp")))]
     inner: tokio_tcp::Socket,
 
     #[cfg(feature = "socket_async_std_tcp")]
@@ -219,7 +219,7 @@ pub unsafe fn drop() -> Result<(), io::Error> {
 /// Creates a new `Listener` socket, bound to the address `addr`.
 pub async fn bind_async_server<A: Into<SocketAddr>>(addr: A) -> Result<AsyncListener, io::Error> {
     {
-        #[cfg(feature = "socket_tokio_tcp")]
+        #[cfg(not(any(feature = "socket_async_std_tcp", feature = "socket_rio_tcp")))]
         {
             tokio_tcp::bind(addr).await
         }
@@ -244,7 +244,7 @@ pub fn bind_sync_server<A: Into<SocketAddr>>(addr: A) -> Result<SyncListener, io
 /// Connects to the remote node pointed to by the address `addr`.
 pub async fn connect_async<A: Into<SocketAddr>>(addr: A) -> Result<AsyncSocket, io::Error> {
     {
-        #[cfg(feature = "socket_tokio_tcp")]
+        #[cfg(not(any(feature = "socket_async_std_tcp", feature = "socket_rio_tcp")))]
         {
             tokio_tcp::connect(addr).await
         }
@@ -289,10 +289,12 @@ impl AsyncSocket {
     }
 
     pub(super) fn split(self) -> (WriteHalfAsync, ReadHalfAsync) {
-        #[cfg(feature = "socket_tokio_tcp")]
+        #[cfg(not(any(feature = "socket_async_std_tcp", feature = "socket_rio_tcp")))]
         let (write, read) = tokio_tcp::split_socket(self.inner);
         #[cfg(feature = "socket_async_std_tcp")]
         let (write, read) = async_std_tcp::split_socket(self.inner);
+        #[cfg(feature = "socket_rio_tcp")]
+        let (write, read) = rio_tcp::split_socket(self.inner);
 
         //Buffer both the connections
         let write_buffered = BufWriter::with_capacity(WRITE_BUFFER_SIZE, write);
@@ -654,10 +656,12 @@ pub enum WriteHalf {
 }
 
 pub struct WriteHalfAsync {
-    #[cfg(feature = "socket_tokio_tcp")]
+    #[cfg(not(any(feature = "socket_async_std_tcp", feature = "socket_rio_tcp")))]
     inner: BufWriter<tokio_tcp::WriteHalf>,
     #[cfg(feature = "socket_async_std_tcp")]
     inner: BufWriter<async_std_tcp::WriteHalf>,
+    #[cfg(feature = "socket_rio_tcp")]
+    inner: BufWriter<rio_tcp::WriteHalf>,
 }
 
 pub struct WriteHalfSync {
@@ -670,10 +674,12 @@ pub enum ReadHalf {
 }
 
 pub struct ReadHalfAsync {
-    #[cfg(feature = "socket_tokio_tcp")]
+    #[cfg(not(any(feature = "socket_async_std_tcp", feature = "socket_rio_tcp")))]
     inner: BufReader<tokio_tcp::ReadHalf>,
     #[cfg(feature = "socket_async_std_tcp")]
     inner: BufReader<async_std_tcp::ReadHalf>,
+    #[cfg(feature = "socket_rio_tcp")]
+    inner: BufReader<rio_tcp::ReadHalf>,
 }
 
 pub struct ReadHalfSync {

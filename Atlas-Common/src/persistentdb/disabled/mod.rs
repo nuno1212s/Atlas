@@ -1,10 +1,31 @@
+//! A no-op key-value store, used when no persistent database backend is selected.
+//!
+//! Every read reports "not present" and every write succeeds without storing
+//! anything. This lets the middleware run with persistence entirely disabled
+//! (useful for benchmarking) without any call site having to know about it.
+
 use crate::error::*;
-use crate::persistentdb::KeyValueEntry;
+use crate::persistentdb::{IteratorUtil, KeyValueEntry};
 use std::path::Path;
 
 #[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct DisabledKV;
+
+/// Always-empty iterator, so `iter`/`iter_range` can satisfy [`IteratorUtil`].
+pub struct DisabledKVIterator;
+
+impl Iterator for DisabledKVIterator {
+    type Item = Result<KeyValueEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        None
+    }
+}
+
+impl IteratorUtil for DisabledKVIterator {
+    type ItemType = Box<[u8]>;
+}
 
 #[allow(dead_code)]
 impl DisabledKV {
@@ -22,12 +43,12 @@ impl DisabledKV {
         Ok(None)
     }
 
-    pub fn get_all<T, Y>(&self, _keys: T) -> Result<Vec<Result<Option<Vec<u8>>>>>
+    pub fn get_all<T, Y>(&self, _prefix: &'static str, keys: T) -> Result<Vec<Option<Vec<u8>>>>
     where
-        T: Iterator<Item = (&'static str, Y)>,
+        T: Iterator<Item = Y>,
         Y: AsRef<[u8]>,
     {
-        Ok(vec![])
+        Ok(keys.map(|_| None).collect())
     }
 
     pub fn exists<T>(&self, _prefix: &'static str, _key: T) -> Result<bool>
@@ -54,11 +75,11 @@ impl DisabledKV {
         Ok(())
     }
 
-    pub fn erase<T>(&self, _prefix: &'static str, _key: T) -> Result<()>
+    pub fn erase<T>(&self, _prefix: &'static str, _key: T) -> Result<Option<Vec<u8>>>
     where
         T: AsRef<[u8]>,
     {
-        Ok(())
+        Ok(None)
     }
 
     /// Delete a set of keys
@@ -92,17 +113,20 @@ impl DisabledKV {
         Ok(())
     }
 
+    pub fn iter(&self, _prefix: &'static str) -> Result<impl IteratorUtil + '_> {
+        Ok(DisabledKVIterator)
+    }
+
     pub fn iter_range<T, Y>(
         &self,
         _prefix: &'static str,
         _start: Option<T>,
         _end: Option<Y>,
-    ) -> Result<Box<dyn Iterator<Item = Result<KeyValueEntry>> + '_>>
+    ) -> Result<impl IteratorUtil + '_>
     where
         T: AsRef<[u8]>,
         Y: AsRef<[u8]>,
     {
-        //Return an empty iterator
-        Ok(Box::new(vec![].into_iter()))
+        Ok(DisabledKVIterator)
     }
 }

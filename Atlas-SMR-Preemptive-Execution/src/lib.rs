@@ -8,11 +8,15 @@ use atlas_smr_core::execution::executors::monolithic_state::{
     MonStateInstallHandle, TMonolithicStateExecutor,
 };
 use atlas_smr_core::execution::reply::ReplyNode;
-use atlas_smr_execution::crud_states::{CRUDApplication, CRUDState};
 use atlas_smr_execution::repliers::ReplicaReplier;
 use std::sync::Arc;
 
-mod exec_handle;
+/// Re-exported so applications can implement the CRUD interface the cache-based executors
+/// require without taking a direct dependency on the (mutually exclusive) baseline
+/// `atlas-smr-execution` crate.
+pub use atlas_smr_execution::crud_states::{CRUDApplication, CRUDState};
+
+pub mod exec_handle;
 pub mod metric;
 mod scalable_crud;
 mod single_thread_double_state;

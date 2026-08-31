@@ -7,6 +7,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+#[cfg(feature = "channel_custom_dump_lfb")]
+use dsrust::queues::lf_array_queue::LFBQueue;
+
+#[cfg(not(feature = "channel_custom_dump_lfb"))]
 use dsrust::queues::mqueue::MQueue;
 
 use crate::Err;
@@ -17,10 +21,7 @@ use futures::future::FusedFuture;
 #[cfg(feature = "channel_custom_dump_lfb")]
 type QueueType<T> = LFBQueue<T>;
 
-#[cfg(any(
-    feature = "channel_custom_dump_mqueue",
-    not(feature = "channel_custom_dump_lfb")
-))]
+#[cfg(not(feature = "channel_custom_dump_lfb"))]
 type QueueType<T> = MQueue<T>;
 
 pub struct ChannelTx<T> {
@@ -214,10 +215,7 @@ pub fn bounded_mult_channel<T>(bound: usize) -> (ChannelTx<T>, ChannelRxMult<T>)
             dsrust::channels::queue_channel::bounded_lf_queue(bound)
         }
 
-        #[cfg(any(
-            feature = "channel_custom_dump_mqueue",
-            not(feature = "channel_custom_dump_lfb")
-        ))]
+        #[cfg(not(feature = "channel_custom_dump_lfb"))]
         {
             dsrust::channels::queue_channel::bounded_mutex_backoff_queue(bound)
         }

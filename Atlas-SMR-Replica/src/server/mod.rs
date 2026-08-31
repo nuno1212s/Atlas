@@ -34,7 +34,7 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::phantom::FPhantom;
-use atlas_common::{Err, channel, exhaust_and_consume, unwrap_channel};
+use atlas_common::{Err, channel, exhaust_and_consume};
 use atlas_communication::message::StoredMessage;
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkReconfigurationCommunication,
@@ -1125,14 +1125,14 @@ where
     where
         EX: TExecutorStateHandle<SMRReq<D>>,
     {
-        channel::sync::sync_select_biased! {
-            recv(unwrap_channel!(self.node.protocol_node().incoming_stub().as_ref())) -> network_msg => exhaust_and_consume!(network_msg?, self.node.protocol_node().incoming_stub().as_ref(), self, handle_network_message_received),
-            recv(unwrap_channel!(self.decision_log_handle.status_rx())) -> status_msg => exhaust_and_consume!(status_msg?, self.decision_log_handle.status_rx(), self, handle_decision_log_work_message),
-            recv(unwrap_channel!(self.state_transfer_handle.response_rx())) -> state_msg => exhaust_and_consume!(state_msg?, self.state_transfer_handle.response_rx(), self, handle_state_transfer_progress_message),
-            recv(unwrap_channel!(self.network_update_listener)) -> network_update => exhaust_and_consume!(network_update?, self.network_update_listener, self, handle_network_update_message),
-            recv(unwrap_channel!(self.reconf_receive)) -> reconf_msg => exhaust_and_consume!(reconf_msg?, self.reconf_receive, self, handle_reconfiguration_protocol_message),
-            recv(unwrap_channel!(self.timeout_rx)) -> timeout => exhaust_and_consume!(timeout?, self.timeout_rx, self, timeout_received),
-            recv(unwrap_channel!(self.processed_timeout.1)) -> timeout_msg => match timeout_msg {
+        channel::sync::sync_select! {
+            recv_exhaust(self.node.protocol_node().incoming_stub().as_ref()) -> network_msg => self.handle_network_message_received(network_msg),
+            recv_exhaust(self.decision_log_handle.status_rx()) -> status_msg => self.handle_decision_log_work_message(status_msg),
+            recv_exhaust(self.state_transfer_handle.response_rx()) -> state_msg => self.handle_state_transfer_progress_message(state_msg),
+            recv_exhaust(self.network_update_listener) -> network_update => self.handle_network_update_message(network_update),
+            recv_exhaust(self.reconf_receive) -> reconf_msg => self.handle_reconfiguration_protocol_message(reconf_msg),
+            recv_exhaust(self.timeout_rx) -> timeout => self.timeout_received(timeout),
+            recv(self.processed_timeout.1) -> timeout_msg => match timeout_msg {
                 Ok((timeouts, deleted)) => self.processed_timeout_recvd(timeouts, deleted),
                 Err(err) => Err!(err),
             },

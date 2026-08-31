@@ -1,5 +1,7 @@
+#[cfg(not(feature = "persistent_db_disabled"))]
 use anyhow::Context;
 use std::path::Path;
+#[cfg(not(feature = "persistent_db_disabled"))]
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -8,7 +10,7 @@ use crate::error::Result;
 #[cfg(feature = "persistent_db_rocksdb")]
 pub mod rocksdb;
 
-#[cfg(feature = "persistent_db_sled")]
+#[cfg(not(any(feature = "persistent_db_rocksdb", feature = "persistent_db_disabled")))]
 pub mod sled;
 
 pub mod disabled;
@@ -21,12 +23,9 @@ pub struct KVDB {
     _prefixes: Vec<&'static str>,
     #[cfg(feature = "persistent_db_rocksdb")]
     inner: Arc<rocksdb::RocksKVDB>,
-    #[cfg(feature = "persistent_db_sled")]
+    #[cfg(not(any(feature = "persistent_db_rocksdb", feature = "persistent_db_disabled")))]
     inner: Arc<sled::SledKVDB>,
-    #[cfg(all(
-        not(feature = "persistent_db_rocksdb"),
-        not(feature = "persistent_db_sled")
-    ))]
+    #[cfg(feature = "persistent_db_disabled")]
     inner: disabled::DisabledKV,
 }
 
@@ -54,17 +53,17 @@ impl KVDB {
                         .context("Failed to create Rocks KVDB")?,
                 )
             }
-            #[cfg(feature = "persistent_db_sled")]
+            #[cfg(not(any(
+                feature = "persistent_db_rocksdb",
+                feature = "persistent_db_disabled"
+            )))]
             {
                 Arc::new(
                     sled::SledKVDB::new(db_path, prefixes_cpy)
                         .context("Failed to create Sled KVDB")?,
                 )
             }
-            #[cfg(all(
-                not(feature = "persistent_db_rocksdb"),
-                not(feature = "persistent_db_sled")
-            ))]
+            #[cfg(feature = "persistent_db_disabled")]
             {
                 disabled::DisabledKV::new(db_path, prefixes_cpy)?
             }

@@ -194,6 +194,7 @@ impl<'a, T> From<RecvFut<'a, T>> for ChannelRxFut<'a, T> {
     }
 }
 
+#[cfg(not(feature = "channel_async_channel_mpmc"))]
 impl<'a, T> From<ChannelTxFut<'a, T>> for super::r#async::ChannelTxFut<'a, T> {
     fn from(value: ChannelTxFut<'a, T>) -> Self {
         Self {
@@ -203,6 +204,7 @@ impl<'a, T> From<ChannelTxFut<'a, T>> for super::r#async::ChannelTxFut<'a, T> {
     }
 }
 
+#[cfg(not(feature = "channel_async_channel_mpmc"))]
 impl<'a, T> From<ChannelRxFut<'a, T>> for super::r#async::ChannelRxFut<'a, T> {
     fn from(value: ChannelRxFut<'a, T>) -> Self {
         Self {

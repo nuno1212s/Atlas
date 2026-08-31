@@ -8,7 +8,7 @@ use crate::single_thread_double_state::preemptive_worker::comm_handles::{
 use crate::single_thread_double_state::state_management::StateMessage;
 use atlas_common::channel::{self, NoRetChannelErr, sync::ChannelSyncRx};
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{error, quiet_unwrap, unwrap_channel};
+use atlas_common::{error, quiet_unwrap};
 use atlas_smr_application::{
     app::{Application, Request},
     state::monolithic_state::{InstallStateMessage, MonolithicState},
@@ -154,7 +154,7 @@ where
             match &self.run_mode {
                 RunMode::Normal => {
                     channel::sync::sync_select! {
-                         recv(unwrap_channel!(self.work_rx)) -> exec_req => {
+                         recv(self.work_rx) -> exec_req => {
                             match exec_req {
                                 Ok(exec_req) => self.handle_preemptive_execution_request(exec_req),
                                 Err(_) => {

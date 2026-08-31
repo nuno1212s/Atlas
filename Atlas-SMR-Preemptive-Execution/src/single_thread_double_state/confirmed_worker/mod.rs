@@ -9,12 +9,12 @@ use crate::single_thread_double_state::state_management::{
     ConfirmedToPreemptiveMsg, PreemptiveToConfirmedMsg, StateMessage,
 };
 use atlas_common::channel::sync::sync_select;
-use atlas_common::channel::{NoRetChannelErr, RecvError, TryRecvError};
+use atlas_common::channel::{NoRetChannelErr, TryRecvError};
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::tbo_queue::TTboQueue;
 use atlas_common::ordering::tbo_queue::vec_tbo_queue::VTboQueue;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{exhaust_and_consume, quiet_unwrap, unwrap_channel};
+use atlas_common::quiet_unwrap;
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Application, Request};
@@ -172,12 +172,8 @@ where
         }
 
         sync_select! {
-            recv(unwrap_channel!(self.confirmed_channels.update_messages())) -> msg =>
-                self.drain_update_messages(msg.map_err(|err| RecvError::from_base_error_with_channel(err, self.confirmed_channels.update_messages().name().cloned()))?),
-            recv(unwrap_channel!(self.confirmed_channels.incoming_preemptive_msg())) -> msg =>
-            exhaust_and_consume!(msg.map_err(|err| RecvError::from_base_error_with_channel(err, self.confirmed_channels.incoming_preemptive_msg().name().cloned()))?,
-                self.confirmed_channels.incoming_preemptive_msg(),
-                self, handle_confirmed_update),
+            recv(self.confirmed_channels.update_messages()) -> msg => self.drain_update_messages(msg?),
+            recv_exhaust(self.confirmed_channels.incoming_preemptive_msg()) -> msg => self.handle_confirmed_update(msg),
         }
     }
 

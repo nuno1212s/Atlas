@@ -4,11 +4,15 @@ use std::default::Default;
 
 use dashmap::DashMap;
 
-#[cfg(feature = "collections_randomstate_fxhash")]
+#[cfg(not(any(
+    feature = "collections_randomstate_std",
+    feature = "collections_randomstate_twox_hash",
+    feature = "collections_randomstate_gxhash"
+)))]
 pub type RandomState = ::std::hash::BuildHasherDefault<::rustc_hash::FxHasher>;
 
 #[cfg(feature = "collections_randomstate_twox_hash")]
-pub type RandomState = ::twox_hash::RandomXxh3HashBuilder64;
+pub type RandomState = ::std::hash::BuildHasherDefault<::twox_hash::XxHash3_64>;
 
 #[cfg(feature = "collections_randomstate_std")]
 pub type RandomState = ::std::collections::hash_map::RandomState;

@@ -8,10 +8,17 @@ pub struct JoinHandle<T> {
     inner: ::async_std::task::JoinHandle<T>,
 }
 
+#[derive(Debug)]
 pub struct Runtime;
 
 pub fn init(num_threads: usize) -> Result<Runtime> {
-    std::env::set_var("ASYNC_STD_THREAD_COUNT", format!("{}", num_threads));
+    // SAFETY: `init` is documented as being called once, before any other Atlas
+    // function and therefore before any other thread exists to observe the
+    // environment. async-std reads this variable when it first starts its pool.
+    unsafe {
+        std::env::set_var("ASYNC_STD_THREAD_COUNT", format!("{num_threads}"));
+    }
+
     Ok(Runtime)
 }
 
@@ -22,6 +29,15 @@ impl Runtime {
         F::Output: Send + 'static,
     {
         let inner = ::async_std::task::spawn(future);
+        JoinHandle { inner }
+    }
+
+    pub fn spawn_blocking<F, R>(&self, job: F) -> JoinHandle<R>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let inner = ::async_std::task::spawn_blocking(job);
         JoinHandle { inner }
     }
 

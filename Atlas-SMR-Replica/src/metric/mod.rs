@@ -55,7 +55,9 @@ pub(crate) const DEC_LOG_PROCESS_TIME_ID: usize = 514;
 
 /// Time taken for the ordering protocol thread to deliver work to the decision log thread
 pub(crate) const DEC_LOG_WORK_MSG_TIME: &str = "DECISION_LOG_WORK_DELIVER_TIME";
-pub(crate) const DEC_LOG_WORK_MSG_TIME_ID: usize = 505;
+// NOTE: was 505, which collided with APP_STATE_DIGEST_TIME_ID. The metric registry is a flat
+// Vec indexed by ID, so the colliding registration silently discarded one of the two metrics.
+pub(crate) const DEC_LOG_WORK_MSG_TIME_ID: usize = 507;
 
 pub(crate) const DEC_LOG_WORK_QUEUE_SIZE: &str = "DECISION_LOG_WORK_QUEUE_SIZE";
 pub(crate) const DEC_LOG_WORK_QUEUE_SIZE_ID: usize = 506;

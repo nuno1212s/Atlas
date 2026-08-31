@@ -13,6 +13,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use std::time::Instant;
 
 /// A given decision and information about it
 /// To be taken by the replica and processed accordingly
@@ -482,6 +483,9 @@ pub struct DecisionRequestBatch<RQ> {
     seq: SeqNo,
     inner: Vec<StoredMessage<RQ>>,
     meta: Option<BatchMeta>,
+    /// When the ordering protocol first knew this batch's requests (i.e. when the
+    /// pre-prepare phase completed), as opposed to when the decision was committed.
+    decision_requests_ready_at: Option<Instant>,
 }
 
 impl<RQ> Orderable for DecisionRequestBatch<RQ> {
@@ -496,6 +500,7 @@ impl<RQ> DecisionRequestBatch<RQ> {
             seq,
             inner: batch,
             meta,
+            decision_requests_ready_at: None,
         }
     }
 
@@ -504,6 +509,7 @@ impl<RQ> DecisionRequestBatch<RQ> {
             seq,
             inner: Vec::with_capacity(capacity),
             meta: None,
+            decision_requests_ready_at: None,
         }
     }
 
@@ -512,6 +518,7 @@ impl<RQ> DecisionRequestBatch<RQ> {
             seq,
             inner: batch,
             meta: None,
+            decision_requests_ready_at: None,
         }
     }
 
@@ -542,6 +549,19 @@ impl<RQ> DecisionRequestBatch<RQ> {
     pub fn take_meta(&mut self) -> Option<BatchMeta> {
         self.meta.take()
     }
+
+    /// Stamp this batch as having had its requests become known to the ordering
+    /// protocol right now (pre-prepare complete).
+    ///
+    /// Call this only for freshly decided batches -- not for batches reconstructed
+    /// from an already-persisted proof.
+    pub fn mark_decision_requests_ready(&mut self) {
+        self.decision_requests_ready_at = Some(Instant::now());
+    }
+
+    pub fn decision_requests_ready_at(&self) -> Option<Instant> {
+        self.decision_requests_ready_at
+    }
 }
 
 impl<DAD, PM> From<PartialDecisionInformation<DAD, PM>>
@@ -549,5 +569,40 @@ impl<DAD, PM> From<PartialDecisionInformation<DAD, PM>>
 {
     fn from(value: PartialDecisionInformation<DAD, PM>) -> Self {
         (value.message_partial_info, value.messages)
+    }
+}
+
+#[cfg(test)]
+mod consensus_wait_stamp {
+    use super::DecisionRequestBatch;
+    use atlas_common::ordering::SeqNo;
+
+    /// The consensus-wait metric reads this stamp at the executor and skips the sample when
+    /// it is absent. Batches must therefore start unstamped, so that decisions replayed from
+    /// a persisted proof -- which never waited on consensus -- contribute no measurement.
+    #[test]
+    fn batches_start_unstamped() {
+        let batch = DecisionRequestBatch::<u8>::new_with_batch(SeqNo::ZERO, vec![]);
+        assert!(batch.decision_requests_ready_at().is_none());
+
+        let batch = DecisionRequestBatch::<u8>::new(SeqNo::ZERO, vec![], None);
+        assert!(batch.decision_requests_ready_at().is_none());
+
+        let batch = DecisionRequestBatch::<u8>::new_with_cap(SeqNo::ZERO, 4);
+        assert!(batch.decision_requests_ready_at().is_none());
+    }
+
+    #[test]
+    fn stamp_is_recorded_and_survives_clone() {
+        let mut batch = DecisionRequestBatch::<u8>::new_with_batch(SeqNo::ZERO, vec![]);
+        batch.mark_decision_requests_ready();
+
+        let stamped_at = batch
+            .decision_requests_ready_at()
+            .expect("stamp should be present after marking");
+
+        // The batch is cloned on its way from the ordering protocol to the executor; losing
+        // the stamp there would silently drop the measurement rather than fail.
+        assert_eq!(batch.clone().decision_requests_ready_at(), Some(stamped_at));
     }
 }
