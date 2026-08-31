@@ -172,7 +172,7 @@ where
         }
 
         sync_select! {
-            recv(self.confirmed_channels.update_messages()) -> msg => self.drain_update_messages(msg?),
+            recv(self.confirmed_channels.update_messages()) -> msg => self.drain_update_messages(msg),
             recv_exhaust(self.confirmed_channels.incoming_preemptive_msg()) -> msg => self.handle_confirmed_update(msg),
         }
     }

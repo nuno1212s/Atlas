@@ -1132,10 +1132,7 @@ where
             recv_exhaust(self.network_update_listener) -> network_update => self.handle_network_update_message(network_update),
             recv_exhaust(self.reconf_receive) -> reconf_msg => self.handle_reconfiguration_protocol_message(reconf_msg),
             recv_exhaust(self.timeout_rx) -> timeout => self.timeout_received(timeout),
-            recv(self.processed_timeout.1) -> timeout_msg => match timeout_msg {
-                Ok((timeouts, deleted)) => self.processed_timeout_recvd(timeouts, deleted),
-                Err(err) => Err!(err),
-            },
+            recv(self.processed_timeout.1) -> (timeouts, deleted) => self.processed_timeout_recvd(timeouts, deleted),
             default(Duration::from_millis(1)) => Ok(()),
         }
     }

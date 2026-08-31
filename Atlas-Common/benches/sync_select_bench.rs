@@ -35,9 +35,10 @@
 
 use atlas_common::channel::RecvError;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx, new_bounded_sync};
-use atlas_common::sync_select;
+use atlas_common::{sync_drain, sync_select};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
+use std::time::Duration;
 
 /// Which backend `sync_select!` was compiled against in this build.
 #[cfg(not(feature = "channel_sync_flume"))]
@@ -46,6 +47,11 @@ const ATLAS_BACKEND: &str = "crossbeam";
 const ATLAS_BACKEND: &str = "flume";
 
 const CAPACITY: usize = 1024;
+
+/// The `default(..)` the replica's main loop selects with. It never fires in
+/// these benches — a message is always waiting — so what it measures is what the
+/// timeout *form* costs on the busy path.
+const TIMEOUT: Duration = Duration::from_millis(1);
 
 // Arm counts mirror the real call sites: the narrow workers select over 2, the
 // replica's main loop over 7.
@@ -97,6 +103,64 @@ fn crossbeam_builder(rx: &[crossbeam_channel::Receiver<u64>]) -> u64 {
     op.recv(&rx[idx]).unwrap()
 }
 
+fn crossbeam_select_timeout_2(rx: &[crossbeam_channel::Receiver<u64>]) -> u64 {
+    crossbeam_channel::select! {
+        recv(&rx[0]) -> m => m.unwrap(),
+        recv(&rx[1]) -> m => m.unwrap(),
+        default(TIMEOUT) => 0,
+    }
+}
+
+fn crossbeam_select_timeout_7(rx: &[crossbeam_channel::Receiver<u64>]) -> u64 {
+    crossbeam_channel::select! {
+        recv(&rx[0]) -> m => m.unwrap(),
+        recv(&rx[1]) -> m => m.unwrap(),
+        recv(&rx[2]) -> m => m.unwrap(),
+        recv(&rx[3]) -> m => m.unwrap(),
+        recv(&rx[4]) -> m => m.unwrap(),
+        recv(&rx[5]) -> m => m.unwrap(),
+        recv(&rx[6]) -> m => m.unwrap(),
+        default(TIMEOUT) => 0,
+    }
+}
+
+fn crossbeam_builder_timeout(rx: &[crossbeam_channel::Receiver<u64>]) -> u64 {
+    let mut sel = crossbeam_channel::Select::new();
+
+    for r in rx {
+        sel.recv(r);
+    }
+
+    match sel.select_timeout(TIMEOUT) {
+        Ok(op) => {
+            let idx = op.index();
+
+            op.recv(&rx[idx]).unwrap()
+        }
+        Err(_) => 0,
+    }
+}
+
+/// `crossbeam_builder` with the per-call fairness shuffle turned off.
+///
+/// `run_select` shuffles its handle list on every call unless the selector is
+/// biased, and `select!` is always unbiased — so the gap between this and
+/// `crossbeam_builder` is a cost the macro cannot avoid and we can. The bench
+/// keeps exactly one message in flight, so no arm is ever contended and bias
+/// cannot change *which* arm wins: the difference is the shuffle alone.
+fn crossbeam_builder_biased(rx: &[crossbeam_channel::Receiver<u64>]) -> u64 {
+    let mut sel = crossbeam_channel::Select::new_biased();
+
+    for r in rx {
+        sel.recv(r);
+    }
+
+    let op = sel.select();
+    let idx = op.index();
+
+    op.recv(&rx[idx]).unwrap()
+}
+
 // --------------------------------------------------------------------- raw flume
 
 fn flume_channels(n: usize) -> (Vec<flume::Sender<u64>>, Vec<flume::Receiver<u64>>) {
@@ -130,35 +194,56 @@ fn atlas_channels(n: usize) -> (Vec<ChannelSyncTx<u64>>, Vec<ChannelSyncRx<u64>>
         .unzip()
 }
 
-fn atlas_select_2(rx: &[ChannelSyncRx<u64>]) -> u64 {
-    sync_select! {
-        recv(rx[0]) -> m => m.unwrap(),
-        recv(rx[1]) -> m => m.unwrap(),
+// `sync_select!` is `sync_drain!` (one bounded round over every arm, running
+// bodies as messages are taken) followed by a parker. Each half is measured on
+// its own below, plus the composition, so a movement can be attributed to one of
+// them rather than to "the macro".
+
+fn atlas_drain_2(rx: &[ChannelSyncRx<u64>], sink: &mut u64) -> Result<(), RecvError> {
+    sync_drain! {
+        recv(rx[0]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[1]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
     }
 }
 
-fn atlas_select_7(rx: &[ChannelSyncRx<u64>]) -> u64 {
-    sync_select! {
-        recv(rx[0]) -> m => m.unwrap(),
-        recv(rx[1]) -> m => m.unwrap(),
-        recv(rx[2]) -> m => m.unwrap(),
-        recv(rx[3]) -> m => m.unwrap(),
-        recv(rx[4]) -> m => m.unwrap(),
-        recv(rx[5]) -> m => m.unwrap(),
-        recv(rx[6]) -> m => m.unwrap(),
+fn atlas_drain_7(rx: &[ChannelSyncRx<u64>], sink: &mut u64) -> Result<(), RecvError> {
+    sync_drain! {
+        recv(rx[0]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[1]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[2]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[3]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[4]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[5]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[6]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
     }
 }
 
-/// Drains a backlog through a single `recv_exhaust` arm — the form 12 of the
-/// tree's ~20 real arms use.
-fn atlas_drain(rx: &ChannelSyncRx<u64>, sink: &mut u64) -> Result<(), RecvError> {
+fn atlas_select_2(rx: &[ChannelSyncRx<u64>], sink: &mut u64) -> Result<(), RecvError> {
     sync_select! {
-        recv_exhaust(*rx) -> v => {
-            *sink = sink.wrapping_add(v);
-            // Annotated because the desugaring applies `?` to this body; real
-            // call sites pass a method call whose error type is already fixed.
-            Ok::<(), RecvError>(())
-        }
+        recv(rx[0]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[1]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        default(TIMEOUT) => Ok(())
+    }
+}
+
+fn atlas_select_7(rx: &[ChannelSyncRx<u64>], sink: &mut u64) -> Result<(), RecvError> {
+    sync_select! {
+        recv(rx[0]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[1]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[2]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[3]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[4]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[5]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        recv(rx[6]) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
+        default(TIMEOUT) => Ok(())
+    }
+}
+
+/// Drains a backlog through a single arm — the amortization `recv_exhaust` was
+/// built for, now the default behaviour of every arm.
+fn atlas_drain_one(rx: &ChannelSyncRx<u64>, sink: &mut u64) -> Result<(), RecvError> {
+    sync_drain! {
+        recv(*rx) -> v => { *sink = sink.wrapping_add(v); Ok::<(), RecvError>(()) }
     }
 }
 
@@ -202,20 +287,15 @@ fn bench_select_one_ready(c: &mut Criterion) {
             },
         );
 
-        let (atx, arx) = atlas_channels(arms);
         group.bench_with_input(
-            BenchmarkId::new(format!("atlas_{ATLAS_BACKEND}"), arms),
+            BenchmarkId::new("raw_crossbeam_builder_biased", arms),
             &arms,
             |b, &arms| {
                 let mut i = 0usize;
                 b.iter(|| {
-                    atx[i % arms].send(1).unwrap();
+                    ctx[i % arms].send(1).unwrap();
                     i += 1;
-                    black_box(if arms == 2 {
-                        atlas_select_2(&arx)
-                    } else {
-                        atlas_select_7(&arx)
-                    })
+                    black_box(crossbeam_builder_biased(&crx))
                 })
             },
         );
@@ -233,6 +313,186 @@ fn bench_select_one_ready(c: &mut Criterion) {
                 })
             })
         });
+    }
+
+    group.finish();
+}
+
+/// `select_one_ready` in the `default(..)` form, which is what the replica's main
+/// loop actually selects with.
+///
+/// A message is always waiting, so the timeout never fires and every iteration
+/// takes the same path through the channels as `select_one_ready` does. Whatever
+/// separates the two groups is what asking for a timeout costs on the busy path —
+/// `select_timeout` reads the clock before it polls anything.
+fn bench_select_timeout(c: &mut Criterion) {
+    let mut group = c.benchmark_group("select_timeout_one_ready");
+    group.throughput(Throughput::Elements(1));
+
+    for &arms in &[2usize, 7] {
+        let (ctx, crx) = crossbeam_channels(arms);
+        group.bench_with_input(
+            BenchmarkId::new("raw_crossbeam", arms),
+            &arms,
+            |b, &arms| {
+                let mut i = 0usize;
+                b.iter(|| {
+                    ctx[i % arms].send(1).unwrap();
+                    i += 1;
+                    black_box(if arms == 2 {
+                        crossbeam_select_timeout_2(&crx)
+                    } else {
+                        crossbeam_select_timeout_7(&crx)
+                    })
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("raw_crossbeam_builder", arms),
+            &arms,
+            |b, &arms| {
+                let mut i = 0usize;
+                b.iter(|| {
+                    ctx[i % arms].send(1).unwrap();
+                    i += 1;
+                    black_box(crossbeam_builder_timeout(&crx))
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Component 1, one arm ready: the round finds a message in one arm and scans
+/// the rest.
+///
+/// This is what a loop keeping up with its inbox does on nearly every iteration,
+/// and the reason `sync_select!` runs a round before it parks on anything.
+fn bench_round_one_ready(c: &mut Criterion) {
+    let mut group = c.benchmark_group("round_one_ready");
+    group.throughput(Throughput::Elements(1));
+
+    for &arms in &[2usize, 7] {
+        let (atx, arx) = atlas_channels(arms);
+        group.bench_with_input(
+            BenchmarkId::new(format!("atlas_{ATLAS_BACKEND}"), arms),
+            &arms,
+            |b, &arms| {
+                let mut sink = 0u64;
+                let mut i = 0usize;
+                b.iter(|| {
+                    atx[i % arms].send(1).unwrap();
+                    i += 1;
+                    if arms == 2 {
+                        atlas_drain_2(&arx, &mut sink).unwrap()
+                    } else {
+                        atlas_drain_7(&arx, &mut sink).unwrap()
+                    }
+                    black_box(sink)
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Component 1, every arm ready: the shape the round exists for.
+///
+/// One round services all of them; the early-exit design it replaced would have
+/// needed one round-trip per arm. Throughput counts every message, so this is
+/// directly comparable per-message with `round_one_ready`.
+fn bench_round_all_ready(c: &mut Criterion) {
+    let mut group = c.benchmark_group("round_all_ready");
+
+    for &arms in &[2usize, 7] {
+        group.throughput(Throughput::Elements(arms as u64));
+
+        let (atx, arx) = atlas_channels(arms);
+        group.bench_with_input(
+            BenchmarkId::new(format!("atlas_{ATLAS_BACKEND}"), arms),
+            &arms,
+            |b, &arms| {
+                let mut sink = 0u64;
+                b.iter(|| {
+                    for tx in atx.iter().take(arms) {
+                        tx.send(1).unwrap();
+                    }
+                    if arms == 2 {
+                        atlas_drain_2(&arx, &mut sink).unwrap()
+                    } else {
+                        atlas_drain_7(&arx, &mut sink).unwrap()
+                    }
+                    black_box(sink)
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Component 1, nothing ready: a full scan that finds nothing and returns.
+///
+/// No send, so what is timed is only the scan. This is the price `sync_select!`
+/// pays before it parks — the one case where running a round first is pure loss.
+fn bench_round_none_ready(c: &mut Criterion) {
+    let mut group = c.benchmark_group("round_none_ready");
+    group.throughput(Throughput::Elements(1));
+
+    for &arms in &[2usize, 7] {
+        let (_atx, arx) = atlas_channels(arms);
+        group.bench_with_input(
+            BenchmarkId::new(format!("atlas_{ATLAS_BACKEND}"), arms),
+            &arms,
+            |b, &arms| {
+                let mut sink = 0u64;
+                b.iter(|| {
+                    if arms == 2 {
+                        atlas_drain_2(&arx, &mut sink).unwrap()
+                    } else {
+                        atlas_drain_7(&arx, &mut sink).unwrap()
+                    }
+                    black_box(sink)
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Both halves composed — `sync_select!` as call sites write it, in the
+/// `default(..)` form the replica's main loop uses.
+///
+/// A message is always waiting, so the round finds it and the parker never runs.
+/// Against `round_one_ready` this is what composing the two costs.
+fn bench_select(c: &mut Criterion) {
+    let mut group = c.benchmark_group("select_one_ready_adaptive");
+    group.throughput(Throughput::Elements(1));
+
+    for &arms in &[2usize, 7] {
+        let (atx, arx) = atlas_channels(arms);
+        group.bench_with_input(
+            BenchmarkId::new(format!("atlas_{ATLAS_BACKEND}"), arms),
+            &arms,
+            |b, &arms| {
+                let mut sink = 0u64;
+                let mut i = 0usize;
+                b.iter(|| {
+                    atx[i % arms].send(1).unwrap();
+                    i += 1;
+                    if arms == 2 {
+                        atlas_select_2(&arx, &mut sink).unwrap()
+                    } else {
+                        atlas_select_7(&arx, &mut sink).unwrap()
+                    }
+                    black_box(sink)
+                })
+            },
+        );
     }
 
     group.finish();
@@ -293,7 +553,7 @@ fn bench_recv_exhaust(c: &mut Criterion) {
                         }
                     },
                     |()| {
-                        atlas_drain(&rx, &mut sink).unwrap();
+                        atlas_drain_one(&rx, &mut sink).unwrap();
                         black_box(sink)
                     },
                     criterion::BatchSize::PerIteration,
@@ -308,6 +568,11 @@ fn bench_recv_exhaust(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_select_one_ready,
+    bench_select_timeout,
+    bench_round_one_ready,
+    bench_round_all_ready,
+    bench_round_none_ready,
+    bench_select,
     bench_send_only,
     bench_recv_exhaust
 );
