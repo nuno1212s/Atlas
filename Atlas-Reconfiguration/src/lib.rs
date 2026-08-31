@@ -202,10 +202,10 @@ where
     {
         channel::sync::sync_select! {
             recv(self.channel_rx) -> orchestrator_message => {
-                self.handle_message_from_orchestrator(orchestrator_message.context("Orchestrator message")?)
+                self.handle_message_from_orchestrator(orchestrator_message)
             }
             recv(self.reconfig_network.network_update_receiver()) -> network_update_message => {
-                self.handle_network_update_message(network_update_message.context("Update message")?)
+                self.handle_network_update_message(network_update_message)
             }
             recv_exhaust(self.network_node.incoming_stub().as_ref()) -> network_msg => {
                 self.handle_network_message(network_msg)

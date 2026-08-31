@@ -242,17 +242,31 @@ macro_rules! exhaust_and_consume {
     };
 }
 
-/// Plumbing for [`sync_select!`]. Not a public API — the macro expands in the
-/// caller's crate, so everything it touches has to be reachable from there.
+/// How many messages one arm may take in a single round before the round moves
+/// on to the next arm.
+///
+/// A round drains every arm it visits, so without a cap a saturated channel
+/// would keep a round running indefinitely — and the caller, which typically
+/// alternates receiving with other work (the SMR replica steps its ordering
+/// protocol between rounds), would never get control back. The cap bounds a
+/// round at `arms * limit` messages. Anything left over stays queued for the
+/// next round, which now comes around promptly.
+///
+/// Override per call site with a leading `limit(..);` in [`sync_select!`].
+pub const DEFAULT_DRAIN_LIMIT: usize = 128;
+
+/// Plumbing for the receive macros. Not a public API — they expand in the
+/// caller's crate, so everything they touch has to be reachable from there.
 ///
 /// This is the only place that knows which sync channel backend is compiled in.
-/// `crossbeam_channel::Select` is index-based, while `flume::Selector` is a
-/// consuming builder of closures that must all be live at once; the two are
-/// reconciled here so that [`sync_select!`] itself is backend-agnostic.
+/// The macros never receive through a selector, so all a backend has to supply
+/// is a non-blocking take and a way to park; the two backends differ only in the
+/// latter.
 #[doc(hidden)]
 pub mod __select {
     use super::ChannelSyncRx;
     use crate::channel::RecvError;
+    use std::time::Instant;
 
     /// Identity, but its `&ChannelSyncRx<T>` parameter makes deref coercion do
     /// the work: call sites can pass either a `ChannelSyncRx<T>` place (a field)
@@ -265,197 +279,319 @@ pub mod __select {
     #[cfg(not(feature = "channel_sync_flume"))]
     mod imp {
         use super::*;
-        use std::time::Duration;
 
+        /// One non-blocking take.
+        ///
+        /// `None` is the hot path — a round visits every arm, and most are empty
+        /// most of the time — so it goes to the raw receiver rather than
+        /// [`ChannelSyncRx::try_recv`], which would build a `TryRecvError` and
+        /// clone the channel name's `Arc` just to say "nothing here".
+        ///
+        /// Disconnection is `Some(Err(..))`, not `None`: a closed channel has
+        /// something to report, and reading it as empty would let a caller spin
+        /// on a channel that can never produce again.
+        #[inline]
+        pub fn poll<T>(rx: &ChannelSyncRx<T>) -> Option<Result<T, RecvError>> {
+            match rx.inner.raw().try_recv() {
+                Ok(value) => Some(Ok(value)),
+                Err(crossbeam_channel::TryRecvError::Empty) => None,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    Some(Err(RecvError::ChannelDc {
+                        channel: rx.name().cloned(),
+                    }))
+                }
+            }
+        }
+
+        /// The take for every message after an arm's first in a round.
+        ///
+        /// `poll` establishes that an arm is live and reports a disconnect; once
+        /// it has, the rest of that arm's drain needs neither. Returning a bare
+        /// `Option<T>` keeps the per-message path down to the receive itself —
+        /// this is the loop that runs once per message under load, so it is the
+        /// one that has to stay lean. A disconnect ends the drain here like an
+        /// empty channel would, and is picked up by the next round's `poll`.
+        #[inline]
+        pub fn try_next<T>(rx: &ChannelSyncRx<T>) -> Option<T> {
+            rx.inner.raw().try_recv().ok()
+        }
+
+        /// Parks on the channels themselves.
+        ///
+        /// `Select::ready*` blocks until an operation *could* proceed and hands
+        /// back only an index — it never receives. That is the whole reason this
+        /// backend uses it: the round stays the only place that takes a message,
+        /// so there are no per-arm slots to park values in, no operation that
+        /// must be completed before its borrow can be released, and no second
+        /// copy of the arm bodies.
+        ///
+        /// Biased, because the fairness shuffle `run_select` would otherwise do
+        /// on every call costs more than the wait it precedes, and fairness is
+        /// the round's job now: a round visits every arm regardless of which one
+        /// woke us.
         pub type Selector<'a> = crossbeam_channel::Select<'a>;
+
+        /// This backend keeps no state between parks — the selector borrows the
+        /// receivers, so it cannot outlive a round that hands them to a
+        /// `&mut self` body, and has to be rebuilt inside each wait. Carrying a
+        /// zero-sized state keeps the macro's shape the same across backends
+        /// without costing a `Select::new` (and its allocation) per call.
+        pub struct ParkState;
+
+        #[inline]
+        pub fn new_park_state() -> ParkState {
+            ParkState
+        }
 
         #[inline]
         pub fn new_selector<'a>() -> Selector<'a> {
-            crossbeam_channel::Select::new()
+            crossbeam_channel::Select::new_biased()
         }
 
         #[inline]
-        pub fn register<'a, T>(sel: &mut Selector<'a>, rx: &'a ChannelSyncRx<T>) -> usize {
-            sel.recv(rx.inner.raw())
+        pub fn register<'a, T>(sel: &mut Selector<'a>, rx: &'a ChannelSyncRx<T>) {
+            sel.recv(rx.inner.raw());
         }
 
-        /// Blocks until one of the registered channels is ready, returning the
-        /// index of the winner along with the operation that must be completed.
+        /// `false` means the deadline passed with nothing ready.
         #[inline]
-        pub fn wait<'a>(sel: &mut Selector<'a>) -> crossbeam_channel::SelectedOperation<'a> {
-            sel.select()
-        }
-
-        #[inline]
-        pub fn wait_timeout<'a>(
-            sel: &mut Selector<'a>,
-            timeout: Duration,
-        ) -> Option<crossbeam_channel::SelectedOperation<'a>> {
-            sel.select_timeout(timeout).ok()
-        }
-
-        /// Completes the selected operation against the receiver it was
-        /// registered with, normalizing the backend error and attaching the
-        /// channel's name.
-        #[inline]
-        pub fn complete<T>(
-            op: crossbeam_channel::SelectedOperation<'_>,
-            rx: &ChannelSyncRx<T>,
-        ) -> Result<T, RecvError> {
-            op.recv(rx.inner.raw())
-                .map_err(|err| RecvError::from(err).with_channel(rx.name().cloned()))
+        pub fn park(sel: &mut Selector<'_>, deadline: Option<Instant>) -> bool {
+            match deadline {
+                None => {
+                    let _ = sel.ready();
+                    true
+                }
+                Some(deadline) => sel.ready_deadline(deadline).is_ok(),
+            }
         }
     }
 
     #[cfg(feature = "channel_sync_flume")]
     mod imp {
         use super::*;
+        use std::time::Duration;
 
-        pub use flume::Selector;
-
-        /// Normalizes flume's receive result and attaches the channel's name.
+        /// See the crossbeam backend's `poll`.
         #[inline]
-        pub fn map_recv<T>(
-            rx: &ChannelSyncRx<T>,
-            result: Result<T, flume::RecvError>,
-        ) -> Result<T, RecvError> {
-            result.map_err(|err| RecvError::from(err).with_channel(rx.name().cloned()))
+        pub fn poll<T>(rx: &ChannelSyncRx<T>) -> Option<Result<T, RecvError>> {
+            match rx.inner.raw().try_recv() {
+                Ok(value) => Some(Ok(value)),
+                Err(flume::TryRecvError::Empty) => None,
+                Err(flume::TryRecvError::Disconnected) => Some(Err(RecvError::ChannelDc {
+                    channel: rx.name().cloned(),
+                })),
+            }
         }
 
+        /// The take for every message after an arm's first in a round.
+        ///
+        /// `poll` establishes that an arm is live and reports a disconnect; once
+        /// it has, the rest of that arm's drain needs neither. Returning a bare
+        /// `Option<T>` keeps the per-message path down to the receive itself —
+        /// this is the loop that runs once per message under load, so it is the
+        /// one that has to stay lean. A disconnect ends the drain here like an
+        /// empty channel would, and is picked up by the next round's `poll`.
         #[inline]
-        pub fn raw<T>(rx: &ChannelSyncRx<T>) -> &flume::Receiver<T> {
-            rx.inner.raw()
+        pub fn try_next<T>(rx: &ChannelSyncRx<T>) -> Option<T> {
+            rx.inner.raw().try_recv().ok()
         }
 
-        /// `Err` means the wait timed out.
+        /// flume's `Selector` can only wait by consuming through closures, so
+        /// there is no equivalent of crossbeam's `ready` to park on. This backend
+        /// backs off instead: spin briefly, then yield, then sleep. It costs a
+        /// little wake latency once the sleep stage is reached, and nothing at
+        /// all under load, where a round never comes up empty.
+        pub struct ParkState {
+            rounds: u32,
+        }
+
+        const SPIN_ROUNDS: u32 = 32;
+        const YIELD_ROUNDS: u32 = 64;
+        const SLEEP: Duration = Duration::from_micros(50);
+
         #[inline]
-        pub fn timed_out(result: Result<(), flume::select::SelectError>) -> bool {
-            result.is_err()
+        pub fn new_park_state() -> ParkState {
+            ParkState { rounds: 0 }
+        }
+
+        /// A no-op on this backend: there is nothing to register on.
+        #[inline]
+        pub fn register<T>(_state: &mut ParkState, _rx: &ChannelSyncRx<T>) {}
+
+        /// `false` means the deadline passed. `true` only means "go round again"
+        /// — unlike crossbeam's, this parker cannot know that a message arrived.
+        #[inline]
+        pub fn park(state: &mut ParkState, deadline: Option<Instant>) -> bool {
+            if let Some(deadline) = deadline {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+            }
+
+            state.rounds += 1;
+
+            if state.rounds <= SPIN_ROUNDS {
+                std::hint::spin_loop();
+            } else if state.rounds <= YIELD_ROUNDS {
+                std::thread::yield_now();
+            } else {
+                std::thread::sleep(SLEEP);
+            }
+
+            true
         }
     }
 
     pub use imp::*;
 }
 
-/// Blocks until one of several channels has a message, then runs that arm.
+/// Drains every one of several channels once, running each message's arm body as
+/// it is taken.
 ///
-/// Backend-agnostic: arms name an `atlas_common::channel::sync::ChannelSyncRx`
-/// directly, and bindings carry this crate's own [`RecvError`], already tagged
-/// with the channel's name. Nothing here exposes `crossbeam_channel` or `flume`.
+/// The non-blocking half of [`sync_select!`], exposed on its own so it can be
+/// tested and benchmarked without any parking folded in. One round visits every
+/// arm in turn and takes up to `limit` messages from each, so no arm can starve
+/// another however busy it is.
 ///
 /// ```ignore
-/// sync_select! {
-///     // binds Result<T, RecvError>
-///     recv(self.work_rx) -> msg => match msg {
-///         Ok(work) => self.handle(work),
-///         Err(_) => return,               // channel closed
-///     },
-///     // binds T; applies `?` for you, then drains whatever else is queued
-///     recv_exhaust(self.timeout_rx) -> timeout => self.timeout_received(timeout),
-///     // optional; runs when nothing was ready within the timeout
-///     default(Duration::from_millis(1)) => Ok(()),
+/// sync_drain! {
+///     limit(32);                                          // optional
+///     recv(self.work_rx) -> work => self.handle(work),
+///     recv(self.timeout_rx) -> timeout => self.timeout_received(timeout),
 /// }
 /// ```
 ///
-/// `recv` binds the `Result` because some callers need to see the disconnect;
-/// `recv_exhaust` binds the unwrapped message, since draining a channel only
-/// makes sense once the first receive succeeded. Commas between arms are
-/// optional after a block body, matching `crossbeam_channel::select!`.
+/// Every arm binds the message itself, and every body returns `Result<(), E>`;
+/// the round applies `?` for you. A disconnected channel surfaces as an `Err`
+/// already carrying the channel's name, so `E` must be `From<RecvError>`.
 ///
-/// Selection is unbiased: earlier arms get no priority over later ones.
+/// Evaluates to `Ok(())` whether or not anything was ready. The first body to
+/// return `Err` ends the round, leaving every message it has not reached still
+/// queued — nothing is taken from a channel until its body is about to run.
+#[macro_export]
+macro_rules! sync_drain {
+    (limit($limit:expr); $($arms:tt)*) => {
+        $crate::__atlas_recv_parse!(@start drain ($limit) $($arms)*)
+    };
+    ($($arms:tt)*) => {
+        $crate::__atlas_recv_parse!(
+            @start drain ($crate::channel::sync::DEFAULT_DRAIN_LIMIT) $($arms)*)
+    };
+}
+
+/// Drains every one of several channels, parking until there is something to
+/// drain.
+///
+/// Composed of two halves that are each usable and measurable on their own:
+///
+/// 1. [`sync_drain!`] — one bounded round over every arm, running bodies as
+///    messages are taken. Registers nothing, allocates nothing, reads no clock.
+/// 2. a parker — `Select::ready_deadline` on crossbeam, spin/yield/sleep backoff
+///    on flume. It never receives; all it does is wait.
+///
+/// A loop that is keeping up with its inbox finishes in the first half every
+/// time, and only pays for the second when it has genuinely run dry.
+///
+/// ```ignore
+/// sync_select! {
+///     limit(32);                                          // optional
+///     recv(self.work_rx) -> work => self.handle(work),
+///     recv_exhaust(self.timeout_rx) -> timeout => self.timeout_received(timeout),
+///     default(Duration::from_millis(1)) => Ok(()),        // nothing arrived in time
+/// }
+/// ```
+///
+/// Arms bind the message and bodies return `Result<(), E>`, as in [`sync_drain!`]
+/// — `recv` and `recv_exhaust` mean the same thing, since a round always drains
+/// what it visits. Commas between arms are optional after a block body, matching
+/// `crossbeam_channel::select!`.
+///
+/// # Ordering
+///
+/// Arms are visited in order, but order carries no priority: every round visits
+/// every arm, so a busy arm cannot starve the ones after it. What arm order does
+/// decide is which is served first *within* a round, and — through `limit` — how
+/// much work a round does before returning to the caller.
 #[macro_export]
 macro_rules! sync_select {
+    (limit($limit:expr); $($arms:tt)*) => {
+        $crate::__atlas_recv_parse!(@start park ($limit) $($arms)*)
+    };
     ($($arms:tt)*) => {
-        $crate::__atlas_select_parse!(@start $($arms)*)
+        $crate::__atlas_recv_parse!(
+            @start park ($crate::channel::sync::DEFAULT_DRAIN_LIMIT) $($arms)*)
     };
 }
 
 /// Re-exported here so callers can keep writing `channel::sync::sync_select!`
-/// (`#[macro_export]` alone would only expose it at the crate root).
-pub use crate::sync_select;
+/// (`#[macro_export]` alone would only expose them at the crate root).
+pub use crate::{sync_drain, sync_select};
 
-/// Front-end for [`sync_select!`]: rewrites the arms into one uniform list that
-/// the backend emitter can expand. Backend-independent.
+/// Front-end for the receive macros: rewrites the arms into one uniform list
+/// that the emitter can expand. Backend-independent.
 ///
-/// Each arm is captured by a rule per *separator* shape, then handed to `@arm`,
-/// which is where the per-kind meaning lives — so `recv_exhaust`'s desugaring is
-/// written once rather than once per shape.
+/// `$strat` is the caller's entry point — `drain` or `park` — and `($limit)` the
+/// per-arm cap; both ride along untouched. Each arm is captured by a rule per
+/// *separator* shape, then handed to `@arm`, which is where the per-kind meaning
+/// lives.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __atlas_select_parse {
-    // Seeds one (slot, receiver, index) identifier triple per arm. Extend the
-    // pool if a call site ever needs more than twelve arms.
-    (@start $($arms:tt)*) => {
-        $crate::__atlas_select_parse!(@munch []
-            [(__atlas_s0 __atlas_r0 __atlas_i0) (__atlas_s1 __atlas_r1 __atlas_i1)
-             (__atlas_s2 __atlas_r2 __atlas_i2) (__atlas_s3 __atlas_r3 __atlas_i3)
-             (__atlas_s4 __atlas_r4 __atlas_i4) (__atlas_s5 __atlas_r5 __atlas_i5)
-             (__atlas_s6 __atlas_r6 __atlas_i6) (__atlas_s7 __atlas_r7 __atlas_i7)
-             (__atlas_s8 __atlas_r8 __atlas_i8) (__atlas_s9 __atlas_r9 __atlas_i9)
-             (__atlas_s10 __atlas_r10 __atlas_i10) (__atlas_s11 __atlas_r11 __atlas_i11)]
-            $($arms)*)
+macro_rules! __atlas_recv_parse {
+    (@start $strat:ident ($limit:expr) $($arms:tt)*) => {
+        $crate::__atlas_recv_parse!(@munch $strat ($limit) [] $($arms)*)
     };
 
     // ---- `default` closes the block ----
-    (@munch [$($acc:tt)*] [$($ids:tt)*] default($timeout:expr) => $body:block $(,)?) => {
-        $crate::__atlas_select_emit!(@build [$($acc)*] timeout($timeout, $body))
+    (@munch $strat:ident ($limit:expr) [$($acc:tt)*] default($timeout:expr) => $body:block $(,)?) => {
+        $crate::__atlas_recv_emit!(@build $strat ($limit) [$($acc)*] timeout($timeout, $body))
     };
-    (@munch [$($acc:tt)*] [$($ids:tt)*] default($timeout:expr) => $body:expr $(,)?) => {
-        $crate::__atlas_select_emit!(@build [$($acc)*] timeout($timeout, $body))
+    (@munch $strat:ident ($limit:expr) [$($acc:tt)*] default($timeout:expr) => $body:expr $(,)?) => {
+        $crate::__atlas_recv_emit!(@build $strat ($limit) [$($acc)*] timeout($timeout, $body))
     };
 
     // ---- one rule per separator shape, kind-agnostic ----
     //
     // A block body may drop the trailing comma (matching
     // `crossbeam_channel::select!`), and `macro_rules` only allows `,` or nothing
-    // after an `expr` — hence exactly these four. Note the comma and comma-less
-    // block rules must stay separate: folding them into `$(,)? $($rest:tt)*`
-    // makes the comma ambiguous between the two matchers.
-    (@munch [$($acc:tt)*] [$slot:tt $($ids:tt)*]
+    // after an `expr` — hence exactly these four. The comma and comma-less block
+    // rules must stay separate: folding them into `$(,)? $($rest:tt)*` makes the
+    // comma ambiguous between the two matchers.
+    (@munch $strat:ident ($limit:expr) [$($acc:tt)*]
         $kind:ident($rx:expr) -> $bind:pat => $body:block , $($rest:tt)*) => {
-        $crate::__atlas_select_parse!(@arm $kind [$($acc)*] $slot [$($ids)*] $rx, $bind, $body, $($rest)*)
+        $crate::__atlas_recv_parse!(@arm $kind $strat ($limit) [$($acc)*] $rx, $bind, $body, $($rest)*)
     };
-    (@munch [$($acc:tt)*] [$slot:tt $($ids:tt)*]
+    (@munch $strat:ident ($limit:expr) [$($acc:tt)*]
         $kind:ident($rx:expr) -> $bind:pat => $body:block $($rest:tt)*) => {
-        $crate::__atlas_select_parse!(@arm $kind [$($acc)*] $slot [$($ids)*] $rx, $bind, $body, $($rest)*)
+        $crate::__atlas_recv_parse!(@arm $kind $strat ($limit) [$($acc)*] $rx, $bind, $body, $($rest)*)
     };
-    (@munch [$($acc:tt)*] [$slot:tt $($ids:tt)*]
+    (@munch $strat:ident ($limit:expr) [$($acc:tt)*]
         $kind:ident($rx:expr) -> $bind:pat => $body:expr , $($rest:tt)*) => {
-        $crate::__atlas_select_parse!(@arm $kind [$($acc)*] $slot [$($ids)*] $rx, $bind, $body, $($rest)*)
+        $crate::__atlas_recv_parse!(@arm $kind $strat ($limit) [$($acc)*] $rx, $bind, $body, $($rest)*)
     };
-    (@munch [$($acc:tt)*] [$slot:tt $($ids:tt)*]
+    (@munch $strat:ident ($limit:expr) [$($acc:tt)*]
         $kind:ident($rx:expr) -> $bind:pat => $body:expr) => {
-        $crate::__atlas_select_parse!(@arm $kind [$($acc)*] $slot [$($ids)*] $rx, $bind, $body,)
+        $crate::__atlas_recv_parse!(@arm $kind $strat ($limit) [$($acc)*] $rx, $bind, $body,)
     };
 
     // ---- arms exhausted ----
-    (@munch [$($acc:tt)*] [$($ids:tt)*]) => {
-        $crate::__atlas_select_emit!(@build [$($acc)*] no_timeout)
+    (@munch $strat:ident ($limit:expr) [$($acc:tt)*]) => {
+        $crate::__atlas_recv_emit!(@build $strat ($limit) [$($acc)*] no_timeout)
     };
 
-    // ---- what each arm kind means, written once ----
-    (@arm recv [$($acc:tt)*] ($s:ident $r:ident $i:ident) [$($ids:tt)*]
+    // ---- arm kinds ----
+    //
+    // A round always drains the arm it visits, so `recv` and `recv_exhaust` now
+    // describe the same thing. `recv_exhaust` is kept as a spelling because call
+    // sites read better for saying it.
+    (@arm recv $strat:ident ($limit:expr) [$($acc:tt)*]
         $rx:expr, $bind:pat, $body:expr, $($rest:tt)*) => {
-        $crate::__atlas_select_parse!(@munch
-            [$($acc)* ($s $r $i, $rx, $bind, $body)] [$($ids)*] $($rest)*)
+        $crate::__atlas_recv_parse!(@munch $strat ($limit) [$($acc)* ($rx, $bind, $body)] $($rest)*)
     };
-
-    // Unwrap, run, then drain whatever else is already queued. `$rx` is emitted
-    // a second time here: re-evaluating it per iteration keeps the drain's shared
-    // borrow from colliding with a body that takes `&mut self`.
-    (@arm recv_exhaust [$($acc:tt)*] ($s:ident $r:ident $i:ident) [$($ids:tt)*]
+    (@arm recv_exhaust $strat:ident ($limit:expr) [$($acc:tt)*]
         $rx:expr, $bind:pat, $body:expr, $($rest:tt)*) => {
-        $crate::__atlas_select_parse!(@munch
-            [$($acc)* ($s $r $i, $rx, __atlas_first, {
-                let $bind = __atlas_first?;
-                $body?;
-                while let Ok($bind) = $rx.try_recv() { $body?; }
-                Ok(())
-            })]
-            [$($ids)*] $($rest)*)
+        $crate::__atlas_recv_parse!(@munch $strat ($limit) [$($acc)* ($rx, $bind, $body)] $($rest)*)
     };
-
-    (@arm $other:ident [$($acc:tt)*] $slot:tt [$($ids:tt)*]
+    (@arm $other:ident $strat:ident ($limit:expr) [$($acc:tt)*]
         $rx:expr, $bind:pat, $body:expr, $($rest:tt)*) => {
         compile_error!(concat!(
             "sync_select!: unknown arm `", stringify!($other),
@@ -464,96 +600,180 @@ macro_rules! __atlas_select_parse {
     };
 }
 
-/// Back-end for [`sync_select!`], in two phases:
+/// One bounded round over every arm, running each body as its message is taken.
 ///
-/// * **phase 1** ([`__atlas_select_run`], the only backend-specific part)
-///   registers the receivers and parks the winner's `Result<T, RecvError>` in its
-///   own slot. The receiver borrows live only inside that block.
-/// * **phase 2** runs the winning arm's body. Because phase 1's borrows are
-///   already released, bodies are free to take `&mut self` — which is the whole
-///   reason for the split, since every real call site does exactly that, and
-///   `flume::Selector` needs all arm closures live simultaneously.
+/// Evaluates to `Result<bool, E>` — the `bool` says whether anything at all was
+/// serviced, which is what tells [`sync_select!`] whether it has to park.
+///
+/// Nothing is dequeued until its body is about to run, so an `Err` ending the
+/// round leaves every message the round did not reach still in its channel.
+/// `$rx` is re-evaluated per message for the same reason `poll` takes an owned
+/// value out: the receiver borrow has to be dead before a body that takes
+/// `&mut self` runs.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __atlas_select_emit {
-    (@build [$(($s:ident $r:ident $i:ident, $rx:expr, $bind:pat, $body:expr))*] $($mode:tt)*) => {{
-        $( let mut $s = ::core::option::Option::None; )*
+macro_rules! __atlas_drain_round {
+    (($limit:expr) [$(($rx:expr, $bind:pat, $body:expr))*]) => {
+        '__atlas_round: {
+            let mut __atlas_serviced = false;
+            let mut __atlas_dc = ::core::option::Option::None;
 
-        {
-            $( let $r = $crate::channel::sync::__select::as_rx(&$rx); )*
+            $({
+                let mut __atlas_budget: usize = $limit;
+                let mut __atlas_first = true;
 
-            $crate::__atlas_select_run!([$( ($s $r $i) )*], $($mode)*);
-        }
+                while __atlas_budget > 0 {
+                    // Only the first take of an arm goes through `poll`, which is
+                    // the one that has to distinguish empty from disconnected.
+                    // The rest — the per-message path under load — take the lean
+                    // route.
+                    let __atlas_taken = if __atlas_first {
+                        __atlas_first = false;
 
-        $( if let ::core::option::Option::Some(__atlas_v) = $s.take() {
-            let $bind = __atlas_v;
-            $body
-        } else )* {
-            $crate::__atlas_select_emit!(@fallback $($mode)*)
-        }
-    }};
+                        $crate::channel::sync::__select::poll(
+                            $crate::channel::sync::__select::as_rx(&$rx),
+                        )
+                    } else {
+                        match $crate::channel::sync::__select::try_next(
+                            $crate::channel::sync::__select::as_rx(&$rx),
+                        ) {
+                            ::core::option::Option::Some(__atlas_v) => {
+                                ::core::option::Option::Some(::core::result::Result::Ok(__atlas_v))
+                            }
+                            ::core::option::Option::None => ::core::option::Option::None,
+                        }
+                    };
 
-    (@fallback no_timeout) => {
-        unreachable!("the selector completed without producing a value")
-    };
-    (@fallback timeout($timeout:expr, $default:expr)) => { $default };
-}
+                    let $bind = match __atlas_taken {
+                        ::core::option::Option::None => break,
+                        // A dropped sender ends this arm's drain the way an empty
+                        // channel does, rather than ending the round: the arms
+                        // after it may still have messages, and reporting the
+                        // disconnect while there is work left would strand it.
+                        // It is held over and returned below, but only once the
+                        // round has nothing to show for itself — by which point
+                        // the caller has drained everything the dead channel
+                        // ever delivered.
+                        ::core::option::Option::Some(::core::result::Result::Err(__atlas_e)) => {
+                            __atlas_dc = ::core::option::Option::Some(
+                                ::core::convert::From::from(__atlas_e),
+                            );
+                            break;
+                        }
+                        ::core::option::Option::Some(::core::result::Result::Ok(__atlas_v)) => {
+                            __atlas_v
+                        }
+                    };
 
-/// Phase 1 for `crossbeam_channel`, whose `Select` is index-based.
-#[doc(hidden)]
-#[macro_export]
-#[cfg(not(feature = "channel_sync_flume"))]
-macro_rules! __atlas_select_run {
-    (@wait $sel:ident, no_timeout) => {
-        ::core::option::Option::Some($crate::channel::sync::__select::wait(&mut $sel))
-    };
-    (@wait $sel:ident, timeout($timeout:expr, $default:expr)) => {
-        $crate::channel::sync::__select::wait_timeout(&mut $sel, $timeout)
-    };
+                    __atlas_serviced = true;
+                    __atlas_budget -= 1;
 
-    ([$(($s:ident $r:ident $i:ident))*], $($mode:tt)*) => {
-        let mut __atlas_sel = $crate::channel::sync::__select::new_selector();
-        $( let $i = $crate::channel::sync::__select::register(&mut __atlas_sel, $r); )*
+                    // A body failing *is* terminal for the round. Nothing has
+                    // been taken from the arms it did not reach, so their
+                    // messages stay queued.
+                    if let ::core::result::Result::Err(__atlas_e) = $body {
+                        break '__atlas_round ::core::result::Result::Err(__atlas_e);
+                    }
+                }
+            })*
 
-        if let ::core::option::Option::Some(__atlas_op) =
-            $crate::__atlas_select_run!(@wait __atlas_sel, $($mode)*)
-        {
-            let __atlas_idx = __atlas_op.index();
-
-            $( if __atlas_idx == $i {
-                $s = ::core::option::Option::Some(
-                    $crate::channel::sync::__select::complete(__atlas_op, $r),
-                );
-            } else )* {
-                unreachable!("selector returned an index that was never registered")
+            match (__atlas_serviced, __atlas_dc) {
+                (true, _) => ::core::result::Result::Ok(true),
+                (false, ::core::option::Option::Some(__atlas_e)) => {
+                    ::core::result::Result::Err(__atlas_e)
+                }
+                (false, ::core::option::Option::None) => ::core::result::Result::Ok(false),
             }
         }
     };
 }
 
-/// Phase 1 for `flume`, whose `Selector` is a consuming builder of closures that
-/// must all be live at once and share one return type — so each closure only
-/// parks its value, and the bodies run later, in phase 2.
+/// Back-end for the receive macros.
+///
+/// The arm bodies are emitted exactly once, inside the round — the parker never
+/// receives, so there is no second place they would have to appear.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __atlas_recv_emit {
+    // ---- one round, no parking ----
+    (@build drain ($limit:expr) [$($arms:tt)*] no_timeout) => {
+        match $crate::__atlas_drain_round!(($limit) [$($arms)*]) {
+            ::core::result::Result::Ok(_) => ::core::result::Result::Ok(()),
+            ::core::result::Result::Err(__atlas_e) => ::core::result::Result::Err(__atlas_e),
+        }
+    };
+    (@build drain ($limit:expr) [$($arms:tt)*] timeout($timeout:expr, $default:expr)) => {
+        compile_error!("sync_drain!: has nothing to wait for; drop the `default` arm, or use sync_select!")
+    };
+
+    // ---- round, then park, until something is serviced or the deadline passes ----
+    (@build park ($limit:expr) [$(($rx:expr, $bind:pat, $body:expr))*] $($mode:tt)*) => {{
+        let mut __atlas_deadline: ::core::option::Option<::std::time::Instant> =
+            ::core::option::Option::None;
+        let mut __atlas_park_state = $crate::channel::sync::__select::new_park_state();
+
+        loop {
+            match $crate::__atlas_drain_round!(($limit) [$(($rx, $bind, $body))*]) {
+                ::core::result::Result::Err(__atlas_e) => {
+                    break ::core::result::Result::Err(__atlas_e);
+                }
+                ::core::result::Result::Ok(true) => break ::core::result::Result::Ok(()),
+                ::core::result::Result::Ok(false) => {}
+            }
+
+            // Only now, having found nothing, is a deadline worth the clock read
+            // — and only the first time round.
+            $crate::__atlas_recv_emit!(@deadline __atlas_deadline, $($mode)*);
+
+            if !$crate::__atlas_park!(__atlas_park_state, __atlas_deadline, [$($rx),*]) {
+                break $crate::__atlas_recv_emit!(@fallback $($mode)*);
+            }
+        }
+    }};
+
+    (@deadline $deadline:ident, no_timeout) => {};
+    (@deadline $deadline:ident, timeout($timeout:expr, $default:expr)) => {
+        if $deadline.is_none() {
+            $deadline = ::core::option::Option::Some(::std::time::Instant::now() + $timeout);
+        }
+    };
+
+    (@fallback no_timeout) => {
+        unreachable!("parking reported a deadline it was never given")
+    };
+    (@fallback timeout($timeout:expr, $default:expr)) => { $default };
+}
+
+/// Parking for `crossbeam_channel`, which can wait on the channels themselves.
+///
+/// The receivers are borrowed only for the duration of the wait, so a body that
+/// takes `&mut self` is free to run once the round resumes.
+#[doc(hidden)]
+#[macro_export]
+#[cfg(not(feature = "channel_sync_flume"))]
+macro_rules! __atlas_park {
+    ($state:ident, $deadline:expr, [$($rx:expr),*]) => {{
+        let _ = &$state;
+
+        let mut __atlas_sel = $crate::channel::sync::__select::new_selector();
+
+        $( $crate::channel::sync::__select::register(
+            &mut __atlas_sel,
+            $crate::channel::sync::__select::as_rx(&$rx),
+        ); )*
+
+        $crate::channel::sync::__select::park(&mut __atlas_sel, $deadline)
+    }};
+}
+
+/// Parking for `flume`, which has no way to wait without consuming — so this
+/// backs off instead of watching the channels. State lives in `$parker`, which
+/// is why it is threaded through at all.
 #[doc(hidden)]
 #[macro_export]
 #[cfg(feature = "channel_sync_flume")]
-macro_rules! __atlas_select_run {
-    (@finish $sel:ident, no_timeout) => { $sel.wait() };
-    (@finish $sel:ident, timeout($timeout:expr, $default:expr)) => {
-        { let _ = $sel.wait_timeout($timeout); }
-    };
-
-    ([$(($s:ident $r:ident $i:ident))*], $($mode:tt)*) => {
-        let __atlas_sel = $crate::channel::sync::__select::Selector::new()
-            $( .recv($crate::channel::sync::__select::raw($r), {
-                let slot = &mut $s;
-                move |received| {
-                    *slot = ::core::option::Option::Some(
-                        $crate::channel::sync::__select::map_recv($r, received),
-                    );
-                }
-            }) )*;
-
-        $crate::__atlas_select_run!(@finish __atlas_sel, $($mode)*);
+macro_rules! __atlas_park {
+    ($state:ident, $deadline:expr, [$($rx:expr),*]) => {
+        $crate::channel::sync::__select::park(&mut $state, $deadline)
     };
 }

@@ -10,7 +10,7 @@ use crate::single_thread_double_state::preemptive_worker::preemptive_requests::{
     PreemptiveState,
 };
 use crate::single_thread_double_state::state_management::StateMessage;
-use atlas_common::channel::{NoRetChannelErr, sync};
+use atlas_common::channel::{NoRetChannelErr, RecvError, sync};
 use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::UpdateBatch;
 use atlas_metrics::metrics::metric_increment;
@@ -88,7 +88,7 @@ where
     {
         sync::sync_select! {
             recv(self.preemptive_channels.work_rx()) -> msg => {
-                match msg.map_err(NoRetChannelErr::from)? {
+                match msg {
                     PreemptiveWorkMessage::PreemptiveUpdate(update_batch) => {
                         self.handle_preemptive_update::<T>(update_batch)?;
                     }
@@ -169,7 +169,7 @@ where
     fn preemptive_worker_state_transfer_mode(&mut self) -> Result<(), PreemptiveWorkerError> {
         sync::sync_select! {
             recv(self.preemptive_channels.state_rx()) -> msg => {
-                match msg.map_err(NoRetChannelErr::from)? {
+                match msg {
                     StateMessage::ConfirmedStateReceived(seq_no, state) => {
                         self.state.install_confirmed_state(seq_no, state);
                     }
@@ -177,12 +177,18 @@ where
 
                 self.set_run_mode(RunMode::Normal);
 
-                Ok(())
+                // Annotated because the other arm diverges, leaving the round's
+                // error type otherwise unconstrained.
+                Ok::<(), PreemptiveWorkerError>(())
             },
             recv(self.preemptive_channels.confirmed_worker_rx()) -> msg => {
-                let _message = msg.map_err(NoRetChannelErr::from)?;
+                let _message = msg;
 
-                todo!()
+                // Typed rather than a bare `todo!()`: the round infers its error
+                // type from the arm bodies, and a diverging one constrains nothing.
+                let unimplemented: Result<(), PreemptiveWorkerError> = todo!();
+
+                unimplemented
             },
         }
     }
@@ -300,4 +306,13 @@ enum PreemptiveWorkerError {
     Backtrack(#[from] BacktrackError),
     #[error("Failed to request latest confirmed state: {0}")]
     RequestLatestState(#[from] RequestLatestStateError),
+}
+
+/// `sync_select!` surfaces a dropped sender as a `RecvError`, and reaches this
+/// type through `From`. `NoRetChannelErr` already carries one, but `From` does
+/// not compose, so the hop is spelled out.
+impl From<RecvError> for PreemptiveWorkerError {
+    fn from(err: RecvError) -> Self {
+        Self::Channel(NoRetChannelErr::from(err))
+    }
 }

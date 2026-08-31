@@ -6,7 +6,7 @@ use crate::single_thread_double_state::preemptive_worker::comm_handles::{
     PreemptiveWorkMessage, PreemptiveWorkerHandle,
 };
 use crate::single_thread_double_state::state_management::StateMessage;
-use atlas_common::channel::{self, NoRetChannelErr, sync::ChannelSyncRx};
+use atlas_common::channel::{self, NoRetChannelErr, RecvError, sync::ChannelSyncRx};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{error, quiet_unwrap};
 use atlas_smr_application::{
@@ -153,19 +153,20 @@ where
         loop {
             match &self.run_mode {
                 RunMode::Normal => {
-                    channel::sync::sync_select! {
-                         recv(self.work_rx) -> exec_req => {
-                            match exec_req {
-                                Ok(exec_req) => self.handle_preemptive_execution_request(exec_req),
-                                Err(_) => {
-                                    // The work channel has disconnected — the executor
-                                    // handle was dropped, so the executor is shutting
-                                    // down. Return to terminate this thread cleanly
-                                    // instead of spinning on the closed channel.
-                                    return;
-                                }
-                            }
+                    let received = channel::sync::sync_select! {
+                        recv(self.work_rx) -> exec_req => {
+                            self.handle_preemptive_execution_request(exec_req);
+
+                            Ok::<(), RecvError>(())
                         }
+                    };
+
+                    if received.is_err() {
+                        // The work channel has disconnected — the executor
+                        // handle was dropped, so the executor is shutting
+                        // down. Return to terminate this thread cleanly
+                        // instead of spinning on the closed channel.
+                        return;
                     }
                 }
                 RunMode::StateTransfer => {
