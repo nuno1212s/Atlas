@@ -743,7 +743,9 @@ where
             SystemMessage::ViewTransferMessage(view_transfer) => {
                 let strd_msg = StoredMessage::new(header, view_transfer.into_inner());
 
-                self.handle_view_transfer_msg(strd_msg)?;
+                <Self as PermissionedProtocolHandling<D, VT, OP, NT>>::handle_view_transfer_msg(
+                    self, strd_msg,
+                )?;
             }
             SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
                 // Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
@@ -1136,46 +1138,7 @@ where
             default(Duration::from_millis(1)) => Ok(()),
         }
     }
-
-    #[allow(dead_code)]
-    fn receive_internal_exhaust(&mut self) -> Result<()>
-    where
-        EX: TExecutorStateHandle<SMRReq<D>>,
-    {
-        exhaust_and_consume!(
-            self.node.protocol_node().incoming_stub().as_ref(),
-            self,
-            handle_network_message_received
-        );
-
-        //if self.current_count.wrapping_add(1) % 100 == 0 {
-        exhaust_and_consume!(
-            self.network_update_listener,
-            self,
-            handle_network_update_message
-        );
-        exhaust_and_consume!(
-            self.decision_log_handle.status_rx(),
-            self,
-            handle_decision_log_work_message
-        );
-        exhaust_and_consume!(
-            self.state_transfer_handle.response_rx(),
-            self,
-            handle_state_transfer_progress_message
-        );
-        exhaust_and_consume!(
-            self.reconf_receive,
-            self,
-            handle_reconfiguration_protocol_message
-        );
-        exhaust_and_consume!(self.timeout_rx, self, timeout_received);
-        exhaust_and_consume!(self.processed_timeout.1, self, process_timeout_message);
-        //}
-
-        Ok(())
-    }
-
+    
     fn process_timeout_message(
         &mut self,
         (message, to_delete): (Vec<ModTimeout>, Vec<ModTimeout>),
@@ -1638,7 +1601,9 @@ where
         match self.view_transfer_protocol.poll()? {
             VTPollResult::RePoll => {}
             VTPollResult::Exec(msg) => {
-                self.handle_view_transfer_msg(msg)?;
+                <Self as PermissionedProtocolHandling<D, VT, OP, NT>>::handle_view_transfer_msg(
+                    self, msg,
+                )?;
             }
             VTPollResult::ReceiveMsg => {
                 return Ok(IterableProtocolRes::Receive);

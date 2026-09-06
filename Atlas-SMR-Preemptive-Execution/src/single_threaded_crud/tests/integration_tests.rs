@@ -34,14 +34,14 @@ fn test_basic_preemptive_then_finalize() {
     let (handle, _state_tx, checkpoint_rx) = spawn_worker();
 
     handle
-        .queue_preemptive_update(make_batch(1, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]))
+        .queue_preemptive_update(make_batch(0, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]))
         .unwrap();
     handle
-        .queue_update_finalized_and_get_appstate(SeqNo::from(1u32))
+        .queue_update_finalized_and_get_appstate(SeqNo::from(0u32))
         .unwrap();
 
     let msg = checkpoint_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
-    assert_eq!(msg.seq(), SeqNo::from(1u32));
+    assert_eq!(msg.seq(), SeqNo::from(0u32));
     assert_eq!(msg.state().read("default", b"k1"), Some(b"v1".to_vec()));
 }
 
@@ -51,23 +51,23 @@ fn test_multiple_preemptive_confirmed_in_order() {
     let (handle, _state_tx, checkpoint_rx) = spawn_worker();
 
     handle
-        .queue_preemptive_update(make_batch(1, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]))
+        .queue_preemptive_update(make_batch(0, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]))
         .unwrap();
     handle
-        .queue_preemptive_update(make_batch(2, &[(b"k2".to_vec(), Some(b"v2".to_vec()))]))
+        .queue_preemptive_update(make_batch(1, &[(b"k2".to_vec(), Some(b"v2".to_vec()))]))
         .unwrap();
     handle
-        .queue_preemptive_update(make_batch(3, &[(b"k3".to_vec(), Some(b"v3".to_vec()))]))
+        .queue_preemptive_update(make_batch(2, &[(b"k3".to_vec(), Some(b"v3".to_vec()))]))
         .unwrap();
 
+    handle.queue_update_finalized(SeqNo::from(0u32)).unwrap();
     handle.queue_update_finalized(SeqNo::from(1u32)).unwrap();
-    handle.queue_update_finalized(SeqNo::from(2u32)).unwrap();
     handle
-        .queue_update_finalized_and_get_appstate(SeqNo::from(3u32))
+        .queue_update_finalized_and_get_appstate(SeqNo::from(2u32))
         .unwrap();
 
     let msg = checkpoint_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
-    assert_eq!(msg.seq(), SeqNo::from(3u32));
+    assert_eq!(msg.seq(), SeqNo::from(2u32));
     let state = msg.state();
     assert_eq!(state.read("default", b"k1"), Some(b"v1".to_vec()));
     assert_eq!(state.read("default", b"k2"), Some(b"v2".to_vec()));
@@ -217,32 +217,45 @@ fn test_state_transfer_then_resume() {
 }
 
 // ---------------------------------------------------------------------------
-// Future request: dropped, worker continues
+// Out-of-order arrival: buffered, then replayed
 // ---------------------------------------------------------------------------
 
-/// An update whose seq is more than 1 ahead of the current HEAD is silently
-/// dropped. The worker continues to accept the next in-order update.
+/// An update whose seq is ahead of the current head is held in the reorder buffer, not
+/// dropped. Once the batches in front of it arrive it is replayed, so every decision is
+/// still executed and every client still gets a reply.
+///
+/// Regression: the executor used to drop these. Because the ordering protocol decides
+/// several instances concurrently, batches routinely arrive out of order, and a single
+/// dropped batch wedged the speculative pipeline for the rest of the run.
 #[test]
-fn test_future_request_dropped_worker_continues() {
+fn test_out_of_order_update_is_buffered_and_replayed() {
     let (handle, _state_tx, checkpoint_rx) = spawn_worker();
 
-    // HEAD = 0; jump to seq 3 — must be dropped.
+    // Head is at 0; seq 2 arrives first and must be held.
     handle
-        .queue_preemptive_update(make_batch(3, &[(b"nope".to_vec(), Some(b"x".to_vec()))]))
+        .queue_preemptive_update(make_batch(2, &[(b"k2".to_vec(), Some(b"third".to_vec()))]))
+        .unwrap();
+    // Seq 1 also arrives early.
+    handle
+        .queue_preemptive_update(make_batch(1, &[(b"k1".to_vec(), Some(b"second".to_vec()))]))
+        .unwrap();
+    // Seq 0 closes the gap and releases both behind it.
+    handle
+        .queue_preemptive_update(make_batch(0, &[(b"k0".to_vec(), Some(b"first".to_vec()))]))
         .unwrap();
 
-    // Correct seq 1 — must still be accepted.
+    handle.queue_update_finalized(SeqNo::from(0u32)).unwrap();
+    handle.queue_update_finalized(SeqNo::from(1u32)).unwrap();
     handle
-        .queue_preemptive_update(make_batch(1, &[(b"k1".to_vec(), Some(b"ok".to_vec()))]))
-        .unwrap();
-    handle
-        .queue_update_finalized_and_get_appstate(SeqNo::from(1u32))
+        .queue_update_finalized_and_get_appstate(SeqNo::from(2u32))
         .unwrap();
 
     let msg = checkpoint_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
-    assert_eq!(msg.seq(), SeqNo::from(1u32));
-    assert_eq!(msg.state().read("default", b"k1"), Some(b"ok".to_vec()));
-    assert!(msg.state().read("default", b"nope").is_none());
+    assert_eq!(msg.seq(), SeqNo::from(2u32));
+    let state = msg.state();
+    assert_eq!(state.read("default", b"k0"), Some(b"first".to_vec()));
+    assert_eq!(state.read("default", b"k1"), Some(b"second".to_vec()));
+    assert_eq!(state.read("default", b"k2"), Some(b"third".to_vec()));
 }
 
 // ---------------------------------------------------------------------------
@@ -257,24 +270,24 @@ fn test_backtrack_corrects_speculative_state() {
     let (handle, _state_tx, checkpoint_rx) = spawn_worker();
 
     handle
-        .queue_preemptive_update(make_batch(1, &[(b"k1".to_vec(), Some(b"wrong".to_vec()))]))
+        .queue_preemptive_update(make_batch(0, &[(b"k1".to_vec(), Some(b"wrong".to_vec()))]))
         .unwrap();
     handle
-        .queue_preemptive_update(make_batch(2, &[(b"k2".to_vec(), Some(b"v2".to_vec()))]))
+        .queue_preemptive_update(make_batch(1, &[(b"k2".to_vec(), Some(b"v2".to_vec()))]))
         .unwrap();
     // seq 1 again with a different value — triggers internal backtrack.
     handle
         .queue_preemptive_update(make_batch(
-            1,
+            0,
             &[(b"k1".to_vec(), Some(b"correct".to_vec()))],
         ))
         .unwrap();
     handle
-        .queue_update_finalized_and_get_appstate(SeqNo::from(1u32))
+        .queue_update_finalized_and_get_appstate(SeqNo::from(0u32))
         .unwrap();
 
     let msg = checkpoint_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
-    assert_eq!(msg.seq(), SeqNo::from(1u32));
+    assert_eq!(msg.seq(), SeqNo::from(0u32));
     let state = msg.state();
     assert_eq!(state.read("default", b"k1"), Some(b"correct".to_vec()));
     // k2 was discarded by the backtrack.
@@ -289,29 +302,29 @@ fn test_backtrack_then_continue_execution() {
 
     // Speculate seq 1 (wrong) and seq 2.
     handle
-        .queue_preemptive_update(make_batch(1, &[(b"k1".to_vec(), Some(b"wrong".to_vec()))]))
+        .queue_preemptive_update(make_batch(0, &[(b"k1".to_vec(), Some(b"wrong".to_vec()))]))
         .unwrap();
     handle
-        .queue_preemptive_update(make_batch(2, &[(b"k2".to_vec(), Some(b"old".to_vec()))]))
+        .queue_preemptive_update(make_batch(1, &[(b"k2".to_vec(), Some(b"old".to_vec()))]))
         .unwrap();
     // Backtrack: seq 1 corrected.
     handle
         .queue_preemptive_update(make_batch(
-            1,
+            0,
             &[(b"k1".to_vec(), Some(b"correct".to_vec()))],
         ))
         .unwrap();
     // Re-execute seq 2 with the new value.
     handle
-        .queue_preemptive_update(make_batch(2, &[(b"k2".to_vec(), Some(b"new".to_vec()))]))
+        .queue_preemptive_update(make_batch(1, &[(b"k2".to_vec(), Some(b"new".to_vec()))]))
         .unwrap();
-    handle.queue_update_finalized(SeqNo::from(1u32)).unwrap();
+    handle.queue_update_finalized(SeqNo::from(0u32)).unwrap();
     handle
-        .queue_update_finalized_and_get_appstate(SeqNo::from(2u32))
+        .queue_update_finalized_and_get_appstate(SeqNo::from(1u32))
         .unwrap();
 
     let msg = checkpoint_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
-    assert_eq!(msg.seq(), SeqNo::from(2u32));
+    assert_eq!(msg.seq(), SeqNo::from(1u32));
     let state = msg.state();
     assert_eq!(state.read("default", b"k1"), Some(b"correct".to_vec()));
     assert_eq!(state.read("default", b"k2"), Some(b"new".to_vec()));
@@ -331,29 +344,29 @@ fn test_convergence_write_sequence() {
     // Path A: preemptive
     let (handle_a, _, chk_a) = spawn_worker();
     for (i, &(key, val)) in ops.iter().enumerate() {
-        let seq = (i + 1) as u32;
+        let seq = i as u32;
         handle_a
             .queue_preemptive_update(make_batch(seq, &[(key.to_vec(), Some(val.to_vec()))]))
             .unwrap();
     }
+    handle_a.queue_update_finalized(SeqNo::from(0u32)).unwrap();
     handle_a.queue_update_finalized(SeqNo::from(1u32)).unwrap();
-    handle_a.queue_update_finalized(SeqNo::from(2u32)).unwrap();
     handle_a
-        .queue_update_finalized_and_get_appstate(SeqNo::from(3u32))
+        .queue_update_finalized_and_get_appstate(SeqNo::from(2u32))
         .unwrap();
     let result_a = chk_a.recv_timeout(RECV_TIMEOUT).expect("path A timed out");
 
     // Path B: direct
     let (handle_b, _, chk_b) = spawn_worker();
     for (i, &(key, val)) in ops[..2].iter().enumerate() {
-        let seq = (i + 1) as u32;
+        let seq = i as u32;
         handle_b
             .queue_update(make_batch(seq, &[(key.to_vec(), Some(val.to_vec()))]))
             .unwrap();
     }
     let &(key, val) = &ops[2];
     handle_b
-        .queue_update_and_get_appstate(make_batch(3, &[(key.to_vec(), Some(val.to_vec()))]))
+        .queue_update_and_get_appstate(make_batch(2, &[(key.to_vec(), Some(val.to_vec()))]))
         .unwrap();
     let result_b = chk_b.recv_timeout(RECV_TIMEOUT).expect("path B timed out");
 
@@ -376,19 +389,19 @@ fn test_convergence_after_backtrack() {
     // Path A: backtrack
     let (handle_a, _, chk_a) = spawn_worker();
     handle_a
-        .queue_preemptive_update(make_batch(1, &[(b"k1".to_vec(), Some(b"wrong".to_vec()))]))
+        .queue_preemptive_update(make_batch(0, &[(b"k1".to_vec(), Some(b"wrong".to_vec()))]))
         .unwrap();
     handle_a
-        .queue_preemptive_update(make_batch(2, &[(b"k2".to_vec(), Some(b"v2".to_vec()))]))
+        .queue_preemptive_update(make_batch(1, &[(b"k2".to_vec(), Some(b"v2".to_vec()))]))
         .unwrap();
     handle_a
         .queue_preemptive_update(make_batch(
-            1,
+            0,
             &[(b"k1".to_vec(), Some(b"correct".to_vec()))],
         ))
         .unwrap();
     handle_a
-        .queue_update_finalized_and_get_appstate(SeqNo::from(1u32))
+        .queue_update_finalized_and_get_appstate(SeqNo::from(0u32))
         .unwrap();
     let result_a = chk_a.recv_timeout(RECV_TIMEOUT).expect("path A timed out");
 
@@ -396,7 +409,7 @@ fn test_convergence_after_backtrack() {
     let (handle_b, _, chk_b) = spawn_worker();
     handle_b
         .queue_update_and_get_appstate(make_batch(
-            1,
+            0,
             &[(b"k1".to_vec(), Some(b"correct".to_vec()))],
         ))
         .unwrap();

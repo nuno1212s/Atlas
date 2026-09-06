@@ -2,7 +2,9 @@
 
 use crate::exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle};
 use crate::metric::{CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID, CACHE_UNORDERED_EXECUTION_TIME_ID};
-use crate::single_threaded_crud::pending_state::{CachingPreemptiveState, PreemptiveError};
+use crate::single_threaded_crud::pending_state::{
+    CachingPreemptiveState, PreemptiveError, PreemptiveOutcome,
+};
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -21,7 +23,7 @@ use atlas_smr_execution::repliers::ExecutorReplier;
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
-use tracing::error;
+use tracing::{debug, error};
 
 pub(crate) mod caching_state;
 pub(crate) mod pending_state;
@@ -242,7 +244,7 @@ where
             }
 
             PreemptiveExecutionRequest::PreemptiveUpdateFinalized(seq) => {
-                match self.state.handle_update_confirmed(seq) {
+                match self.state.handle_update_confirmed(&self.application, seq) {
                     Ok(replies) => {
                         T::execution_finished::<A::AppData, NT>(
                             self.node.clone(),
@@ -255,7 +257,7 @@ where
             }
 
             PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(seq) => {
-                match self.state.handle_update_confirmed(seq) {
+                match self.state.handle_update_confirmed(&self.application, seq) {
                     Ok(replies) => {
                         T::execution_finished::<A::AppData, NT>(
                             self.node.clone(),
@@ -295,13 +297,22 @@ where
         }
     }
 
-    /// Run a preemptive update, automatically backtracking if the seq has fallen behind.
+    /// Run a preemptive update, buffering it if it arrived early and backtracking if the
+    /// seq has fallen behind.
     fn handle_preemptive_update(&mut self, batch: UpdateBatch<Request<A, S>>) {
         match self
             .state
             .handle_preemptive_update(&self.application, batch)
         {
-            Ok(()) => {}
+            Ok(PreemptiveOutcome::Executed { .. }) => {}
+            Ok(PreemptiveOutcome::Staged { awaiting, buffered }) => {
+                // Routine: the ordering protocol decides several instances concurrently, so
+                // batches regularly arrive ahead of their turn. They replay automatically
+                // once the batch they are waiting on shows up.
+                debug!(
+                    "Preemptive update arrived ahead of {awaiting:?}; buffered ({buffered} held)"
+                );
+            }
             Err(PreemptiveError::Backtracking(seq, batch)) => {
                 if let Err(e) = self.state.backtrack(seq) {
                     error!("Backtrack failed: {:?}", e);
@@ -314,10 +325,12 @@ where
                     error!("Preemptive re-execution after backtrack failed: {:?}", e);
                 }
             }
-            Err(PreemptiveError::FutureRequest(seq, current)) => {
-                error!(
-                    "Preemptive update at {seq:?} is ahead of current head {current:?}; dropping"
-                );
+            Err(e @ PreemptiveError::ReorderBufferFull { .. }) => {
+                // The decision log sends every batch exactly once over a blocking channel,
+                // so filling the buffer means a batch was genuinely lost rather than
+                // delayed. Speculation cannot advance past the gap; the confirmation path
+                // falls back to direct execution for whatever it can still find.
+                error!("{e:?}");
             }
         }
     }
