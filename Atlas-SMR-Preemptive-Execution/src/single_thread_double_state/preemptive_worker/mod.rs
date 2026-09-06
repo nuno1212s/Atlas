@@ -152,10 +152,11 @@ where
                 ExecuteUpdateError::Backtracking(_, batch) => {
                     self.handle_backtracking_request::<T>(batch)?;
                 }
-                ExecuteUpdateError::FutureRequest(seq, current) => {
-                    error!(
-                        "Preemptive update at seq {seq:?} is ahead of current head {current:?}; dropping"
-                    );
+                err @ ExecuteUpdateError::ReorderBufferFull { .. } => {
+                    // The decision log sends every batch exactly once over a blocking
+                    // channel, so filling the buffer means a batch was genuinely lost
+                    // rather than merely late.
+                    error!("{err:?}");
                 }
                 ExecuteUpdateError::ChannelErr(e) => {
                     return Err(PreemptiveWorkerError::Channel(e));

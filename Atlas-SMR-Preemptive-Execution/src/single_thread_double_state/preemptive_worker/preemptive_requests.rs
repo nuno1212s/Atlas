@@ -1,15 +1,18 @@
 use crate::metric::{
     DS_OPS_PER_BATCH_ID, DS_PREEMPTIVE_EXECUTION_TIME_ID, DS_SPECULATION_TO_CONFIRM_LATENCY_ID,
+    REORDER_BUFFER_SIZE_ID, REORDER_STAGED_COUNT_ID,
 };
+use crate::single_threaded_crud::pending_state::MAX_STAGED_BATCHES;
 use atlas_common::channel::NoRetChannelErr;
 use atlas_common::ordering::singular_tbo_queue::TSingleTboQueue;
 use atlas_common::ordering::singular_tbo_queue::vec_single_tbo_queue::VSingleTBOQueue;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::execution::requests::ReplyBatch;
 use atlas_core::execution::requests::UpdateBatch;
-use atlas_metrics::metrics::{metric_duration, metric_store_count};
+use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
 use atlas_smr_application::app::{Application, Reply, Request};
-use either::Either;
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 use std::time::Instant;
 use thiserror::Error;
@@ -75,6 +78,11 @@ where
     preemptive_state: S,
 
     pending_permanent_update: VSingleTBOQueue<PendingPermanentUpdate<A, S>>,
+    /// Batches that arrived ahead of their turn, held until the gap in front of them
+    /// closes. The ordering protocol decides several instances concurrently, so batches
+    /// routinely arrive out of sequence; the decision log still sends each exactly once
+    /// over a blocking channel, so entries here always drain.
+    staged: BTreeMap<SeqNo, UpdateBatch<Request<A, S>>>,
 }
 
 impl<S, A> Orderable for PreemptiveState<S, A>
@@ -102,6 +110,7 @@ where
             started: false,
             preemptive_state: initial_state.1,
             pending_permanent_update: queue,
+            staged: BTreeMap::new(),
         }
     }
 
@@ -116,6 +125,8 @@ where
         // lands at slot 0 and is immediately poppable.
         self.pending_permanent_update
             .reset_with_seq(confirmed_seq_no.next());
+        // Buffered batches belong to a range the installed state has already subsumed.
+        self.staged.clear();
     }
 
     /// The rule which describes backtrack:
@@ -194,28 +205,46 @@ where
         A: Application<S>,
     {
         if self.started {
+            // Compare by raw value: `SeqNo`'s `PartialOrd` goes through the wrap-aware
+            // `index`, which reports a sequence far enough ahead as *behind*, so a large
+            // gap would be misclassified as a backtrack.
             match update_batch
                 .sequence_number()
-                .index(self.current_state_seq_no)
+                .cmp(&self.current_state_seq_no.next())
             {
-                Either::Left(_) => {
+                Ordering::Less => {
                     return Err(ExecuteUpdateError::Backtracking(
                         update_batch.sequence_number(),
                         update_batch,
                     ));
                 }
-                Either::Right(1) => (),
-                Either::Right(_) => {
-                    return Err(ExecuteUpdateError::FutureRequest(
-                        update_batch.sequence_number(),
-                        self.current_state_seq_no,
-                    ));
+                Ordering::Equal => (),
+                Ordering::Greater => {
+                    let seq = update_batch.sequence_number();
+
+                    if self.staged.len() >= MAX_STAGED_BATCHES {
+                        return Err(ExecuteUpdateError::ReorderBufferFull {
+                            seq,
+                            awaiting: self.current_state_seq_no.next(),
+                            buffered: self.staged.len(),
+                        });
+                    }
+
+                    self.staged.insert(seq, update_batch);
+                    metric_increment(REORDER_STAGED_COUNT_ID, Some(1));
+                    metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
+
+                    return Ok(());
                 }
             }
         } else {
-            // Fresh start: adopt this batch's sequence number as the baseline.
-            // Position the pending queue so this entry lands at slot 0 and is
-            // immediately poppable on confirmation.
+            // Fresh start: adopt this batch's sequence number as the baseline, so the
+            // executor tracks whatever numbering the ordering protocol uses.
+            //
+            // Batches arrive out of order, so the first one to show up is not necessarily
+            // the lowest. Anything lower that arrives later takes the Backtracking path
+            // below, which re-baselines onto it — nothing is confirmed yet, so there is no
+            // committed work to invalidate.
             self.pending_permanent_update
                 .reset_with_seq(update_batch.sequence_number());
             self.started = true;
@@ -235,7 +264,34 @@ where
             .push(PendingPermanentUpdate::new(pending_copy, replies))
             .expect("Failed to push pending permanent update to the queue");
 
+        // This batch may have closed the gap in front of batches that arrived early.
+        self.drain_staged(application);
+
         Ok(())
+    }
+
+    /// Replay any buffered batches that are now contiguous with the executed prefix.
+    fn drain_staged(&mut self, application: &A)
+    where
+        A: Application<S>,
+    {
+        let mut drained = false;
+
+        while let Some(batch) = self.staged.remove(&self.current_state_seq_no.next()) {
+            drained = true;
+
+            let pending_copy = batch.clone();
+            let replies = application.update_batch(&mut self.preemptive_state, batch);
+
+            self.current_state_seq_no = pending_copy.seq_no();
+            self.pending_permanent_update
+                .push(PendingPermanentUpdate::new(pending_copy, replies))
+                .expect("Failed to push pending permanent update to the queue");
+        }
+
+        if drained {
+            metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
+        }
     }
 
     pub fn handle_catch_up(
@@ -345,8 +401,15 @@ where
 pub(super) enum ExecuteUpdateError<R> {
     #[error("Backtracked execution. Need new state {0:?}")]
     Backtracking(SeqNo, UpdateBatch<R>),
-    #[error("Received a request which is ahead of our current execution {0:?} (current {1:?}")]
-    FutureRequest(SeqNo, SeqNo),
+    #[error(
+        "Reorder buffer full ({buffered} batches) while waiting for {awaiting:?}; \
+         cannot buffer {seq:?}"
+    )]
+    ReorderBufferFull {
+        seq: SeqNo,
+        awaiting: SeqNo,
+        buffered: usize,
+    },
     #[error("Channel error {0:?}")]
     ChannelErr(#[from] NoRetChannelErr),
 }
@@ -409,10 +472,15 @@ impl<R> Debug for ExecuteUpdateError<R> {
                 .field(seq_no)
                 .field(&format!("Update batch with {} updates", update_batch.len()))
                 .finish(),
-            ExecuteUpdateError::FutureRequest(seq, current_seq) => f
-                .debug_tuple("FutureRequest")
-                .field(seq)
-                .field(current_seq)
+            ExecuteUpdateError::ReorderBufferFull {
+                seq,
+                awaiting,
+                buffered,
+            } => f
+                .debug_struct("ReorderBufferFull")
+                .field("seq", seq)
+                .field("awaiting", awaiting)
+                .field("buffered", buffered)
                 .finish(),
             ExecuteUpdateError::ChannelErr(err) => {
                 f.debug_tuple("ChannelError").field(err).finish()
@@ -757,7 +825,7 @@ mod tests {
     // ---------------------------------------------------------------------------
 
     #[test]
-    fn test_future_request_returns_error() {
+    fn test_out_of_order_request_is_buffered_then_replayed() {
         let app = TestApp;
         let mut state = new_state();
 
@@ -766,15 +834,41 @@ mod tests {
             .handle_preemptive_update(&app, make_batch(1, &[10]))
             .unwrap();
 
-        // Now skip seq 2 and jump to seq 3 — a gap ahead of the current head.
-        let result = state.handle_preemptive_update(&app, make_batch(3, &[10]));
-        assert!(
-            matches!(result, Err(ExecuteUpdateError::FutureRequest(s, _)) if s == SeqNo::from(3u32)),
-            "expected FutureRequest, got {:?}",
-            result
-        );
-        // State must reflect only the accepted seq-1 batch.
+        // Skip seq 2 and jump to seq 3 — a gap ahead of the current head. The batch is
+        // held, not dropped, so the state does not advance yet.
+        state
+            .handle_preemptive_update(&app, make_batch(3, &[10]))
+            .expect("an early batch must be buffered, not rejected");
         assert_eq!(state.sequence_number(), SeqNo::from(1u32));
+
+        // Seq 2 closes the gap and releases seq 3 behind it.
+        state
+            .handle_preemptive_update(&app, make_batch(2, &[10]))
+            .unwrap();
+        assert_eq!(state.sequence_number(), SeqNo::from(3u32));
+    }
+
+    #[test]
+    fn test_reorder_buffer_full_reports_a_lost_batch() {
+        let app = TestApp;
+        let mut state = new_state();
+
+        state
+            .handle_preemptive_update(&app, make_batch(1, &[10]))
+            .unwrap();
+
+        // Fill the buffer while seq 2 never arrives.
+        for seq in 3..(3 + MAX_STAGED_BATCHES as u32) {
+            state
+                .handle_preemptive_update(&app, make_batch(seq, &[10]))
+                .unwrap();
+        }
+
+        let result = state.handle_preemptive_update(&app, make_batch(99_999, &[10]));
+        assert!(
+            matches!(result, Err(ExecuteUpdateError::ReorderBufferFull { .. })),
+            "expected ReorderBufferFull, got {result:?}"
+        );
     }
 
     #[test]

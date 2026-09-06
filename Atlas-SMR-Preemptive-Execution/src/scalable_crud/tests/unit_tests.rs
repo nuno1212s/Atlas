@@ -17,9 +17,17 @@ use crate::scalable_crud::pending_state::{BacktrackError, ScalableCachingPreempt
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// A freshly booted state: nothing confirmed, and the next batch it expects is `SeqNo::ZERO`
+/// — which is what consensus actually delivers first.
 fn new_state() -> ScalableCachingPreemptiveState<MapState, MapApp> {
+    new_state_expecting(SeqNo::ZERO)
+}
+
+/// A state positioned so that the next batch it expects is `seq`. Most tests below use
+/// 1-based sequences for readability.
+fn new_state_expecting(seq: SeqNo) -> ScalableCachingPreemptiveState<MapState, MapApp> {
     let pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-    ScalableCachingPreemptiveState::new((SeqNo::ZERO, MapState::default()), pool)
+    ScalableCachingPreemptiveState::new((seq, MapState::default()), pool)
 }
 
 fn read_confirmed(
@@ -36,8 +44,8 @@ fn read_confirmed(
 #[test]
 fn test_initial_state() {
     let s = new_state();
-    assert_eq!(s.confirmed_seq_no(), SeqNo::ZERO);
-    assert_eq!(s.preemptive_seq_no(), SeqNo::ZERO);
+    assert_eq!(s.next_confirmed_seq(), SeqNo::ZERO);
+    assert_eq!(s.next_preemptive_seq(), SeqNo::ZERO);
 }
 
 // ---------------------------------------------------------------------------
@@ -47,21 +55,21 @@ fn test_initial_state() {
 #[test]
 fn test_preemptive_update_advances_preemptive_seq() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(1, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]),
     )
     .unwrap();
-    assert_eq!(s.preemptive_seq_no(), SeqNo::from(1u32));
-    assert_eq!(s.confirmed_seq_no(), SeqNo::ZERO);
+    assert_eq!(s.next_preemptive_seq(), SeqNo::from(2u32));
+    assert_eq!(s.next_confirmed_seq(), SeqNo::ONE);
     assert!(read_confirmed(&s, b"k1").is_none());
 }
 
 #[test]
 fn test_accumulated_cache_visible_to_next_preemptive() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(1, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]),
@@ -74,7 +82,7 @@ fn test_accumulated_cache_visible_to_next_preemptive() {
     .unwrap();
     assert!(read_confirmed(&s, b"k1").is_none());
     assert!(read_confirmed(&s, b"k2").is_none());
-    assert_eq!(s.preemptive_seq_no(), SeqNo::from(2u32));
+    assert_eq!(s.next_preemptive_seq(), SeqNo::from(3u32));
 }
 
 // ---------------------------------------------------------------------------
@@ -84,22 +92,22 @@ fn test_accumulated_cache_visible_to_next_preemptive() {
 #[test]
 fn test_confirmation_applies_delta_to_real_state() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(1, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]),
     )
     .unwrap();
-    let replies = s.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
+    let replies = s.handle_update_confirmed(&app, SeqNo::from(1u32)).unwrap();
     assert_eq!(replies.len(), 1);
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"v1".to_vec()));
-    assert_eq!(s.confirmed_seq_no(), SeqNo::from(1u32));
+    assert_eq!(s.next_confirmed_seq(), SeqNo::from(2u32));
 }
 
 #[test]
 fn test_accumulated_cache_rebuilt_after_confirmation() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(1, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]),
@@ -110,10 +118,10 @@ fn test_accumulated_cache_rebuilt_after_confirmation() {
         make_batch(2, &[(b"k2".to_vec(), Some(b"v2".to_vec()))]),
     )
     .unwrap();
-    s.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(1u32)).unwrap();
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"v1".to_vec()));
     assert!(read_confirmed(&s, b"k2").is_none());
-    s.handle_update_confirmed(SeqNo::from(2u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(2u32)).unwrap();
     assert_eq!(read_confirmed(&s, b"k2"), Some(b"v2".to_vec()));
 }
 
@@ -124,7 +132,7 @@ fn test_accumulated_cache_rebuilt_after_confirmation() {
 #[test]
 fn test_delete_tombstone_shadows_confirmed_state() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_confirmed_update(
         &app,
         make_batch(1, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]),
@@ -134,7 +142,7 @@ fn test_delete_tombstone_shadows_confirmed_state() {
     s.handle_preemptive_update(&app, make_batch(2, &[(b"k1".to_vec(), None)]))
         .unwrap();
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"v1".to_vec()));
-    s.handle_update_confirmed(SeqNo::from(2u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(2u32)).unwrap();
     assert!(read_confirmed(&s, b"k1").is_none());
 }
 
@@ -145,7 +153,7 @@ fn test_delete_tombstone_shadows_confirmed_state() {
 #[test]
 fn test_backtrack_discards_correct_entries() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     for (seq, key) in [(1, b"k1" as &[u8]), (2, b"k2"), (3, b"k3")] {
         s.handle_preemptive_update(
             &app,
@@ -154,7 +162,7 @@ fn test_backtrack_discards_correct_entries() {
         .unwrap();
     }
     s.backtrack(SeqNo::from(2u32)).unwrap();
-    assert_eq!(s.preemptive_seq_no(), SeqNo::from(1u32));
+    assert_eq!(s.next_preemptive_seq(), SeqNo::from(2u32));
     assert_eq!(s.pending_count(), 1);
     assert_eq!(s.pending_front_seq(), Some(SeqNo::from(1u32)));
     assert!(read_confirmed(&s, b"k1").is_none());
@@ -163,24 +171,24 @@ fn test_backtrack_discards_correct_entries() {
 #[test]
 fn test_backtrack_to_confirmed_returns_error() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(1, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]),
     )
     .unwrap();
-    s.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(1u32)).unwrap();
     let err = s.backtrack(SeqNo::from(1u32)).unwrap_err();
     assert!(matches!(
         err,
-        BacktrackError::BacktrackToConfirmedOrBelow { .. }
+        BacktrackError::BacktrackBelowConfirmed { .. }
     ));
 }
 
 #[test]
 fn test_backtrack_then_re_execute() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(1, &[(b"k1".to_vec(), Some(b"original".to_vec()))]),
@@ -197,8 +205,8 @@ fn test_backtrack_then_re_execute() {
         make_batch(2, &[(b"k2".to_vec(), Some(b"corrected".to_vec()))]),
     )
     .unwrap();
-    s.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
-    s.handle_update_confirmed(SeqNo::from(2u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(1u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(2u32)).unwrap();
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"original".to_vec()));
     assert_eq!(read_confirmed(&s, b"k2"), Some(b"corrected".to_vec()));
 }
@@ -210,7 +218,7 @@ fn test_backtrack_then_re_execute() {
 #[test]
 fn test_catch_up_clears_pending_and_updates_real_state() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(1, &[(b"speculative".to_vec(), Some(b"gone".to_vec()))]),
@@ -224,8 +232,8 @@ fn test_catch_up_clears_pending_and_updates_real_state() {
         ],
     );
     assert_eq!(results.len(), 2);
-    assert_eq!(s.confirmed_seq_no(), SeqNo::from(2u32));
-    assert_eq!(s.preemptive_seq_no(), SeqNo::from(2u32));
+    assert_eq!(s.next_confirmed_seq(), SeqNo::from(3u32));
+    assert_eq!(s.next_preemptive_seq(), SeqNo::from(3u32));
     assert_eq!(s.pending_count(), 0);
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"v1".to_vec()));
     assert_eq!(read_confirmed(&s, b"k2"), Some(b"v2".to_vec()));
@@ -239,7 +247,7 @@ fn test_catch_up_clears_pending_and_updates_real_state() {
 #[test]
 fn test_install_confirmed_state_resets_everything() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(1, &[(b"k1".to_vec(), Some(b"v1".to_vec()))]),
@@ -248,8 +256,8 @@ fn test_install_confirmed_state_resets_everything() {
     let mut new_inner = MapState::default();
     new_inner.update("default", b"external", b"value");
     s.install_confirmed_state(SeqNo::from(10u32), new_inner);
-    assert_eq!(s.confirmed_seq_no(), SeqNo::from(10u32));
-    assert_eq!(s.preemptive_seq_no(), SeqNo::from(10u32));
+    assert_eq!(s.next_confirmed_seq(), SeqNo::from(11u32));
+    assert_eq!(s.next_preemptive_seq(), SeqNo::from(11u32));
     assert_eq!(s.pending_count(), 0);
     assert_eq!(read_confirmed(&s, b"external"), Some(b"value".to_vec()));
     assert!(read_confirmed(&s, b"k1").is_none());
@@ -264,7 +272,7 @@ fn test_install_confirmed_state_resets_everything() {
 #[test]
 fn test_no_collision_parallel_correctness() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(
@@ -277,7 +285,7 @@ fn test_no_collision_parallel_correctness() {
         ),
     )
     .unwrap();
-    s.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(1u32)).unwrap();
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"v1".to_vec()));
     assert_eq!(read_confirmed(&s, b"k2"), Some(b"v2".to_vec()));
     assert_eq!(read_confirmed(&s, b"k3"), Some(b"v3".to_vec()));
@@ -288,7 +296,7 @@ fn test_no_collision_parallel_correctness() {
 #[test]
 fn test_write_write_collision_last_writer_wins() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(
@@ -300,7 +308,7 @@ fn test_write_write_collision_last_writer_wins() {
         ),
     )
     .unwrap();
-    s.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(1u32)).unwrap();
     // op1 executes after op0, so op1 overwrites op0.
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"v_op1".to_vec()));
 }
@@ -310,7 +318,7 @@ fn test_write_write_collision_last_writer_wins() {
 #[test]
 fn test_write_then_delete_collision() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(
@@ -322,7 +330,7 @@ fn test_write_then_delete_collision() {
         ),
     )
     .unwrap();
-    s.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(1u32)).unwrap();
     assert!(read_confirmed(&s, b"k1").is_none());
 }
 
@@ -331,7 +339,7 @@ fn test_write_then_delete_collision() {
 #[test]
 fn test_delete_then_write_collision() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     // Establish k1 in confirmed state.
     s.handle_confirmed_update(
         &app,
@@ -350,7 +358,7 @@ fn test_delete_then_write_collision() {
         ),
     )
     .unwrap();
-    s.handle_update_confirmed(SeqNo::from(2u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(2u32)).unwrap();
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"new".to_vec()));
 }
 
@@ -359,7 +367,7 @@ fn test_delete_then_write_collision() {
 #[test]
 fn test_mixed_collision_and_no_collision() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
         &app,
         make_batch(
@@ -373,7 +381,7 @@ fn test_mixed_collision_and_no_collision() {
         ),
     )
     .unwrap();
-    s.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(1u32)).unwrap();
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"v1".to_vec()));
     assert_eq!(read_confirmed(&s, b"k2"), Some(b"v2_second".to_vec()));
     assert_eq!(read_confirmed(&s, b"k3"), Some(b"v3".to_vec()));
@@ -394,19 +402,21 @@ fn test_collision_convergence_with_sequential() {
 
     // Path A: scalable executor.
     let app = MapApp;
-    let mut scalable = new_state();
+    let mut scalable = new_state_expecting(SeqNo::ONE);
     scalable
         .handle_preemptive_update(&app, make_batch(1, ops))
         .unwrap();
-    scalable.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
+    scalable
+        .handle_update_confirmed(&app, SeqNo::from(1u32))
+        .unwrap();
 
     // Path B: sequential single-threaded CRUD executor.
-    let mut sequential = CachingPreemptiveState::new((SeqNo::ZERO, MapState::default()));
+    let mut sequential = CachingPreemptiveState::new((SeqNo::ONE, MapState::default()));
     sequential
         .handle_preemptive_update(&app, make_batch(1, ops))
         .unwrap();
     sequential
-        .handle_update_confirmed(SeqNo::from(1u32))
+        .handle_update_confirmed(&app, SeqNo::from(1u32))
         .unwrap();
 
     // Both must agree on the confirmed state.
@@ -436,17 +446,21 @@ fn test_multi_batch_convergence() {
         (b"k3".to_vec(), Some(b"d".to_vec())),
     ];
 
-    let mut scalable = new_state();
+    let mut scalable = new_state_expecting(SeqNo::ONE);
     scalable
         .handle_preemptive_update(&app, make_batch(1, batch1))
         .unwrap();
     scalable
         .handle_preemptive_update(&app, make_batch(2, batch2))
         .unwrap();
-    scalable.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
-    scalable.handle_update_confirmed(SeqNo::from(2u32)).unwrap();
+    scalable
+        .handle_update_confirmed(&app, SeqNo::from(1u32))
+        .unwrap();
+    scalable
+        .handle_update_confirmed(&app, SeqNo::from(2u32))
+        .unwrap();
 
-    let mut sequential = CachingPreemptiveState::new((SeqNo::ZERO, MapState::default()));
+    let mut sequential = CachingPreemptiveState::new((SeqNo::ONE, MapState::default()));
     sequential
         .handle_preemptive_update(&app, make_batch(1, batch1))
         .unwrap();
@@ -454,10 +468,10 @@ fn test_multi_batch_convergence() {
         .handle_preemptive_update(&app, make_batch(2, batch2))
         .unwrap();
     sequential
-        .handle_update_confirmed(SeqNo::from(1u32))
+        .handle_update_confirmed(&app, SeqNo::from(1u32))
         .unwrap();
     sequential
-        .handle_update_confirmed(SeqNo::from(2u32))
+        .handle_update_confirmed(&app, SeqNo::from(2u32))
         .unwrap();
 
     for key in [b"k1" as &[u8], b"k2", b"k3"] {
@@ -476,7 +490,7 @@ fn test_multi_batch_convergence() {
 #[test]
 fn test_backtrack_after_collision_batch() {
     let app = MapApp;
-    let mut s = new_state();
+    let mut s = new_state_expecting(SeqNo::ONE);
 
     // seq=1: collision batch — two writes to k1.
     s.handle_preemptive_update(
@@ -509,8 +523,8 @@ fn test_backtrack_after_collision_batch() {
     .unwrap();
 
     // Confirm seq=1, then seq=2.
-    s.handle_update_confirmed(SeqNo::from(1u32)).unwrap();
-    s.handle_update_confirmed(SeqNo::from(2u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(1u32)).unwrap();
+    s.handle_update_confirmed(&app, SeqNo::from(2u32)).unwrap();
 
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"v1_b".to_vec()));
     assert_eq!(read_confirmed(&s, b"k2"), Some(b"v2_corrected".to_vec()));

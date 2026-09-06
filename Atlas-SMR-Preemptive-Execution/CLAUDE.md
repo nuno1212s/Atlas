@@ -130,6 +130,8 @@ The `Application` trait provides a default `update_batch` that calls `update` in
 - `atlas-smr-preemptive-execution` and `atlas-smr-execution` are **mutually exclusive** alternatives — their ID spaces never coexist in the same binary, so overlap is harmless.
 - Dual-state metrics: IDs 800–801 (original), 804–807 (added).
 - CRUD cache metrics: IDs 802–803 (original), 809–816 (added).
+- Scalable CRUD metrics: IDs 817–820.
+- Reorder buffer metrics: IDs 821–823, shared by **all three** executors (821 `REORDER_BUFFER_SIZE`, 822 `REORDER_STAGED_COUNT`, 823 `SPECULATION_FALLBACK_COUNT`).
 - IDs 808 is reserved/unused.
 - All IDs are in `src/metric.rs`. All metrics are fully wired up — no unconnected constants remain.
 
@@ -147,8 +149,23 @@ Both `PendingCachedUpdate` (CRUD cache, in `pending_state.rs`) and `PendingPerma
 **`Instant` in `PreemptiveToConfirmedMsg`:**
 `state_management.rs::PreemptiveToConfirmedMsg::UpdateConfirmed` and `UpdateConfirmedEmitAppState` carry an `Instant` set at send time in `comm_handles.rs`. This is propagated through the TBO queue inside the `Update` enum in `confirmed_worker/mod.rs` and consumed in `execute_and_advance` to record metric 800.
 
+**Sequence tracking is "next expected", not "last applied":**
+All three executors track the sequence number they are *waiting for* (`next_preemptive` / `next_confirmed`), not the last one applied. This is load-bearing, not cosmetic. `SeqNo::ZERO` is both the initial value and the first sequence number consensus assigns (febft is 0-indexed), so a "last applied" field cannot distinguish "nothing has run yet" from "sequence 0 has run" — under the old scheme the first batch of every run was classified as a backtrack, dropped, and its clients never got replies. The constructor's `SeqNo` argument therefore means "the next sequence expected", and `install_confirmed_state(seq, ..)` stores `seq.next()`.
+
+Compare sequence numbers with `Ord` (`.cmp()`), not `<`/`<=`: `SeqNo`'s `PartialOrd` routes through the wrap-aware `index()`, which reports a sequence more than `PERIOD + PERIOD/2` ahead as *behind*. Using `<` there misclassifies a far-future batch as a backtrack.
+
+**Out-of-order delivery and the reorder buffer:**
+The ordering protocol decides several consensus instances concurrently and emits `DecisionRequests` at pre-prepare completion, so preemptive batches reach the executor **out of sequence** as a matter of course (measured: up to 15 positions of displacement on a 4-replica PBFT run). The decision log sends each batch exactly once over a blocking channel, so batches are never *lost* — gaps always close.
+
+Each executor therefore holds early arrivals in a `staged: BTreeMap<SeqNo, UpdateBatch<..>>` reorder buffer instead of dropping them, and drains it forward after every successful execution. Dropping them (the old behaviour) wedged the pipeline permanently on the first out-of-order arrival: the head could never reach the dropped sequence, every later batch was rejected, and once the pending queue drained every confirmation hit `EmptyQueue` and no client got a reply again.
+
+`MAX_STAGED_BATCHES` (4096, defined in `single_threaded_crud/pending_state.rs` and shared by all three executors) bounds the buffer. Because batches are never dropped in transit, hitting the bound means a batch was genuinely lost, which is why it logs at ERROR rather than being handled silently.
+
 **Backtrack mechanics in the worker:**
-`handle_preemptive_update` in `mod.rs` returns `PreemptiveError::Backtracking(seq, batch)` when the incoming seq is behind the current head. The worker immediately calls `self.state.backtrack(seq)` to discard the stale pending entries, then retries the same batch as a fresh preemptive update.
+`handle_preemptive_update` in `mod.rs` returns `PreemptiveError::Backtracking(seq, batch)` when the incoming seq is behind the current head. The worker immediately calls `self.state.backtrack(seq)` to discard the stale pending entries, then retries the same batch as a fresh preemptive update. Backtracking also evicts buffered batches at or above the backtrack point — those decisions are being re-decided, so the buffered copies are stale.
+
+**Confirmation degrades instead of failing:**
+If a confirmation arrives for a batch that was never speculated (it was still in the reorder buffer), `handle_update_confirmed` executes it directly against the confirmed state rather than erroring. Speculation already built on top of it is invalid, so those pending entries are returned to the reorder buffer — the batches survive, only the computed deltas and replies are thrown away — and speculation restarts behind the confirmed batch. The executor degrades to baseline execution rather than halting.
 
 **For unordered reads, clone the Arc before borrowing self:**
 ```rust
@@ -197,3 +214,8 @@ Several `todo!()` placeholders remain in the dual-state design (this crate is un
 - `ConfirmedToPreemptiveMsg` state resync in preemptive worker
 
 The CRUD cache executor (`single_threaded_crud`) is fully implemented and tested.
+
+**Pre-existing flaky tests:** `single_thread_double_state::tests::execution::test_state_transfer_*`
+and `test_calc_*_states_converge` fail intermittently (roughly half the time) on the `todo!()`
+paths above, timing out after 5s on a channel `recv`. This predates the reorder-buffer work —
+verify against a stashed baseline before attributing a failure in that family to a change.

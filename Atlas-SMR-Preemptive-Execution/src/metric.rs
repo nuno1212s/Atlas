@@ -95,6 +95,26 @@ pub const SCALABLE_COLLISION_RATE_ID: usize = 819;
 pub const SCALABLE_OPS_PER_BATCH: &str = "SCALABLE_OPS_PER_BATCH";
 pub const SCALABLE_OPS_PER_BATCH_ID: usize = 820;
 
+// ---------------------------------------------------------------------------
+// Reorder buffer metrics (821-823)
+// ---------------------------------------------------------------------------
+
+/// Number of preemptive batches currently held in the reorder buffer, i.e. batches that
+/// arrived ahead of the sequence number the executor is waiting for. Consensus delivers
+/// batches out of order, so a non-zero value here is normal; a value that stops falling
+/// means a batch is genuinely missing rather than merely late.
+pub const REORDER_BUFFER_SIZE: &str = "REORDER_BUFFER_SIZE";
+pub const REORDER_BUFFER_SIZE_ID: usize = 821;
+
+/// Number of preemptive batches that arrived out of order and had to be buffered.
+pub const REORDER_STAGED_COUNT: &str = "REORDER_STAGED_COUNT";
+pub const REORDER_STAGED_COUNT_ID: usize = 822;
+
+/// Number of times speculation was abandoned and the executor fell back to executing a
+/// batch directly against the confirmed state. Expected to be zero in a healthy run.
+pub const SPECULATION_FALLBACK_COUNT: &str = "SPECULATION_FALLBACK_COUNT";
+pub const SPECULATION_FALLBACK_COUNT_ID: usize = 823;
+
 pub fn metrics() -> Vec<MetricRegistry> {
     vec![
         (
@@ -235,6 +255,27 @@ pub fn metrics() -> Vec<MetricRegistry> {
             SCALABLE_OPS_PER_BATCH.to_string(),
             MetricKind::Count,
             MetricLevel::Debug,
+        )
+            .into(),
+        (
+            REORDER_BUFFER_SIZE_ID,
+            REORDER_BUFFER_SIZE.to_string(),
+            MetricKind::Count,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            REORDER_STAGED_COUNT_ID,
+            REORDER_STAGED_COUNT.to_string(),
+            MetricKind::Counter,
+            MetricLevel::Info,
+        )
+            .into(),
+        (
+            SPECULATION_FALLBACK_COUNT_ID,
+            SPECULATION_FALLBACK_COUNT.to_string(),
+            MetricKind::Counter,
+            MetricLevel::Info,
         )
             .into(),
     ]
