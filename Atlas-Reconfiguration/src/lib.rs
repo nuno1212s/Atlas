@@ -2,7 +2,6 @@
 
 extern crate core;
 
-use anyhow::Context;
 use getset::Getters;
 use lazy_static::lazy_static;
 use std::sync::Arc;
@@ -200,6 +199,14 @@ where
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
+        // Wake as soon as the network reconfiguration protocol has a retry due rather
+        // than on a fixed interval, so its backoff can schedule the first retries in
+        // tens of milliseconds. `MESSAGE_SLEEP` stays the ceiling for an idle node.
+        let idle_timeout = self
+            .node
+            .time_until_next_retry()
+            .map_or(*MESSAGE_SLEEP, |wait| wait.min(*MESSAGE_SLEEP));
+
         channel::sync::sync_select! {
             recv(self.channel_rx) -> orchestrator_message => {
                 self.handle_message_from_orchestrator(orchestrator_message)
@@ -210,7 +217,7 @@ where
             recv_exhaust(self.network_node.incoming_stub().as_ref()) -> network_msg => {
                 self.handle_network_message(network_msg)
             }
-            default(*MESSAGE_SLEEP) => Ok(())
+            default(idle_timeout) => Ok(())
         }
     }
 

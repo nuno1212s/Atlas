@@ -24,6 +24,7 @@ use crate::conn_util::{
     ReadingBuffer, WritingBuffer, interrupted, would_block,
 };
 use crate::connections::{ByteMessageSendStub, Connections, HandleConnectionError};
+use atlas_common::backoff::{Backoff, BackoffPolicy, Budget, Jitter};
 use atlas_common::channel::oneshot::OneShotRx;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::node_id::{NodeId, NodeType};
@@ -34,6 +35,19 @@ use atlas_communication::byte_stub::{NodeIncomingStub, NodeStubController};
 use atlas_communication::lookup_table::MessageModule;
 use atlas_communication::message::{Header, WireMessage};
 use atlas_communication::reconfiguration::{NetworkInformationProvider, NodeInfo};
+
+/// Retry schedule for establishing an outgoing connection to a peer.
+///
+/// At a cold start every peer refuses at once, because listeners come up at different
+/// times; the first retries therefore need to be quick. A flat one-second wait used to
+/// park whatever was waiting on the connection for a full second behind a single
+/// `ConnectionRefused`. Equal jitter stops peers that failed together from retrying in
+/// lockstep, and the budget is expressed as elapsed time so that changing the schedule
+/// does not silently change how long we keep trying.
+const CONNECT_BACKOFF: BackoffPolicy =
+    BackoffPolicy::exponential(Duration::from_millis(25), Duration::from_secs(1))
+        .with_jitter(Jitter::Equal)
+        .with_budget(Budget::Elapsed(Duration::from_secs(180)));
 
 const DEFAULT_ALLOWED_CONCURRENT_JOINS: usize = 128;
 // Since the tokens will always start at 0, we limit the amount of concurrent joins we can have
@@ -677,8 +691,7 @@ impl ConnectionHandler {
                 //While if I'm a replica I'll connect to the replica addr (clients only have this addr)
                 let addr = addr.clone().into_inner();
 
-                const SECS: u64 = 1;
-                const RETRY: usize = 3 * 60;
+                let mut backoff = Backoff::new(CONNECT_BACKOFF);
 
                 let mut rng = prng::State::new();
 
@@ -693,90 +706,100 @@ impl ConnectionHandler {
                 // permanently running task, so channel send failures
                 // are tolerated
                 //
-                // 2) try to connect up to `RETRY` times, then announce
-                // failure
-                for _try in 0..RETRY {
-                    debug!("Attempting to connect to node {:?} with addr {:?} for the {} time", peer_id, addr, _try);
+                // 2) keep trying on the `CONNECT_BACKOFF` schedule until its budget
+                // runs out, then announce failure
+                //
+                // Every failure path inside the attempt leaves through `break 'attempt`
+                // so that it reaches the backoff below. Falling through with `continue`
+                // used to skip the wait entirely, turning a mid-handshake write error
+                // into a busy retry loop.
+                loop {
+                    'attempt: {
+                        debug!("Attempting to connect to node {:?} with addr {:?} for the {} time", peer_id, addr, backoff.attempts());
 
-                    match socket::connect_sync(addr.0) {
-                        Ok(mut sock) => {
-                            let info = quiet_unwrap!(bincode::serde::encode_to_vec(&own_info, bincode::config::standard()));
+                        match socket::connect_sync(addr.0) {
+                            Ok(mut sock) => {
+                                let info = quiet_unwrap!(bincode::serde::encode_to_vec(&own_info, bincode::config::standard()));
 
-                            // create header
-                            let wm =
-                                WireMessage::new(my_id, peer_id,
-                                                 MessageModule::Reconfiguration,
-                                                 Bytes::from(info), nonce,
-                                                 None, None);
+                                // create header
+                                let wm =
+                                    WireMessage::new(my_id, peer_id,
+                                                     MessageModule::Reconfiguration,
+                                                     Bytes::from(info), nonce,
+                                                     None, None);
 
-                            let write_info = WritingBuffer::init_from_message(wm).unwrap();
+                                let write_info = WritingBuffer::init_from_message(wm).unwrap();
 
-                            if let Err(err) = sock.write_all(write_info.current_header().as_ref().unwrap()) {
-                                warn!("{:?} // Error while writing header on connecting to {:?} addr {:?}: {:?}",
-                                    conn_handler.my_id(), peer_id, addr, err);
+                                if let Err(err) = sock.write_all(write_info.current_header().as_ref().unwrap()) {
+                                    warn!("{:?} // Error while writing header on connecting to {:?} addr {:?}: {:?}",
+                                        conn_handler.my_id(), peer_id, addr, err);
 
-                                continue;
-                            }
-
-                            match sock.write(write_info.message_module().as_ref().unwrap()) {
-                                Ok(size) => {
-                                    trace!("{:?} // Wrote {:?} bytes for message module while initializing connection", conn_handler.my_id(), size);
+                                    break 'attempt;
                                 }
-                                Err(err) => {
+
+                                match sock.write(write_info.message_module().as_ref().unwrap()) {
+                                    Ok(size) => {
+                                        trace!("{:?} // Wrote {:?} bytes for message module while initializing connection", conn_handler.my_id(), size);
+                                    }
+                                    Err(err) => {
+                                        warn!("{:?} // Error while writing payload on connecting to {:?} addr {:?}: {:?}",
+                                        conn_handler.my_id(), peer_id, addr, err);
+
+                                        break 'attempt;
+                                    }
+                                }
+
+                                if let Err(err) = sock.write_all(write_info.current_message()) {
                                     warn!("{:?} // Error while writing payload on connecting to {:?} addr {:?}: {:?}",
-                                    conn_handler.my_id(), peer_id, addr, err);
+                                        conn_handler.my_id(), peer_id, addr, err);
 
-                                    continue;
+                                    break 'attempt;
                                 }
-                            }
 
-                            if let Err(err) = sock.write_all(write_info.current_message()) {
-                                warn!("{:?} // Error while writing payload on connecting to {:?} addr {:?}: {:?}",
-                                    conn_handler.my_id(), peer_id, addr, err);
+                                if let Err(err) = sock.flush() {
+                                    warn!("{:?} // Error while flushing on connecting to {:?} addr {:?}: {:?}",
+                                        conn_handler.my_id(), peer_id, addr, err);
 
-                                continue;
-                            }
-
-                            if let Err(err) = sock.flush() {
-                                warn!("{:?} // Error while flushing on connecting to {:?} addr {:?}: {:?}",
-                                    conn_handler.my_id(), peer_id, addr, err);
-
-                                continue;
-                            }
-
-                            // TLS handshake; drop connection if it fails
-                            let sock = SecureSocketSync::new_plain(sock);
-
-                            info!("{:?} // Established connection to node {:?}", my_id, peer_id);
-
-                            let err = connections.handle_connection_established(other_node_info, SecureSocket::Sync(sock),
-                                                                                ReadingBuffer::init_with_size(Header::LENGTH),
-                                                                                None);
-
-                            match err {
-                                Ok(_) => {
-
-                                    conn_handler.done_connecting_to_node(&peer_id);
-
-                                    let _ = tx.send(Ok(()));
+                                    break 'attempt;
                                 }
-                                Err(err) => {
-                                    let _ = tx.send(Err(err.into()));
 
-                                    return;
+                                // TLS handshake; drop connection if it fails
+                                let sock = SecureSocketSync::new_plain(sock);
+
+                                info!("{:?} // Established connection to node {:?}", my_id, peer_id);
+
+                                let err = connections.handle_connection_established(other_node_info, SecureSocket::Sync(sock),
+                                                                                    ReadingBuffer::init_with_size(Header::LENGTH),
+                                                                                    None);
+
+                                match err {
+                                    Ok(_) => {
+
+                                        conn_handler.done_connecting_to_node(&peer_id);
+
+                                        let _ = tx.send(Ok(()));
+                                    }
+                                    Err(err) => {
+                                        let _ = tx.send(Err(err.into()));
+
+                                        return;
+                                    }
                                 }
-                            }
 
-                            return;
-                        }
-                        Err(err) => {
-                            warn!("{:?} // Error on connecting to {:?} addr {:?}: {:?}",
-                                conn_handler.my_id(), peer_id, addr, err);
+                                return;
+                            }
+                            Err(err) => {
+                                warn!("{:?} // Error on connecting to {:?} addr {:?}: {:?}",
+                                    conn_handler.my_id(), peer_id, addr, err);
+                            }
                         }
                     }
 
-                    // sleep for `SECS` seconds and retry
-                    std::thread::sleep(Duration::from_secs(SECS));
+                    // Wait out this failure. `sleep` returns false once the policy's
+                    // budget is spent, which is what ends the loop.
+                    if !backoff.sleep() {
+                        break;
+                    }
                 }
 
                 conn_handler.done_connecting_to_node(&peer_id);

@@ -2,12 +2,13 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::IntoFuture;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use futures::future::join_all;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
+use atlas_common::backoff::{Backoff, BackoffPolicy, Jitter};
 use atlas_common::channel::oneshot::OneShotRx;
 use atlas_common::channel::sync::ChannelSyncTx;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
@@ -15,7 +16,7 @@ use atlas_common::error::*;
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::SeqNo;
 use atlas_common::peer_addr::PeerAddr;
-use atlas_common::{async_runtime as rt, quiet_unwrap, threadpool};
+use atlas_common::{async_runtime as rt, threadpool};
 use atlas_communication::byte_stub::connections::NetworkConnectionController;
 use atlas_communication::message::Header;
 use atlas_communication::reconfiguration::{
@@ -431,10 +432,19 @@ pub struct GeneralNodeInfo {
     /// guarantee the remaining stragglers ever received our join/hello broadcast (e.g. they
     /// were simply still starting up) - see `retry_unconfirmed_bootstrap_nodes`.
     confirmed_nodes: BTreeSet<NodeId>,
-    /// Last time we (re)sent an introduction message to a given bootstrap node, to rate limit
-    /// retries in `retry_unconfirmed_bootstrap_nodes`.
-    last_introduction_attempt: BTreeMap<NodeId, Instant>,
+    /// Per-bootstrap-node retry schedule for `retry_unconfirmed_bootstrap_nodes`.
+    introduction_backoff: BTreeMap<NodeId, Backoff>,
 }
+
+/// Re-introduction schedule for bootstrap nodes that have not confirmed us yet.
+///
+/// The overwhelmingly common reason for a missing confirmation is that the peer simply
+/// has not finished starting up, so the first retries are quick; it then backs off to
+/// the flat `TIMEOUT_DUR` cadence this used to run at, so a genuinely absent node is not
+/// hammered. Jittered because replicas brought up together would otherwise retry in
+/// lockstep.
+const INTRODUCTION_BACKOFF: BackoffPolicy =
+    BackoffPolicy::exponential(Duration::from_millis(50), TIMEOUT_DUR).with_jitter(Jitter::Equal);
 
 impl GeneralNodeInfo {
     /// Attempt to iterate and move our current state forward
@@ -470,8 +480,16 @@ impl GeneralNodeInfo {
                     self.current_state = NetworkNodeState::StableMember;
                 }
 
-                let mut node_results = Vec::new();
-
+                // Start the connections but do not wait on them. This runs on the same
+                // thread as the reconfiguration message loop, so blocking on a handshake
+                // stops the node from answering anyone -- including peers already
+                // connected to us and waiting to be admitted. A peer whose listener is
+                // not up yet costs a full connect-retry cycle, and everything that
+                // arrives in the meantime is dropped as unauthenticated.
+                //
+                // The broadcast below therefore goes out best-effort: whoever is not
+                // reachable yet is picked up by `retry_unconfirmed_bootstrap_nodes`,
+                // which already exists for exactly this case.
                 for node in &known_nodes {
                     info!(
                         "{:?} // Connecting to node {:?}",
@@ -479,26 +497,19 @@ impl GeneralNodeInfo {
                         node
                     );
 
-                    let node_connection_results = network_node.connections().connect_to_node(*node);
-
-                    node_results.push((*node, node_connection_results));
-                }
-
-                for (node, conn_results) in node_results {
-                    let conn_results =
-                        quiet_unwrap!(conn_results, Ok(NetworkProtocolResponse::Nil));
-
-                    for conn_result in conn_results {
-                        if let Err(err) = conn_result.recv()? {
-                            error!("Error while connecting to another node: {:?}", err);
-                        }
+                    // Best effort, and deliberately not an early return: bailing out of
+                    // `Init` here would leave us to re-run this loop on the next
+                    // iteration, where every connection already in flight reports
+                    // `AlreadyConnectingToNode` -- stalling in `Init` until they all
+                    // settle, which is the blocking behaviour this replaced.
+                    if let Err(err) = network_node.connections().connect_to_node(*node) {
+                        warn!(
+                            "{:?} // Failed to start connecting to node {:?}: {:?}",
+                            self.network_view.node_id(),
+                            node,
+                            err
+                        );
                     }
-
-                    info!(
-                        "{:?} // Connected to node {:?}",
-                        self.network_view.node_id(),
-                        node
-                    );
                 }
 
                 let res = network_node
@@ -509,6 +520,11 @@ impl GeneralNodeInfo {
                     "Broadcasting reconfiguration network join message to known nodes {:?}, {:?}",
                     known_nodes, res
                 );
+
+                // Count that broadcast as the first introduction attempt, so the retry
+                // path schedules the next one a backoff away instead of firing again
+                // immediately on the very next iteration.
+                self.arm_introduction_retries(&known_nodes, Instant::now());
 
                 let _ = timeouts.request_timeout(
                     TimeoutID::SeqNoBased(seq.curr_seq()),
@@ -560,9 +576,10 @@ impl GeneralNodeInfo {
             .copied()
             .filter(|node| *node != self.network_view.node_id())
             .filter(|node| !self.confirmed_nodes.contains(node))
-            .filter(|node| match self.last_introduction_attempt.get(node) {
-                Some(last) => now.duration_since(*last) >= TIMEOUT_DUR,
-                None => true,
+            .filter(|node| {
+                self.introduction_backoff
+                    .get(node)
+                    .is_none_or(|backoff| backoff.is_ready_at(now))
             })
             .collect();
 
@@ -593,9 +610,43 @@ impl GeneralNodeInfo {
             .outgoing_stub()
             .broadcast_signed(join_message, missing.iter().copied());
 
-        for node in missing {
-            self.last_introduction_attempt.insert(node, now);
+        self.arm_introduction_retries(&missing, now);
+    }
+
+    /// Record an introduction attempt against `nodes`, advancing each one's backoff.
+    fn arm_introduction_retries(&mut self, nodes: &[NodeId], now: Instant) {
+        for node in nodes {
+            self.introduction_backoff
+                .entry(*node)
+                .or_insert_with(|| Backoff::new(INTRODUCTION_BACKOFF))
+                .record_attempt_at(now);
         }
+    }
+
+    /// How long the caller may idle before this node next has introduction work to do,
+    /// or `None` when every bootstrap node has confirmed us and there is nothing
+    /// pending.
+    ///
+    /// The reconfiguration loop feeds this to its select timeout. Without it, that
+    /// loop's fixed poll interval would become the floor for `INTRODUCTION_BACKOFF` --
+    /// scheduling a retry 50ms out is pointless if nobody looks for a second.
+    pub(super) fn time_until_next_retry(&self) -> Option<Duration> {
+        let now = Instant::now();
+
+        // Deliberately the same set `retry_unconfirmed_bootstrap_nodes` walks. If this
+        // reported a node that retry would not act on, it would report zero forever and
+        // spin the loop, because nothing would ever advance that node's backoff.
+        self.network_view
+            .bootstrap_nodes()
+            .iter()
+            .filter(|node| **node != self.network_view.node_id())
+            .filter(|node| !self.confirmed_nodes.contains(node))
+            .map(|node| {
+                self.introduction_backoff
+                    .get(node)
+                    .map_or(Duration::ZERO, |backoff| backoff.time_until_ready_at(now))
+            })
+            .min()
     }
 
     pub(super) fn handle_timeout<NT>(
@@ -1107,9 +1158,23 @@ impl GeneralNodeInfo {
                     "Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer",
                     triple.node_id()
                 );
+            } else {
+                info!(
+                    "Node {:?} has joined the network but we had already seen it before",
+                    triple.node_id()
+                );
+            }
 
-                let public_key = network_view.get_pk_for_node(&triple.node_id()).unwrap();
-
+            // Permit the connection whether or not this join introduced the node.
+            //
+            // "Already seen" says nothing about the *connection*: we routinely learn a
+            // node from another replica's `KnownNodesMessage` before its own join
+            // reaches us, and gating the permit on novelty then leaves its connection
+            // stuck unauthenticated -- every application message from it silently
+            // dropped, for the lifetime of the process, even though we accepted its
+            // join. `handle_hello_request` already permits unconditionally, and
+            // `upgrade_connection_to_known` is idempotent.
+            if let Some(public_key) = network_view.get_pk_for_node(&triple.node_id()) {
                 let connection_permitted =
                     ReconfigurationNetworkUpdateMessage::NodeConnectionPermitted(
                         triple.node_id(),
@@ -1119,8 +1184,8 @@ impl GeneralNodeInfo {
 
                 let _ = reconf_msg_handler.send_reconfiguration_update(connection_permitted);
             } else {
-                info!(
-                    "Node {:?} has joined the network but we had already seen it before",
+                error!(
+                    "Accepted a join from node {:?} but have no public key for it; cannot permit its connection",
                     triple.node_id()
                 );
             }
@@ -1158,7 +1223,7 @@ impl GeneralNodeInfo {
             current_state,
             network_update,
             confirmed_nodes: Default::default(),
-            last_introduction_attempt: Default::default(),
+            introduction_backoff: Default::default(),
         }
     }
 }

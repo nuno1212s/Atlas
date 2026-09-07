@@ -1,8 +1,9 @@
 use crate::metric::{
     CACHE_BACKTRACK_COUNT_ID, CACHE_CONFIRM_APPLICATION_TIME_ID, CACHE_DELTA_SIZE_ID,
     CACHE_OPS_PER_BATCH_ID, CACHE_PENDING_QUEUE_SIZE_ID, CACHE_PREEMPTIVE_EXECUTION_TIME_ID,
-    CACHE_REBUILD_TIME_ID, CACHE_SPECULATION_TO_CONFIRM_LATENCY_ID, REORDER_BUFFER_SIZE_ID,
-    REORDER_STAGED_COUNT_ID, SPECULATION_FALLBACK_COUNT_ID,
+    CACHE_REBUILD_TIME_ID, CACHE_SPECULATION_TO_CONFIRM_LATENCY_ID,
+    OPERATIONS_EXECUTED_PER_SECOND_ID, REORDER_BUFFER_SIZE_ID, REORDER_STAGED_COUNT_ID,
+    SPECULATION_FALLBACK_COUNT_ID,
 };
 use crate::single_threaded_crud::caching_state::{
     AccumulatedCache, CachingState, apply_delta_to_state, merge_delta_into,
@@ -261,6 +262,11 @@ where
 
                 metric_increment(SPECULATION_FALLBACK_COUNT_ID, Some(1));
 
+                // Counted here rather than inside execute_directly, which consumes the
+                // batch. This path still commits every operation in it, so it counts
+                // towards throughput exactly like the speculated path below.
+                metric_increment(OPERATIONS_EXECUTED_PER_SECOND_ID, Some(batch.len() as u64));
+
                 // Anything already speculated raced ahead of a batch that never ran, so its
                 // deltas are computed against a base state that is about to change. Return
                 // those batches to the reorder buffer — their decisions are still owed
@@ -283,6 +289,15 @@ where
         }
 
         let update = self.pending.pop_front().unwrap();
+
+        // Throughput is counted at confirmation, not at speculation: a backtrack discards
+        // speculative work and re-runs it, so counting there would report operations that
+        // never reached a client and would not mean the same thing as the baseline
+        // executor's identically-named counter.
+        metric_increment(
+            OPERATIONS_EXECUTED_PER_SECOND_ID,
+            Some(update.batch.len() as u64),
+        );
 
         metric_duration(
             CACHE_SPECULATION_TO_CONFIRM_LATENCY_ID,

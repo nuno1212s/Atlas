@@ -725,9 +725,8 @@ macro_rules! __atlas_recv_emit {
             // — and only the first time round.
             $crate::__atlas_recv_emit!(@deadline __atlas_deadline, $($mode)*);
 
-            if !$crate::__atlas_park!(__atlas_park_state, __atlas_deadline, [$($rx),*]) {
-                break $crate::__atlas_recv_emit!(@fallback $($mode)*);
-            }
+            $crate::__atlas_recv_emit!(
+                @park __atlas_park_state, __atlas_deadline, [$($rx),*], $($mode)*);
         }
     }};
 
@@ -738,10 +737,26 @@ macro_rules! __atlas_recv_emit {
         }
     };
 
-    (@fallback no_timeout) => {
-        unreachable!("parking reported a deadline it was never given")
+    // Without a `default` arm the parker is never given a deadline, and neither
+    // backend can report one it does not have — so there is no value to leave
+    // the loop with, and this arm emits no `break` at all.
+    //
+    // The obvious spelling, a single `break $crate::__atlas_recv_emit!(@fallback
+    // ..)` with `unreachable!()` behind the no-timeout fallback, is what this
+    // split exists to avoid: `break <diverging>` is a `break` that can never be
+    // reached through its own operand, and `unreachable_code` flags it — inside
+    // the macro, so every `sync_select!` call site in every crate inherits the
+    // warning and has nothing local to fix.
+    (@park $state:ident, $deadline:ident, [$($rx:expr),*], no_timeout) => {
+        if !$crate::__atlas_park!($state, $deadline, [$($rx),*]) {
+            unreachable!("parking reported a deadline it was never given")
+        }
     };
-    (@fallback timeout($timeout:expr, $default:expr)) => { $default };
+    (@park $state:ident, $deadline:ident, [$($rx:expr),*], timeout($timeout:expr, $default:expr)) => {
+        if !$crate::__atlas_park!($state, $deadline, [$($rx),*]) {
+            break $default;
+        }
+    };
 }
 
 /// Parking for `crossbeam_channel`, which can wait on the channels themselves.

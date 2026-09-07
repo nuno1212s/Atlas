@@ -52,6 +52,7 @@ use tracing::{debug, instrument};
 pub use flume as __flume;
 
 pub mod async_runtime;
+pub mod backoff;
 pub mod channel;
 pub mod circuit_breaker;
 pub mod collections;

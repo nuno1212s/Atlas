@@ -132,16 +132,43 @@ The `Application` trait provides a default `update_batch` that calls `update` in
 - CRUD cache metrics: IDs 802–803 (original), 809–816 (added).
 - Scalable CRUD metrics: IDs 817–820.
 - Reorder buffer metrics: IDs 821–823, shared by **all three** executors (821 `REORDER_BUFFER_SIZE`, 822 `REORDER_STAGED_COUNT`, 823 `SPECULATION_FALLBACK_COUNT`).
-- IDs 808 is reserved/unused.
+- Shared throughput counters: IDs 824–825, emitted by **all three** executors.
+- ID 808 is reserved/unused.
 - All IDs are in `src/metric.rs`. All metrics are fully wired up — no unconnected constants remain.
+
+**824/825 deliberately duplicate `atlas-smr-execution`'s names, not its IDs:**
+`OPERATIONS_EXECUTED_PER_SECOND` (824) and `UNORDERED_OPERATIONS_EXECUTED_PER_SECOND` (825)
+carry the same *names* as IDs 804/805 in `atlas-smr-execution`. Only one execution crate is
+linked into any binary, so the names cannot collide at runtime — and sharing them is the point:
+that pair is the headline throughput series every suite dashboard plots, so before this existed
+a preemptive run left the panel blank and crud_perf could not be compared with
+microbenchmarks-async. The IDs differ only because 804/805 were already taken here by
+`DS_PREEMPTIVE_EXECUTION_TIME` and `DS_SPECULATION_TO_CONFIRM_LATENCY`; the ID is a registry
+slot, the name is what reaches InfluxDB.
+
+Both are registered as three-tuples, so they default to `MetricLevel::Info` — matching
+`atlas-smr-execution` and surviving any `with_metric_level` a suite configures (a metric is kept
+when its own level is at or above the binary's, and Info is the highest).
+
+**Throughput is counted on the confirmation path, never on speculation.** A speculatively
+executed batch can be discarded and re-run after a backtrack, and the scalable executor
+re-executes colliding operations *within* a batch. Counting either would report work that never
+reached a client and would stop meaning what the identically-named baseline counter means:
+operations whose results were actually delivered. The `SPECULATION_FALLBACK_COUNT` path counts
+too — it commits the batch just as the speculated path does, only without the speculation.
 
 **Metric wiring locations:**
 - `confirmed_worker/mod.rs` — 800 `CONFIRMED_WORKER_LATENCY` (recorded per `execute_and_advance` call, using `Instant` stored in `Update` enum and `PreemptiveToConfirmedMsg`)
-- `confirmed_requests.rs` — 801 `CONFIRM_EXECUTION_TIME` (wraps `application.update_batch` in `execute_update`)
-- `pending_state.rs` — 802, 803, 809, 810, 811, 812, 813, 815 (all CRUD cache state-machine metrics)
-- `single_threaded_crud/mod.rs` — 814, 816 (unordered execution time and enqueue-to-execute latency)
+- `confirmed_requests.rs` — 801 `CONFIRM_EXECUTION_TIME` (wraps `application.update_batch` in `execute_update`), plus 824 in `execute_update` and 825 in `execute_read` (dual-state)
+- `pending_state.rs` — 802, 803, 809, 810, 811, 812, 813, 815 (all CRUD cache state-machine metrics), plus 824 on both confirmation routes: the speculated one (`update.batch.len()` after the pop) and the `SPECULATION_FALLBACK_COUNT` one (`batch.len()`, read before `execute_directly` consumes it)
+- `scalable_crud/pending_state.rs` — 817–820 and the same two 824 sites
+- `single_threaded_crud/mod.rs` — 814, 816 (unordered execution time and enqueue-to-execute latency), plus 825 in the `ExecuteUnordered` arm
+- `scalable_crud/mod.rs` — 825 in the `ExecuteUnordered` arm
 - `preemptive_requests.rs` — 804, 805, 807 (dual-state preemptive execution, speculation-to-confirm latency, ops per batch)
 - `preemptive_worker/mod.rs` — 806 `DS_BACKTRACK_COUNT` (in `handle_backtracking_request`)
+
+Each 824/825 site reads the batch length *before* handing the batch to the application or to
+`into_inner()`, since both consume it.
 
 **`speculated_at: Instant` propagation for latency metrics:**
 Both `PendingCachedUpdate` (CRUD cache, in `pending_state.rs`) and `PendingPermanentUpdate` (dual-state, in `preemptive_requests.rs`) carry a `speculated_at: Instant` field set when the update enters the pending queue. This field is consumed in `handle_update_confirmed` to record the speculation-to-confirmation latency.
