@@ -115,6 +115,34 @@ pub const REORDER_STAGED_COUNT_ID: usize = 822;
 pub const SPECULATION_FALLBACK_COUNT: &str = "SPECULATION_FALLBACK_COUNT";
 pub const SPECULATION_FALLBACK_COUNT_ID: usize = 823;
 
+// ---------------------------------------------------------------------------
+// Shared execution throughput (824-825)
+// ---------------------------------------------------------------------------
+//
+// These two deliberately carry the *same names* as their counterparts in
+// `atlas-smr-execution` (IDs 804/805 there). Only one execution crate is ever linked
+// into a binary, so the names cannot collide at runtime — and sharing them is the
+// point: `OPERATIONS_EXECUTED_PER_SECOND` is the headline throughput series every
+// suite dashboard plots, so a preemptive executor that did not emit it left the panel
+// blank and made crud_perf incomparable with microbenchmarks-async.
+//
+// Counted on the **confirmation** path, never on the speculative one. A speculatively
+// executed batch may be discarded and re-executed after a backtrack, so counting
+// speculation would inflate throughput by exactly the work that was thrown away, and
+// the number would no longer mean what it means for the baseline executor: operations
+// whose results actually reached a client.
+
+/// Ordered operations whose execution has been confirmed by consensus, counted per
+/// one-second collection window. Same name and meaning as
+/// `atlas_smr_execution::metric::OPERATIONS_EXECUTED_PER_SECOND`.
+pub const OPERATIONS_EXECUTED_PER_SECOND: &str = "OPERATIONS_EXECUTED_PER_SECOND";
+pub const OPERATIONS_EXECUTED_PER_SECOND_ID: usize = 824;
+
+/// Unordered (read-only) operations executed, counted per one-second collection
+/// window. Same name and meaning as `atlas_smr_execution::metric::UNORDERED_OPS_PER_SECOND`.
+pub const UNORDERED_OPS_PER_SECOND: &str = "UNORDERED_OPERATIONS_EXECUTED_PER_SECOND";
+pub const UNORDERED_OPS_PER_SECOND_ID: usize = 825;
+
 pub fn metrics() -> Vec<MetricRegistry> {
     vec![
         (
@@ -276,6 +304,22 @@ pub fn metrics() -> Vec<MetricRegistry> {
             SPECULATION_FALLBACK_COUNT.to_string(),
             MetricKind::Counter,
             MetricLevel::Info,
+        )
+            .into(),
+        // Three-tuple, so level defaults to Info — matching how atlas-smr-execution
+        // registers the same two names. Info is the highest level and a metric is kept
+        // when its own level is at or above the binary's, so these survive every
+        // `with_metric_level` a suite might configure.
+        (
+            OPERATIONS_EXECUTED_PER_SECOND_ID,
+            OPERATIONS_EXECUTED_PER_SECOND.to_string(),
+            MetricKind::Counter,
+        )
+            .into(),
+        (
+            UNORDERED_OPS_PER_SECOND_ID,
+            UNORDERED_OPS_PER_SECOND.to_string(),
+            MetricKind::Counter,
         )
             .into(),
     ]

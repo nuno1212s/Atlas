@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
 use crate::exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle};
-use crate::metric::{CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID, CACHE_UNORDERED_EXECUTION_TIME_ID};
+use crate::metric::{
+    CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID, CACHE_UNORDERED_EXECUTION_TIME_ID,
+    UNORDERED_OPS_PER_SECOND_ID,
+};
 use crate::single_threaded_crud::pending_state::{
     CachingPreemptiveState, PreemptiveError, PreemptiveOutcome,
 };
@@ -10,7 +13,7 @@ use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::quiet_unwrap;
 use atlas_core::execution::requests::{ReplyBatch, UpdateBatch, UpdateReply};
-use atlas_metrics::metrics::metric_duration;
+use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_smr_application::app::{Reply, Request};
 use atlas_smr_application::state::monolithic_state::{
     AppStateMessage, InstallStateMessage, MonolithicState,
@@ -276,6 +279,8 @@ where
                 let application = self.application.clone();
                 let state: &S = self.state.confirmed_state();
                 let exec_start = std::time::Instant::now();
+                // Read before into_inner() consumes the batch.
+                let operations = unordered_batch.len() as u64;
                 let replies: ReplyBatch<Reply<A, S>> = {
                     let pool: &ThreadPool = &self.read_thread_pool;
                     pool.install(|| {
@@ -292,6 +297,7 @@ where
                     })
                 };
                 metric_duration(CACHE_UNORDERED_EXECUTION_TIME_ID, exec_start.elapsed());
+                metric_increment(UNORDERED_OPS_PER_SECOND_ID, Some(operations));
                 T::execution_finished::<A::AppData, NT>(self.node.clone(), None, replies);
             }
         }

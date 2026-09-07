@@ -1,7 +1,7 @@
 use crate::metric::{
-    REORDER_BUFFER_SIZE_ID, REORDER_STAGED_COUNT_ID, SCALABLE_COLLISION_COUNT_ID,
-    SCALABLE_COLLISION_RATE_ID, SCALABLE_OPS_PER_BATCH_ID, SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID,
-    SPECULATION_FALLBACK_COUNT_ID,
+    OPERATIONS_EXECUTED_PER_SECOND_ID, REORDER_BUFFER_SIZE_ID, REORDER_STAGED_COUNT_ID,
+    SCALABLE_COLLISION_COUNT_ID, SCALABLE_COLLISION_RATE_ID, SCALABLE_OPS_PER_BATCH_ID,
+    SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID, SPECULATION_FALLBACK_COUNT_ID,
 };
 use crate::scalable_crud::execution_unit::{
     CollisionState, ParallelExecutionUnit, progress_collision_state,
@@ -340,6 +340,11 @@ where
 
                 metric_increment(SPECULATION_FALLBACK_COUNT_ID, Some(1));
 
+                // Counted here rather than inside execute_directly, which consumes the
+                // batch. This path still commits every operation in it, so it counts
+                // towards throughput exactly like the speculated path below.
+                metric_increment(OPERATIONS_EXECUTED_PER_SECOND_ID, Some(batch.len() as u64));
+
                 // Anything already speculated raced ahead of a batch that never ran, so its
                 // deltas are computed against a base state that is about to change. Return
                 // those batches to the reorder buffer and rebuild speculation behind this one.
@@ -361,6 +366,15 @@ where
         }
 
         let update = self.pending.pop_front().unwrap();
+
+        // Counted at confirmation rather than at speculation — see the note on the same
+        // increment in `single_threaded_crud::pending_state`. It matters more here: the
+        // scalable executor also re-executes colliding operations *within* a batch, and
+        // counting each execution would inflate throughput by the collision rate.
+        metric_increment(
+            OPERATIONS_EXECUTED_PER_SECOND_ID,
+            Some(update.batch.len() as u64),
+        );
 
         apply_delta_to_state(&mut self.confirmed_state, &update.delta);
         self.accumulated_cache = rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle};
+use crate::metric::UNORDERED_OPS_PER_SECOND_ID;
 use crate::scalable_crud::pending_state::{PreemptiveError, ScalableCachingPreemptiveState};
 use crate::single_threaded_crud::pending_state::PreemptiveOutcome;
 use atlas_common::channel;
@@ -8,6 +9,7 @@ use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::quiet_unwrap;
 use atlas_core::execution::requests::{ReplyBatch, UpdateBatch, UpdateReply};
+use atlas_metrics::metrics::metric_increment;
 use atlas_smr_application::app::{Reply, Request};
 use atlas_smr_application::state::monolithic_state::{
     AppStateMessage, InstallStateMessage, MonolithicState,
@@ -279,6 +281,8 @@ where
             PreemptiveExecutionRequest::ExecuteUnordered(unordered_batch) => {
                 let application = self.application.clone();
                 let state: &S = self.state.confirmed_state();
+                // Read before into_inner() consumes the batch.
+                let operations = unordered_batch.len() as u64;
                 let replies: ReplyBatch<Reply<A, S>> = {
                     let pool: &ThreadPool = &self.read_thread_pool;
                     pool.install(|| {
@@ -294,6 +298,7 @@ where
                             .into()
                     })
                 };
+                metric_increment(UNORDERED_OPS_PER_SECOND_ID, Some(operations));
                 T::execution_finished::<A::AppData, NT>(self.node.clone(), None, replies);
             }
         }

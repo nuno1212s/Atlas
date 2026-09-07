@@ -1,7 +1,9 @@
-use crate::metric::CONFIRM_EXECUTION_TIME_ID;
+use crate::metric::{
+    CONFIRM_EXECUTION_TIME_ID, OPERATIONS_EXECUTED_PER_SECOND_ID, UNORDERED_OPS_PER_SECOND_ID,
+};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::execution::requests::{ReplyBatch, UnorderedUpdateBatch, UpdateBatch, UpdateReply};
-use atlas_metrics::metrics::metric_duration;
+use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_smr_application::app::{Application, Reply, Request};
 use rayon::ThreadPool;
 use rayon::prelude::*;
@@ -35,10 +37,17 @@ impl<S> ConfirmedRequestPipeline<S> {
         A: Application<S>,
     {
         let update_seq = update_batch.seq_no();
+        // Read before the batch is moved into the application.
+        let operations = update_batch.len() as u64;
 
         let start = Instant::now();
         let reply_batch = application.update_batch(&mut self.confirmed_state, update_batch);
         metric_duration(CONFIRM_EXECUTION_TIME_ID, start.elapsed());
+
+        // This is the dual-state executor's confirmation point: the preemptive worker's
+        // speculative run against the shadow state is deliberately not counted, since a
+        // backtrack throws it away and re-executes here.
+        metric_increment(OPERATIONS_EXECUTED_PER_SECOND_ID, Some(operations));
 
         self.current_confirmed_seq_no = update_seq;
 
@@ -55,7 +64,9 @@ impl<S> ConfirmedRequestPipeline<S> {
         A: Application<S>,
         S: Send + Sync,
     {
-        thread_pool.install(|| {
+        let operations = update_batch.len() as u64;
+
+        let replies = thread_pool.install(|| {
             update_batch
                 .into_inner()
                 .into_par_iter()
@@ -68,7 +79,11 @@ impl<S> ConfirmedRequestPipeline<S> {
                 })
                 .collect::<Vec<_>>()
                 .into()
-        })
+        });
+
+        metric_increment(UNORDERED_OPS_PER_SECOND_ID, Some(operations));
+
+        replies
     }
 
     pub fn take_state_snapshot(&self) -> (SeqNo, S)
