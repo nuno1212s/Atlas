@@ -3,7 +3,7 @@
 use crate::exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle};
 use crate::metric::{
     CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID, CACHE_UNORDERED_EXECUTION_TIME_ID,
-    UNORDERED_OPS_PER_SECOND_ID,
+    CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, UNORDERED_OPS_PER_SECOND_ID, record_confirmation,
 };
 use crate::single_threaded_crud::pending_state::{
     CachingPreemptiveState, PreemptiveError, PreemptiveOutcome,
@@ -212,10 +212,14 @@ where
                 }
             }
 
-            PreemptiveExecutionRequest::UpdateBatch(batch, _instant) => {
+            // A directly-finalized batch: never speculated, so its execution runs here on
+            // the confirmation path and `speculated` is false by construction.
+            PreemptiveExecutionRequest::UpdateBatch(batch, instant) => {
+                metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, instant.elapsed());
                 let seq = batch.sequence_number();
                 match self.state.handle_confirmed_update(&self.application, batch) {
                     Ok(replies) => {
+                        record_confirmation(instant, false);
                         T::execution_finished::<A::AppData, NT>(
                             self.node.clone(),
                             Some(seq),
@@ -226,10 +230,12 @@ where
                 }
             }
 
-            PreemptiveExecutionRequest::UpdateBatchAndGetAppstate(batch, _instant) => {
+            PreemptiveExecutionRequest::UpdateBatchAndGetAppstate(batch, instant) => {
+                metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, instant.elapsed());
                 let seq = batch.sequence_number();
                 match self.state.handle_confirmed_update(&self.application, batch) {
                     Ok(replies) => {
+                        record_confirmation(instant, false);
                         T::execution_finished::<A::AppData, NT>(
                             self.node.clone(),
                             Some(seq),
@@ -246,9 +252,15 @@ where
                 self.handle_preemptive_update(batch);
             }
 
-            PreemptiveExecutionRequest::PreemptiveUpdateFinalized(seq) => {
+            PreemptiveExecutionRequest::PreemptiveUpdateFinalized(seq, instant) => {
+                metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, instant.elapsed());
+                // Read before confirming, which consumes the entry: a pending head at this
+                // seq is exactly the condition under which `handle_update_confirmed` serves
+                // pre-computed replies rather than falling back to inline execution.
+                let speculated = self.state.pending_front_seq() == Some(seq);
                 match self.state.handle_update_confirmed(&self.application, seq) {
                     Ok(replies) => {
+                        record_confirmation(instant, speculated);
                         T::execution_finished::<A::AppData, NT>(
                             self.node.clone(),
                             Some(seq),
@@ -259,9 +271,12 @@ where
                 }
             }
 
-            PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(seq) => {
+            PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(seq, instant) => {
+                metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, instant.elapsed());
+                let speculated = self.state.pending_front_seq() == Some(seq);
                 match self.state.handle_update_confirmed(&self.application, seq) {
                     Ok(replies) => {
+                        record_confirmation(instant, speculated);
                         T::execution_finished::<A::AppData, NT>(
                             self.node.clone(),
                             Some(seq),

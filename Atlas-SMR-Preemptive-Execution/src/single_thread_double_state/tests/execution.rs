@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::time::Duration;
 /// Worker integration tests.
 ///
 /// These tests exercise the preemptive worker and confirmed worker as standalone
@@ -19,8 +21,7 @@
 /// (i.e. all previously preemptive-executed batches have been confirmed). Sending
 /// a `ConfirmedUpdate(N+1)` while `PreemptiveUpdate(N)` is still unconfirmed is
 /// illegal and would corrupt the pending queue's seq pointer.
-use std::sync::Arc;
-use std::time::Duration;
+use std::time::Instant;
 
 use super::test_fixtures::{TestData, make_batch};
 use crate::single_thread_double_state::comm_handles::initialize_shared_channels;
@@ -197,7 +198,12 @@ fn test_preemptive_then_confirmed_emits_correct_state() {
 
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(1u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(1u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
 
     let msg = state_rx
@@ -227,13 +233,19 @@ fn test_multiple_preemptive_updates_confirmed_in_order() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(1u32),
+            Instant::now(),
         ))
         .unwrap();
 
     // Confirm seq 2 and request state emission
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(2u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(2u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
 
     let msg = state_rx
@@ -258,6 +270,7 @@ fn test_confirmed_update_emits_correct_state() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_batch(1, &[42]),
+            Instant::now(),
         ))
         .unwrap();
 
@@ -277,13 +290,17 @@ fn test_multiple_confirmed_updates_accumulate() {
     // Both batches have no prior pending preemptive work — legal.
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::ConfirmedUpdate(make_batch(1, &[5])))
+        .send(PreemptiveWorkMessage::ConfirmedUpdate(
+            make_batch(1, &[5]),
+            Instant::now(),
+        ))
         .unwrap();
 
     preemptive
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_batch(2, &[10]),
+            Instant::now(),
         ))
         .unwrap();
 
@@ -315,6 +332,7 @@ fn test_confirmed_update_after_all_preemptive_confirmed() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(1u32),
+            Instant::now(),
         ))
         .unwrap();
 
@@ -323,6 +341,7 @@ fn test_confirmed_update_after_all_preemptive_confirmed() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_batch(2, &[5]),
+            Instant::now(),
         ))
         .unwrap();
 
@@ -350,12 +369,14 @@ fn test_confirmed_update_after_multiple_preemptive_confirmed() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(1u32),
+            Instant::now(),
         ))
         .unwrap();
     preemptive
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(2u32),
+            Instant::now(),
         ))
         .unwrap();
 
@@ -364,6 +385,7 @@ fn test_confirmed_update_after_multiple_preemptive_confirmed() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_batch(3, &[20]),
+            Instant::now(),
         ))
         .unwrap();
 
@@ -390,13 +412,17 @@ fn test_interleaved_preemptive_and_confirmed_blocks() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(1u32),
+            Instant::now(),
         ))
         .unwrap();
 
     // Block 2: directly-finalized seq 2 (queue is empty — legal).
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::ConfirmedUpdate(make_batch(2, &[5])))
+        .send(PreemptiveWorkMessage::ConfirmedUpdate(
+            make_batch(2, &[5]),
+            Instant::now(),
+        ))
         .unwrap();
 
     // Block 3: preemptive seq 3 speculated and confirmed; also request state emission.
@@ -409,7 +435,12 @@ fn test_interleaved_preemptive_and_confirmed_blocks() {
         .unwrap();
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(3u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(3u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
 
     let msg = state_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
@@ -431,17 +462,24 @@ fn test_multiple_alternating_preemptive_and_confirmed_blocks() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(1u32),
+            Instant::now(),
         ))
         .unwrap();
 
     // Block 2: confirmed seq 2 and 3
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::ConfirmedUpdate(make_batch(2, &[2])))
+        .send(PreemptiveWorkMessage::ConfirmedUpdate(
+            make_batch(2, &[2]),
+            Instant::now(),
+        ))
         .unwrap();
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::ConfirmedUpdate(make_batch(3, &[3])))
+        .send(PreemptiveWorkMessage::ConfirmedUpdate(
+            make_batch(3, &[3]),
+            Instant::now(),
+        ))
         .unwrap();
 
     // Block 3: preemptive seq 4 and 5
@@ -457,12 +495,14 @@ fn test_multiple_alternating_preemptive_and_confirmed_blocks() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(4u32),
+            Instant::now(),
         ))
         .unwrap();
     preemptive
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(5u32),
+            Instant::now(),
         ))
         .unwrap();
 
@@ -471,6 +511,7 @@ fn test_multiple_alternating_preemptive_and_confirmed_blocks() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_batch(6, &[6]),
+            Instant::now(),
         ))
         .unwrap();
 
@@ -519,6 +560,7 @@ fn test_state_transfer_then_confirmed_update() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_batch(6, &[10]),
+            Instant::now(),
         ))
         .unwrap();
 
@@ -578,7 +620,12 @@ fn test_state_transfer_preemptive_worker_then_confirm() {
 
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(6u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(6u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
 
     let msg = state_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
@@ -642,7 +689,12 @@ fn test_state_transfer_and_catchup_then_resume() {
         .unwrap();
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(5u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(5u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
 
     let msg = state_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
@@ -687,7 +739,12 @@ fn test_backtrack_reexecutes_on_fresh_confirmed_state() {
     // Confirm seq 1 and request state
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(1u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(1u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
 
     let msg = state_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
@@ -722,7 +779,12 @@ fn test_update_ahead_of_head_is_dropped_and_worker_continues() {
         .unwrap();
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(1u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(1u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
 
     let msg = state_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
@@ -979,17 +1041,24 @@ fn test_calc_sequential_ops_states_converge() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(1u32),
+            Instant::now(),
         ))
         .unwrap();
     preemptive
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(2u32),
+            Instant::now(),
         ))
         .unwrap();
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(3u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(3u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
     let result_a = state_rx_a
         .recv_timeout(RECV_TIMEOUT)
@@ -1001,15 +1070,17 @@ fn test_calc_sequential_ops_states_converge() {
     for (seq, op) in [(1, CalcOp::Add(10)), (2, CalcOp::Mul(3))] {
         preemptive_b
             .preemptive_exec_handle()
-            .send(PreemptiveWorkMessage::ConfirmedUpdate(make_calc_batch(
-                seq, op,
-            )))
+            .send(PreemptiveWorkMessage::ConfirmedUpdate(
+                make_calc_batch(seq, op),
+                Instant::now(),
+            ))
             .unwrap();
     }
     preemptive_b
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_calc_batch(3, CalcOp::Sub(5)),
+            Instant::now(),
         ))
         .unwrap();
     let result_b = state_rx_b
@@ -1049,12 +1120,14 @@ fn test_calc_mixed_preemptive_and_confirmed_converge() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(1u32),
+            Instant::now(),
         ))
         .unwrap();
     preemptive
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(2u32),
+            Instant::now(),
         ))
         .unwrap();
 
@@ -1063,6 +1136,7 @@ fn test_calc_mixed_preemptive_and_confirmed_converge() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_calc_batch(3, CalcOp::Sub(5)),
+            Instant::now(),
         ))
         .unwrap();
     let result_a = state_rx_a
@@ -1074,22 +1148,23 @@ fn test_calc_mixed_preemptive_and_confirmed_converge() {
 
     preemptive_b
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::ConfirmedUpdate(make_calc_batch(
-            1,
-            CalcOp::Add(10),
-        )))
+        .send(PreemptiveWorkMessage::ConfirmedUpdate(
+            make_calc_batch(1, CalcOp::Add(10)),
+            Instant::now(),
+        ))
         .unwrap();
     preemptive_b
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::ConfirmedUpdate(make_calc_batch(
-            2,
-            CalcOp::Mul(3),
-        )))
+        .send(PreemptiveWorkMessage::ConfirmedUpdate(
+            make_calc_batch(2, CalcOp::Mul(3)),
+            Instant::now(),
+        ))
         .unwrap();
     preemptive_b
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_calc_batch(3, CalcOp::Sub(5)),
+            Instant::now(),
         ))
         .unwrap();
     let result_b = state_rx_b
@@ -1134,7 +1209,12 @@ fn test_calc_backtrack_states_converge() {
         .unwrap();
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(1u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(1u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
     let result_a = state_rx_a
         .recv_timeout(RECV_TIMEOUT)
@@ -1147,6 +1227,7 @@ fn test_calc_backtrack_states_converge() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_calc_batch(1, CalcOp::Add(7)),
+            Instant::now(),
         ))
         .unwrap();
     let result_b = state_rx_b
@@ -1207,11 +1288,17 @@ fn test_calc_state_transfer_states_converge() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
             SeqNo::from(4u32),
+            Instant::now(),
         ))
         .unwrap();
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(5u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(5u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
     let result_a = state_rx_a
         .recv_timeout(RECV_TIMEOUT)
@@ -1245,15 +1332,16 @@ fn test_calc_state_transfer_states_converge() {
 
     preemptive_b
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::ConfirmedUpdate(make_calc_batch(
-            4,
-            CalcOp::Mul(2),
-        )))
+        .send(PreemptiveWorkMessage::ConfirmedUpdate(
+            make_calc_batch(4, CalcOp::Mul(2)),
+            Instant::now(),
+        ))
         .unwrap();
     preemptive_b
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_calc_batch(5, CalcOp::Sub(20)),
+            Instant::now(),
         ))
         .unwrap();
     let result_b = state_rx_b
@@ -1318,7 +1406,12 @@ fn test_calc_catchup_then_resume_states_converge() {
         .unwrap();
     preemptive
         .preemptive_exec_handle()
-        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(SeqNo::from(4u32)))
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(4u32),
+                Instant::now(),
+            ),
+        )
         .unwrap();
     let result_a = state_rx_a
         .recv_timeout(RECV_TIMEOUT)
@@ -1368,6 +1461,7 @@ fn test_calc_catchup_then_resume_states_converge() {
         .preemptive_exec_handle()
         .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(
             make_calc_batch(4, CalcOp::Mul(4)),
+            Instant::now(),
         ))
         .unwrap();
     let result_b = state_rx_b

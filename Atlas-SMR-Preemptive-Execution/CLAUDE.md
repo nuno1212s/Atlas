@@ -133,6 +133,15 @@ The `Application` trait provides a default `update_batch` that calls `update` in
 - Scalable CRUD metrics: IDs 817–820.
 - Reorder buffer metrics: IDs 821–823, shared by **all three** executors (821 `REORDER_BUFFER_SIZE`, 822 `REORDER_STAGED_COUNT`, 823 `SPECULATION_FALLBACK_COUNT`).
 - Shared throughput counters: IDs 824–825, emitted by **all three** executors.
+- Scalable CRUD, second wave: IDs 826–827 (`SCALABLE_SPECULATION_TO_CONFIRM_LATENCY`,
+  `SCALABLE_CONFIRM_APPLICATION_TIME`). The scalable executor stored `speculated_at` from
+  the start but never recorded it, and had no confirm-apply timing at all, so it was the
+  one variant whose confirmation cost could not be compared against the other two.
+- Confirmation path: IDs 828–831, emitted by **all three** executors under one name each
+  (`CONFIRM_ENQUEUE_TO_APPLY_LATENCY`, `CONFIRM_TO_REPLY_TIME`,
+  `CONFIRM_BLOCKED_ON_EXEC_TIME`, `SPECULATION_HIT_RATE`). Recorded through
+  `metric::record_confirmation(confirmed_at, speculated)`, called once per confirmed batch
+  immediately before the replies are handed to the replier.
 - ID 808 is reserved/unused.
 - All IDs are in `src/metric.rs`. All metrics are fully wired up — no unconnected constants remain.
 
@@ -162,13 +171,45 @@ too — it commits the batch just as the speculated path does, only without the 
 - `confirmed_requests.rs` — 801 `CONFIRM_EXECUTION_TIME` (wraps `application.update_batch` in `execute_update`), plus 824 in `execute_update` and 825 in `execute_read` (dual-state)
 - `pending_state.rs` — 802, 803, 809, 810, 811, 812, 813, 815 (all CRUD cache state-machine metrics), plus 824 on both confirmation routes: the speculated one (`update.batch.len()` after the pop) and the `SPECULATION_FALLBACK_COUNT` one (`batch.len()`, read before `execute_directly` consumes it)
 - `scalable_crud/pending_state.rs` — 817–820 and the same two 824 sites
-- `single_threaded_crud/mod.rs` — 814, 816 (unordered execution time and enqueue-to-execute latency), plus 825 in the `ExecuteUnordered` arm
-- `scalable_crud/mod.rs` — 825 in the `ExecuteUnordered` arm
+- `single_threaded_crud/mod.rs` — 814, 816 (unordered execution time and enqueue-to-execute latency), plus 825 in the `ExecuteUnordered` arm and 828–831 on all four confirmation arms
+- `scalable_crud/mod.rs` — 825 in the `ExecuteUnordered` arm, plus 828–831 on all four confirmation arms
+- `scalable_crud/pending_state.rs` — 826, 827 in `handle_update_confirmed`
+- `single_thread_double_state/preemptive_worker/mod.rs` — 828–831 in `handle_preemptive_update_confirmed` (speculated) and `handle_confirmed_update` (not speculated)
 - `preemptive_requests.rs` — 804, 805, 807 (dual-state preemptive execution, speculation-to-confirm latency, ops per batch)
 - `preemptive_worker/mod.rs` — 806 `DS_BACKTRACK_COUNT` (in `handle_backtracking_request`)
 
 Each 824/825 site reads the batch length *before* handing the batch to the application or to
 `into_inner()`, since both consume it.
+
+**828–831 are the counterpart to the `*_SPECULATION_TO_CONFIRM_LATENCY` family:**
+that family measures the *reply waiting on consensus* — speculation finished first, so the
+wait is latency the client never paid. These four measure the other direction, *consensus
+waiting on the reply*, which is what is still on the critical path. `CONFIRM_TO_REPLY_TIME`
+spans the same two points as `EXECUTION_LATENCY + EXECUTION_TIME_TAKEN` in
+`atlas-smr-execution`, which is what makes a preemptive run comparable with `baseline`
+rather than merely adjacent to it.
+
+`SPECULATION_HIT_RATE` is stored as permille (×1000) so the `Count` kind can average
+integers — same convention as `SCALABLE_COLLISION_RATE` — and is registered at
+`MetricLevel::Info` despite being a `Count`, because it is the metric that says whether
+speculation engaged at all and so has to survive any `with_metric_level` a suite sets.
+
+`speculated` is derived at the call site, never inside the state machine: the cache and
+scalable workers test `state.pending_front_seq() == Some(seq)` *before* confirming (that is
+exactly the `ConfirmRoute::Pending` condition, and confirming consumes the entry), while
+the dual-state worker knows it structurally — `handle_update_confirmed` only returns `Ok`
+when the queue head matches, and `ConfirmedUpdate` is by definition a batch that was never
+speculated. Doing it this way kept the `handle_*_confirmed` signatures untouched and so
+avoided churning ~50 unit-test call sites.
+
+**The `Instant` on `PreemptiveUpdateFinalized`:**
+`PreemptiveExecutionRequest::PreemptiveUpdateFinalized` and
+`...FinalizedAndGetAppstate` carry an `Instant` stamped in `exec_handle.rs` when the
+ordering protocol queues the commit — the confirmation-side mirror of the one
+`PreemptiveUpdate` already carried. Without it the confirmation path had no timestamp
+anywhere and none of 828–831 could be measured. The dual-state executor forwards it through
+`PreemptiveWorkMessage::PreemptiveUpdateConfirmed` / `ConfirmedUpdate` to the preemptive
+worker, which is where the replies are actually dispatched.
 
 **`speculated_at: Instant` propagation for latency metrics:**
 Both `PendingCachedUpdate` (CRUD cache, in `pending_state.rs`) and `PendingPermanentUpdate` (dual-state, in `preemptive_requests.rs`) carry a `speculated_at: Instant` field set when the update enters the pending queue. This field is consumed in `handle_update_confirmed` to record the speculation-to-confirmation latency.

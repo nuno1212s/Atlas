@@ -1,7 +1,8 @@
 use crate::metric::{
     OPERATIONS_EXECUTED_PER_SECOND_ID, REORDER_BUFFER_SIZE_ID, REORDER_STAGED_COUNT_ID,
-    SCALABLE_COLLISION_COUNT_ID, SCALABLE_COLLISION_RATE_ID, SCALABLE_OPS_PER_BATCH_ID,
-    SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID, SPECULATION_FALLBACK_COUNT_ID,
+    SCALABLE_COLLISION_COUNT_ID, SCALABLE_COLLISION_RATE_ID, SCALABLE_CONFIRM_APPLICATION_TIME_ID,
+    SCALABLE_OPS_PER_BATCH_ID, SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID,
+    SCALABLE_SPECULATION_TO_CONFIRM_LATENCY_ID, SPECULATION_FALLBACK_COUNT_ID,
 };
 use crate::scalable_crud::execution_unit::{
     CollisionState, ParallelExecutionUnit, progress_collision_state,
@@ -376,8 +377,22 @@ where
             Some(update.batch.len() as u64),
         );
 
+        // The reply computed for this batch has been sitting ready since `speculated_at`,
+        // waiting only on consensus. That wait is the whole point of speculating, and this
+        // executor was the one variant that captured the timestamp without ever recording it.
+        metric_duration(
+            SCALABLE_SPECULATION_TO_CONFIRM_LATENCY_ID,
+            update.speculated_at.elapsed(),
+        );
+
+        let confirm_start = Instant::now();
         apply_delta_to_state(&mut self.confirmed_state, &update.delta);
         self.accumulated_cache = rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
+        metric_duration(
+            SCALABLE_CONFIRM_APPLICATION_TIME_ID,
+            confirm_start.elapsed(),
+        );
+
         self.next_confirmed = sequence_no.next();
 
         Ok(update.replies)
