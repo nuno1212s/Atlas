@@ -239,19 +239,17 @@ where
                         .send(PreemptiveWorkMessage::CatchUp(confirmed_batches))
                 );
             }
-            PreemptiveExecutionRequest::UpdateBatch(update, _) => {
+            PreemptiveExecutionRequest::UpdateBatch(update, instant) => {
                 quiet_unwrap!(
                     self.preemptive_worker
                         .preemptive_exec_handle()
-                        .send(PreemptiveWorkMessage::ConfirmedUpdate(update))
+                        .send(PreemptiveWorkMessage::ConfirmedUpdate(update, instant))
                 );
             }
-            PreemptiveExecutionRequest::UpdateBatchAndGetAppstate(update, _) => {
-                quiet_unwrap!(
-                    self.preemptive_worker
-                        .preemptive_exec_handle()
-                        .send(PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(update))
-                );
+            PreemptiveExecutionRequest::UpdateBatchAndGetAppstate(update, instant) => {
+                quiet_unwrap!(self.preemptive_worker.preemptive_exec_handle().send(
+                    PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(update, instant)
+                ));
             }
             PreemptiveExecutionRequest::PreemptiveUpdate(reqs, _time) => {
                 quiet_unwrap!(
@@ -260,19 +258,18 @@ where
                         .send(PreemptiveWorkMessage::PreemptiveUpdate(reqs))
                 );
             }
-            PreemptiveExecutionRequest::PreemptiveUpdateFinalized(seq_no) => {
-                quiet_unwrap!(
-                    self.preemptive_worker
-                        .preemptive_exec_handle()
-                        .send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(seq_no))
-                );
+            PreemptiveExecutionRequest::PreemptiveUpdateFinalized(seq_no, instant) => {
+                quiet_unwrap!(self.preemptive_worker.preemptive_exec_handle().send(
+                    PreemptiveWorkMessage::PreemptiveUpdateConfirmed(seq_no, instant)
+                ));
             }
-            PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(seq_no) => {
-                quiet_unwrap!(
-                    self.preemptive_worker.preemptive_exec_handle().send(
-                        PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(seq_no)
-                    )
-                );
+            PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(
+                seq_no,
+                instant,
+            ) => {
+                quiet_unwrap!(self.preemptive_worker.preemptive_exec_handle().send(
+                    PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(seq_no, instant)
+                ));
 
                 // The preemptive worker will then forward this request of app state to the confirmed worker
                 // when it sends it. The confirmed worker will then directly send the app state message

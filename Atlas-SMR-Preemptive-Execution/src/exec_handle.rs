@@ -24,12 +24,14 @@ pub enum PreemptiveExecutionRequest<O> {
     PreemptiveUpdate(UpdateBatch<O>, Instant),
     /// A preemptive update that has been finalized. We can now
     /// Send the replies to the clients and permanently apply the update
-    /// to our state
-    PreemptiveUpdateFinalized(SeqNo),
+    /// to our state.
+    /// The Instant represents the time at which the confirmation was queued, and is what
+    /// the confirmation-path metrics (`CONFIRM_*`) measure from.
+    PreemptiveUpdateFinalized(SeqNo, Instant),
     /// Similarly to the [PreemptiveUpdateFinalized(_)] branch
     /// But with the added action of also taking a snapshot of the app state
     /// (After the update has been performed) and
-    PreemptiveUpdateFinalizedAndGetAppstate(SeqNo),
+    PreemptiveUpdateFinalizedAndGetAppstate(SeqNo, Instant),
     /// Execute an unordered update on the confirmed state (this will not
     /// take into account any pending preemptive updates, only updates which
     /// have been effectivized)
@@ -126,7 +128,10 @@ where
 
     fn queue_update_finalized(&self, seq: SeqNo) -> atlas_common::error::Result<()> {
         self.e_tx
-            .send(PreemptiveExecutionRequest::PreemptiveUpdateFinalized(seq))
+            .send(PreemptiveExecutionRequest::PreemptiveUpdateFinalized(
+                seq,
+                Instant::now(),
+            ))
             .context("Failed to send UpdateFinalized request to executor")
     }
 
@@ -135,7 +140,12 @@ where
         seq: SeqNo,
     ) -> atlas_common::error::Result<()> {
         self.e_tx
-            .send(PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(seq))
+            .send(
+                PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(
+                    seq,
+                    Instant::now(),
+                ),
+            )
             .context("Failed to send UpdateFinalizedAndGetAppstate request to executor")
     }
 }

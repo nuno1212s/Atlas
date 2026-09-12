@@ -1,4 +1,6 @@
-use crate::metric::DS_BACKTRACK_COUNT_ID;
+use crate::metric::{
+    CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, DS_BACKTRACK_COUNT_ID, record_confirmation,
+};
 use crate::single_thread_double_state::RunMode;
 use crate::single_thread_double_state::comm_handles::PreemptiveWorkerSharedChannels;
 use crate::single_thread_double_state::preemptive_worker::comm_handles::{
@@ -13,12 +15,13 @@ use crate::single_thread_double_state::state_management::StateMessage;
 use atlas_common::channel::{NoRetChannelErr, RecvError, sync};
 use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::UpdateBatch;
-use atlas_metrics::metrics::metric_increment;
+use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_execution::repliers::ExecutorReplier;
 use std::sync::Arc;
+use std::time::Instant;
 use thiserror::Error;
 use tracing::error;
 
@@ -92,21 +95,21 @@ where
                     PreemptiveWorkMessage::PreemptiveUpdate(update_batch) => {
                         self.handle_preemptive_update::<T>(update_batch)?;
                     }
-                    PreemptiveWorkMessage::PreemptiveUpdateConfirmed(seq_no) => {
-                        let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no)?;
+                    PreemptiveWorkMessage::PreemptiveUpdateConfirmed(seq_no, confirmed_at) => {
+                        let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no, confirmed_at)?;
 
                         self.preemptive_channels.send_update_confirmed(update_batch);
                     },
-                    PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(seq_no) => {
-                        let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no)?;
+                    PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(seq_no, confirmed_at) => {
+                        let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no, confirmed_at)?;
 
                         self.preemptive_channels.send_update_confirmed_get_appstate(update_batch);
                     }
-                    PreemptiveWorkMessage::ConfirmedUpdate(update_batch) => {
-                        self.handle_confirmed_update::<T>(update_batch, false)?;
+                    PreemptiveWorkMessage::ConfirmedUpdate(update_batch, confirmed_at) => {
+                        self.handle_confirmed_update::<T>(update_batch, false, confirmed_at)?;
                     }
-                    PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(update_batch) => {
-                        self.handle_confirmed_update::<T>(update_batch, true)?;
+                    PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(update_batch, confirmed_at) => {
+                        self.handle_confirmed_update::<T>(update_batch, true, confirmed_at)?;
                     }
                     PreemptiveWorkMessage::CatchUp(confirmed_batches) => {
                         self.state.handle_catch_up(&self.application, confirmed_batches);
@@ -121,15 +124,24 @@ where
         }
     }
 
+    /// Confirm a batch that was speculated: the replies were computed when the proposal
+    /// arrived and have been waiting on consensus ever since, so `record_confirmation` is
+    /// called with `speculated = true`. `handle_update_confirmed` only ever returns `Ok`
+    /// when the queue head matches, which is exactly that condition.
     fn handle_preemptive_update_confirmed<T>(
         &mut self,
         update_seq: SeqNo,
+        confirmed_at: Instant,
     ) -> Result<UpdateBatch<Request<A, S>>, PreemptiveWorkerError>
     where
         T: ExecutorReplier,
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     {
+        metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, confirmed_at.elapsed());
+
         let (update_batch, replies) = self.state.handle_update_confirmed(update_seq)?.into_inner();
+
+        record_confirmation(confirmed_at, true);
 
         T::execution_finished::<A::AppData, NT>(self.node.clone(), Some(update_seq), replies);
 
@@ -194,15 +206,22 @@ where
         }
     }
 
+    /// Apply a directly-finalized batch: it was never speculated, so the execution below
+    /// sits on the confirmation path and `record_confirmation` is called with
+    /// `speculated = false`. This is the dual-state analogue of the cache executors'
+    /// `SPECULATION_FALLBACK_COUNT` route.
     fn handle_confirmed_update<T>(
         &mut self,
         update_batch: UpdateBatch<Request<A, S>>,
         get_appstate: bool,
+        confirmed_at: Instant,
     ) -> Result<(), PreemptiveWorkerError>
     where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
         T: ExecutorReplier,
     {
+        metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, confirmed_at.elapsed());
+
         let seq = update_batch.seq_no();
         let batch_for_confirmed = update_batch.clone();
 
@@ -219,6 +238,8 @@ where
         let replies = self
             .state
             .handle_confirmed_update(&self.application, update_batch)?;
+
+        record_confirmation(confirmed_at, false);
 
         T::execution_finished::<A::AppData, NT>(self.node.clone(), Some(seq), replies);
 
