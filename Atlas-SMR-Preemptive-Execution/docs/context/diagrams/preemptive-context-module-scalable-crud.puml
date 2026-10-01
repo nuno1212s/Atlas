@@ -1,0 +1,86 @@
+@startuml preemptive-context-module-scalable-crud
+title M3 — Scalable CRUD executor: types, threads and channels
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+
+rectangle "PreemptiveExecutorHandle<RQ>\n(sender side, Decision Log Thread)" as handle
+rectangle "MonStateTransfer\n(State transfer thread)" as stt
+
+frame "Scalable Caching Preemptive Worker" as t_w {
+  rectangle "ScalableCachingPreemptiveWorker<S,A,NT>\nrun_mode: RunMode" as w
+  rectangle "ScalableCachingPreemptiveState<S,A>\nnext_preemptive · next_confirmed\nthread_pool: ThreadPool" as st
+  rectangle "CollisionState\n«fn» progress_collision_state" as coll
+  rectangle "batch_delta · current_view\n(AccumulatedCache, per batch)" as bd
+  rectangle "CachingState<'a,S>\n(colliders only; reused\nfrom single_threaded_crud)" as proxy
+  rectangle "«fn» merge_delta_into ·\napply_delta_to_state ·\nrebuild_accumulated_cache\n(reused)" as alg
+  rectangle "staged: BTreeMap\n<SeqNo, UpdateBatch>" as staged
+  rectangle "pending: VecDeque\n<PendingCachedUpdate<A,S>>" as pending
+  rectangle "AccumulatedCache" as acc
+  database "confirmed_state: S" as cs
+}
+
+frame "speculation pool (rayon, 4 threads)" as t_sp {
+  collections "ParallelExecutionUnit<'a,S> ×b\none per operation\nlocal_cache\naccesses: Vec<Access>\n(Access, AccessType from\natlas-smr-execution)" as unit
+}
+collections "rayon read pool ×4" as rp
+
+hexagon "«trait»\nCRUDApplication<S>" as crudapp
+hexagon "«trait»\nCRUDState" as crudst
+rectangle "ReplicaReplier" as rep
+
+handle -down-> w : work · cap 16384\nPreemptiveExecutionRequest<O>\nS1 C1 D1 U1 T1
+stt -down-> w : install · cap 128\nInstallStateMessage<S>\nT2
+w -up-> stt : checkpoint · cap 128\nAppStateMessage<S>\nK
+w ..> st : S2 C2 D2 B
+st ..> unit : P1 fork-join\n(install +\ninto_par_iter)
+staged -[hidden]down- proxy
+pending -[hidden]down- bd
+coll -[hidden]down- alg
+unit ..> crudapp : speculatively_execute
+unit .up.|> crudst
+unit ..> cs : read &S\n(S: Sync)
+unit ..> acc : read
+st ..> coll : P2 sort by position,\nfeed access logs
+st -[bold]-> bd : P3 merge\nnon-colliders
+st ..> proxy : P4 colliders,\nin batch order
+proxy ..> crudapp
+proxy .up.|> crudst
+proxy ..> bd : read / write
+st -[bold]-> pending : P5 push
+st -[bold]-> staged : stage / drain
+st ..> alg : P5 C3
+alg -[bold]-> acc : merge / rebuild
+alg -[bold]-> cs : C3 apply delta
+w -right-> rep : C4 D4 U3
+w .left.> rp : U2 fork-join
+rp ..> cs : read only
+
+legend bottom
+  S1 PreemptiveUpdate → S2 admission, identical to M2 (stage / backtrack B / execute), then:
+  P1 speculation pool runs one ParallelExecutionUnit per operation, all reading the same base
+     (confirmed_state + accumulated_cache); the worker thread blocks until all finish
+  P2 sort results by batch position; progress_collision_state marks every position that touched
+     a (column, key) someone else wrote or deleted (Read × Read is the only non-collision)
+  P3 non-colliders: merge their local caches into batch_delta
+  P4 colliders: re-execute sequentially in batch order through CachingState over current_view
+  P5 reassemble replies by position, merge batch_delta into accumulated_cache, push pending
+  C commit, F miss, D, U, T, K: exactly as in M2 (confirm applies the pre-computed delta)
+  PendingCachedUpdate, ConfirmRoute and the error types are redeclared in scalable_crud,
+  field-for-field identical to single_threaded_crud's
+end legend
+
+@enduml

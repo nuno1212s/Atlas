@@ -1,0 +1,73 @@
+@startuml preemptive-context-replica-egress
+title D3b — Replica integration (egress): executor to reply
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+
+rectangle "Decision Log Thread\n(D3a)" as from_dl
+rectangle "RQ-PRE-PROCESSING-\nORCHESTRATOR (D3a)" as from_rpp
+frame "Unordered-RQ-Passer" as t_unord {
+  rectangle "unordered_rq_thread" as unord
+}
+frame "replica main thread" as t_main {
+  rectangle "Replica<…, EX>" as rep
+}
+frame "ConsensusBacklog thread" as t_bl {
+  rectangle "PersistentLogHandle<EX>" as plh
+}
+
+frame "executor thread(s) — M1 to M3" as t_ex {
+  rectangle "preemptive executor\n(1 of 3)" as exec
+  rectangle "ReplicaReplier\n«ExecutorReplier»" as replier
+}
+collections "atlas_common::\nthreadpool workers" as pool
+rectangle "Network stack" as net
+actor "Clients" as clients
+
+frame "State transfer thread" as t_st {
+  rectangle "MonStateTransfer" as st
+}
+
+from_rpp -down-> unord : Pre Processor Unordered\nBatch Output · cap 1024
+from_dl -down-> exec : work · 16384 · (4) (5)
+unord -down-> exec : work · 16384 · (u)
+rep -down-> exec : work · 16384 · (p)
+plh -[dotted]down-> exec : work · 16384 · (s)
+exec .down.> replier : (6)
+replier -down-> pool : (6)
+pool -down-> net
+net -down-> clients
+exec -down-> st : checkpoint · cap 128\nAppStateMessage<S> (7)
+st -up-> exec : install · cap 128\nInstallStateMessage<S> (8)
+st -up-> rep : State Transfer Response\ncap 128 · STResult
+from_dl -right-> st : State transfer Work\ncap 128 · (c)
+
+legend bottom
+  work = executor work channel, cap 16384, PreemptiveExecutionRequest<O>; one channel,
+  several producers
+  (4)(5) speculate / commit (D3a)
+  (u) queue_update_unordered → ExecuteUnordered
+  (p) PollStateChannel, on STResult::StateTransferReady / Finished
+  (6) T::execution_finished(node, seq, ReplyBatch); the sending runs on the
+      global threadpool, not on the executor thread
+  (7) checkpoint on *AndGetAppstate   (8) snapshot install
+  (c) probe_checkpoint_needed: ShouldRequestAppState(seq, oneshot); every
+      CHECKPOINT_PERIOD the decision-log thread blocks on the oneshot reply
+  (s) latent: in Strict persistence mode commits arrive as queue_update → UpdateBatch,
+      bypassing the preemptive path; the replica hardcodes NoPersistentLog (server/mod.rs:348)
+end legend
+
+@enduml

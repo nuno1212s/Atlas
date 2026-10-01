@@ -1,0 +1,76 @@
+@startuml preemptive-context-concurrency
+title D5 — Concurrency and ownership, three executors side by side
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+
+rectangle "Dual-state\n3 threads + 1 pool" as ds {
+  rectangle "Decision Log Thread" as ds_in
+  frame "Executor thread" as ds_orc {
+    rectangle "orchestrator\n(RunMode only)" as ds_o
+  }
+  frame "Preemptive Worker Thread" as ds_p {
+    database "preemptive_state: S\npending · staged" as ds_pst
+  }
+  frame "Confirmed Worker Thread" as ds_c {
+    database "confirmed_state: S\nVTboQueue" as ds_cst
+  }
+  collections "read pool ×4" as ds_rp
+}
+
+rectangle "CRUD cache\n1 thread + 1 pool" as cc {
+  rectangle "Decision Log Thread" as cc_in
+  frame "Caching Preemptive\nWorker" as cc_w {
+    database "confirmed_state: S\naccumulated_cache\npending · staged" as cc_st
+  }
+  collections "read pool ×4" as cc_rp
+}
+
+rectangle "Scalable CRUD\n1 thread + 2 pools" as sc {
+  rectangle "Decision Log Thread" as sc_in
+  frame "Scalable Caching\nPreemptive Worker" as sc_w {
+    database "confirmed_state: S\naccumulated_cache\npending · staged" as sc_st
+  }
+  collections "speculation\npool ×4" as sc_sp
+  collections "read pool ×4" as sc_rp
+}
+
+ds_in -down-> ds_o : work · 16384
+ds_o -down-> ds_p : preemptive work · 100\nPreemptiveWorkMessage
+ds_o -down-> ds_c : confirmed update · 256\nConfirmedUpdateMessage
+ds_p -down-> ds_c : P→C · 16384\nPreemptiveToConfirmedMsg
+ds_c -up-> ds_p : C→P · 128\n(seq, clone of S)\nblocking recv
+ds_c .down.> ds_rp : fork-join
+
+cc_in -down-> cc_w : work · 16384
+cc_w .down.> cc_rp : fork-join
+
+sc_in -down-> sc_w : work · 16384
+sc_w .down.> sc_sp : fork-join,\nper batch
+sc_w .down.> sc_rp : fork-join
+
+legend bottom
+  Channel arrows: name · capacity · message type. work = PreemptiveExecutionRequest<O>.
+  fork-join: the owning thread blocks in ThreadPool::install until the pool finishes.
+  Replies (T::execution_finished → atlas_common::threadpool) leave from the dual-state
+  Preemptive Worker (every commit) and Confirmed Worker (reads, catch-up), and from the
+  single worker in the other two. Every column also has install (InstallStateMessage, 128)
+  in and checkpoint (AppStateMessage, 128) out; the dual-state orchestrator fans installs
+  out over two more StateMessage channels (100, 256). The work channel is FIFO: a commit
+  queues behind speculative batches already in it. Only one column exists per binary.
+end legend
+
+@enduml

@@ -1,0 +1,43 @@
+@startuml preemptive-context-critical-path
+title D4 — One batch, one clock (time runs down)
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 6
+hide footbox
+
+participant "Ordering\nprotocol" as OP
+participant "Post-commit\nexecutor" as BE
+participant "Preemptive\nexecutor" as PE
+participant "Dual-state\nconfirmed\nworker" as CW
+
+== proposal accepted (DecisionRequests) ==
+OP ->> PE ++ #DDDDDD : batch n
+note right of PE : X speculate
+PE -> PE -- : hold replies
+note right of PE : S reply waits\nfor the commit
+note left of BE : W waits for\nthe commit
+||30||
+
+== decision committed (DecisionDone) ==
+OP ->> BE ++ #DDDDDD : batch n
+OP ->> PE ++ #999999 : commit n
+note right of PE : R queue + pop\nor delta apply\n**A: kept**
+PE ->o] : replies n
+PE ->> CW -- : batch n
+activate CW #DDDDDD
+note right of CW : C re-execute\n(off the path)
+note left of BE : L queue\nT execute\n**B: removed**\nby speculation
+||25||
+deactivate CW
+BE ->o] : replies n
+deactivate BE
+
+legend bottom
+  W L T X S R C: metric spans, mapped in the text.
+  Bar lengths are illustrative; only event order is claimed.
+end legend
+@enduml

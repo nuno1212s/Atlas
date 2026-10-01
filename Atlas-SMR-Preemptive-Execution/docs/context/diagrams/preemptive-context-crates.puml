@@ -1,0 +1,95 @@
+@startuml preemptive-context-crates
+title D2 — Crate view: where atlas-smr-preemptive-execution sits
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+
+rectangle "External repositories — depend on Atlas by relative path" as ext {
+  rectangle "Ordering-protocol\nplugins" as ext_op
+  rectangle "State-transfer\nplugin" as ext_st
+  rectangle "testing-grounds\ncrud_perf_exec" as ext_bench
+  rectangle "atlas-examples\n(calculator)" as ext_ex
+}
+
+rectangle "Atlas workspace" as ws {
+  rectangle "L4  SMR stack" as l4 {
+    rectangle "atlas-smr-replica" as replica
+    rectangle "**atlas-smr-preemptive-execution**" as pre
+    rectangle "atlas-smr-execution" as base
+    rectangle "atlas-smr-core" as smrcore
+    rectangle "atlas-smr-application" as smrapp
+    rectangle "atlas-client" as client
+  }
+  rectangle "L3  logging and transfer" as l3 {
+    rectangle "atlas-logging-core\natlas-decision-log\natlas-persistent-log\natlas-log-transfer\natlas-view-transfer" as l3c
+  }
+  rectangle "L2  protocol core" as l2 {
+    rectangle "atlas-core" as core
+    rectangle "atlas-communication\natlas-comm-mio\natlas-reconfiguration" as l2c
+  }
+  rectangle "L1  foundation" as l1 {
+    rectangle "atlas-common\natlas-metrics\natlas-capnp" as l1c
+  }
+}
+
+pre -down-> smrcore : (a)
+pre -down-> smrapp : (b)
+pre -right-> base : (c) crud_states
+pre -right-> base : (d) repliers
+pre -down-> core : (e)
+pre -down-> l1c
+replica -down-> base : (f)
+replica -down-> smrcore
+replica -down-> l3c
+smrcore -down-> core
+smrapp -down-> core
+base -down-> smrcore
+core -down-> l1c
+l3c -down-> core
+l2c -down-> l1c
+
+pre -[dotted]- base : (g) xor as the\nreplica's executor
+
+ext_op -down-> core : (h)
+ext_st -down-> smrcore
+ext_bench -down-> pre
+ext_bench -down-> base
+ext_bench -down-> replica
+ext_ex -down-> base
+ext_ex -down-> replica
+
+l4 -[hidden]down- l3
+l3 -[hidden]down- l2
+l2 -[hidden]down- l1
+
+legend bottom
+  (a) TExecutor, TMonolithicStateExecutor, MonStateInstallHandle, ReplyNode, SMRReply;
+      SMRExecWrapper + TPreemptiveExecutorStateHandle only in the #[cfg(test)] guard
+  (b) Application, MonolithicState, AppStateMessage, InstallStateMessage,
+      TExecutionHandle, TDeterministicExecutionHandle, TPreemptiveExecutionHandle
+  (c) CRUDState, CRUDApplication, Access, AccessType; the first two re-exported (lib.rs:17)
+  (d) ExecutorReplier, ReplicaReplier: every client reply leaves through the baseline crate
+  (e) UpdateBatch, UnorderedUpdateBatch, ReplyBatch, UpdateReply, UpdateInfo;
+      TPreemptiveExecutorDecisionHandle only in the #[cfg(test)] guard
+  (f) the replica always links the baseline crate (follower path), so every
+      preemptive binary contains both execution crates
+  (g) the replica never depends on the preemptive crate: the executor is its
+      type parameter ME, fixed by the application binary
+  (h) contract: implement OrderingProtocol and emit DecisionPart::DecisionRequests
+      before DecisionPart::DecisionDone; no item of this crate's API is used
+end legend
+
+@enduml

@@ -1,0 +1,78 @@
+@startuml preemptive-context-replica-ingress
+title D3a — Replica integration (ingress): request to executor
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+
+actor "Clients" as clients
+rectangle "Network stack\n«atlas-communication /\natlas-comm-mio»" as net
+
+frame "RQ-PRE-PROCESSING-ORCHESTRATOR" as t_rpp {
+  rectangle "RequestPre-\nProcessor" as rpp
+  collections "pre-processing\nworker ×N" as rpp_w
+}
+
+frame "replica main thread «Replica::iterate»" as t_main {
+  rectangle "Replica<…, EX>" as rep
+  rectangle "round-based BFT\nprotocol «plugin»" as op
+  hexagon "«trait»\nOrderingProtocol" as op_t
+}
+
+frame "Decision Log Thread" as t_dl {
+  rectangle "DecisionLogManager<…, EX>" as dlm
+  hexagon "«trait»\nDecisionLog-\nManagement" as dlm_t
+  rectangle "default impl\n(post-commit)" as impl_det
+  rectangle "«specialization bridge»\nspecialized impl\nEX: TPreemptive*Handle" as impl_pre
+  rectangle "Boule\n«TDecisionLog»" as boule
+  rectangle "SMRExecWrapper<E>" as wrap
+  rectangle "PreemptiveExecutorHandle<RQ>" as handle
+}
+rectangle "executor thread(s)\n(D3b, M1–M3)" as exec
+
+clients -down-> net : (1)
+net -down-> rpp
+rpp -right-> rpp_w
+rpp_w -down-> op : Pre Processor Batch Output\ncap 1024 · (2)
+rep .left.> op : poll
+op .down.|> op_t
+rep -down-> dlm : Decision Log Work Channel\ncap 1024 · DLWorkMessage (3)
+dlm .right.|> dlm_t
+impl_det .up.|> dlm_t
+impl_pre .up.|> dlm_t
+impl_pre ..> boule : (a)
+impl_pre ..> wrap : (4) (5)
+impl_det ..> wrap : (d)
+wrap ..> handle : (w)
+handle -down-> exec : executor work · cap 16384\nPreemptiveExecutionRequest<O>
+
+legend bottom
+  (1) client request      (2) batches the protocol proposes
+  (3) DLWorkMessage::DecisionInformation(Decision)
+  (4) DecisionPart::DecisionRequests, the proposal is accepted:
+      queue_preemptive_update → PreemptiveUpdate(batch, t)
+  (a) decision_information_received → LoggedDecision once committed
+  (5) queue_preemptive_update_finalized[_and_get_appstate]
+      → PreemptiveUpdateFinalized(seq, t)
+  (d) default impl: queue_update → UpdateBatch; never selected
+      when the bridge applies
+  (w) transform_update_batch records CONSENSUS_WAIT_TIME
+  «specialization bridge»: Rust specialization picks this impl whenever
+  EX = SMRExecWrapper<E> satisfies TPreemptiveExecutorDecisionHandle +
+  TPreemptiveExecutorStateHandle; otherwise the default impl runs,
+  silently. Guarded only by a cfg(test) assertion (exec_handle.rs:162)
+end legend
+
+@enduml

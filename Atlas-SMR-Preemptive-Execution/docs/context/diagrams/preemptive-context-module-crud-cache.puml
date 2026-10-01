@@ -1,0 +1,75 @@
+@startuml preemptive-context-module-crud-cache
+title M2 — CRUD cache executor: types, thread and channels
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+
+rectangle "PreemptiveExecutorHandle<RQ>\n(sender side, Decision Log Thread)" as handle
+rectangle "MonStateTransfer\n(State transfer thread)" as stt
+
+frame "Caching Preemptive Worker" as t_w {
+  rectangle "CachingPreemptiveWorker<S,A,NT>\nrun_mode: RunMode" as w
+  rectangle "CachingPreemptiveState<S,A>\nnext_preemptive · next_confirmed" as st
+  rectangle "CachingState<'a,S>\n(one per batch, holds &S)" as proxy
+  rectangle "«fn» merge_delta_into ·\napply_delta_to_state ·\nrebuild_accumulated_cache" as alg
+  rectangle "staged: BTreeMap\n<SeqNo, UpdateBatch>" as staged
+  rectangle "pending: VecDeque\n<PendingCachedUpdate<A,S>>\nbatch · replies · delta" as pending
+  rectangle "AccumulatedCache" as acc
+  database "confirmed_state: S" as cs
+}
+collections "rayon read pool ×4" as rp
+
+hexagon "«trait»\nCRUDApplication<S>" as crudapp
+hexagon "«trait»\nCRUDState" as crudst
+hexagon "«trait»\nApplication<S>" as app
+rectangle "ReplicaReplier" as rep
+
+handle -down-> w : work · cap 16384\nPreemptiveExecutionRequest<O>\nS1 C1 D1 U1 T1
+stt -down-> w : install · cap 128\nInstallStateMessage<S>\nT2
+w -up-> stt : checkpoint · cap 128\nAppStateMessage<S>\nK
+w ..> st : S2 C2 D2 B
+st ..> proxy : S3
+proxy ..> crudapp : S4 speculatively_execute
+proxy .up.|> crudst
+proxy ..> acc : read
+proxy ..> cs : read (&S)
+st -[bold]-> pending : S5 push
+st -[bold]-> staged : stage / drain
+st ..> alg : S5 C3
+alg -[bold]-> acc : merge / rebuild
+alg -[bold]-> cs : C3 apply delta
+st ..> app : F D3 update_batch
+w -right-> rep : C4 D4 U3
+w .left.> rp : U2 fork-join
+rp ..> cs : read only
+
+legend bottom
+  S speculate: S1 PreemptiveUpdate → S2 handle_preemptive_update: seq.cmp(next_preemptive)
+    stages, backtracks (B) or executes → S3 CachingState::new(&confirmed_state, &accumulated_cache)
+    → S4 speculatively_execute per operation, writes go to the proxy's delta
+    → S5 merge delta into accumulated_cache, push PendingCachedUpdate, drain staged
+  C commit: C1 PreemptiveUpdateFinalized → C2 handle_update_confirmed → C3 ConfirmRoute::Pending:
+    apply pre-computed delta to confirmed_state, rebuild accumulated_cache → C4 replies
+  F miss (ConfirmRoute::Staged): discard_speculation (pending batches back to staged),
+    execute directly with Application::update_batch on confirmed_state, re-speculate
+  B backtrack (same thread, no channel): keep pending < seq, evict staged ≥ seq, rebuild cache
+  D UpdateBatch: only when nothing is pending; update_batch on confirmed_state, D4 reply
+  U ExecuteUnordered: read pool over &confirmed_state only, U3 reply
+  T PollStateChannel → RunMode::StateTransfer → T2 install_confirmed_state
+  K checkpoint emitted only for the *AndGetAppstate variants
+end legend
+
+@enduml

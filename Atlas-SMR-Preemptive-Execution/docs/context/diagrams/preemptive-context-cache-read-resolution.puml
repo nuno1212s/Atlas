@@ -1,0 +1,33 @@
+@startuml preemptive-context-cache-read-resolution
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+skinparam ActivityDiamondFontSize 11
+!pragma useVerticalIf on
+start
+:read(column, key)
+inside CachingState;
+if (δ (this batch) has key?) then (yes)
+  :v = δ[key];
+elseif (C (all pending batches) has key?) then (yes)
+  :v = C[key];
+else (no)
+  :v = S.read(column, key);
+  note right: the only lookup that\ntouches application state
+endif
+:return v, where ⊥ means absent;
+note right: a ⊥ in δ or C hides\nwhatever S holds for the key
+stop
+@enduml
