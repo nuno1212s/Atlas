@@ -5,10 +5,11 @@
 Every alternative draws the same four states, computed by a tiny model of
 `CachingPreemptiveState` rather than typed in by hand:
 
-  0 start           S = {a:1, b:2, c:3, e:7}; log Δ7 {a:5, d:9}, Δ8 {b:⊥}, Δ9 {a:6, c:4}
-  1 speculate Δ10      append Δ10 {c:5, e:8};                C ⊕= Δ10
-  2 commit Δ7         S ⊕= Δ7; pop Δ7;                  refold C
-  3 backtrack to Δ9   drop Δ9, Δ10, staged batch 12;   refold C
+  0 start           S = {a:1, b:2, c:3, e:7}; log Ω7 {a:5, d:9}, Ω8 {b:⊥}, Ω9 {a:6, c:4}
+  1 speculate Ω10      append Ω10 {c:5, e:8};                C ⊕= Ω10
+  2 commit Ω7         Ω7 becomes Δ7: S ⊕= Δ7; pop it;    refold C
+  3 backtrack to Ω9   drop Ω9, Ω10, staged batch 12;   refold C
+(Ω: a speculated decision; Δ: a confirmed one)
 """
 import os
 import sys
@@ -98,10 +99,10 @@ class Step:
 
 
 def steps():
-    out = [Step("0", "start", r"$\Delta_7, \Delta_8, \Delta_9$ speculated", S0),
-           Step("1", r"speculate $\Delta_{10}$", r"$C \leftarrow C \oplus \Delta_{10}$", S1, S0, "speculate"),
-           Step("2", r"commit $\Delta_7$", r"$S \leftarrow S \oplus \Delta_7$, refold $C$", S2, S1, "commit"),
-           Step("3", r"backtrack to $\Delta_9$", r"drop $\Delta_9, \Delta_{10}$, refold $C$", S3, S2, "backtrack")]
+    out = [Step("0", "start", r"$\Omega_7, \Omega_8, \Omega_9$ speculated", S0),
+           Step("1", r"speculate $\Omega_{10}$", r"$C \leftarrow C \oplus \Omega_{10}$", S1, S0, "speculate"),
+           Step("2", r"commit $\Omega_7$", r"$\Omega_7 \rightarrow \Delta_7$;  $S \leftarrow S \oplus \Delta_7$", S2, S1, "commit"),
+           Step("3", r"backtrack to $\Omega_9$", r"drop $\Omega_9, \Omega_{10}$, refold $C$", S3, S2, "backtrack")]
     for s in out[1:]:
         before, after = dict(s.prev.log), dict(s.st.log)
         s.new = set(after) - set(before)
@@ -214,7 +215,8 @@ def card(cv, cx, cy, seq, delta, bold=False, ghost=False, struck=False, w=30, li
     cv.box(x, y, w, h, fill=PAPER if ghost else LIGHT, edge=MID if ghost else INK,
            lw=1.3 if bold else 0.5, ls=(0, (1.5, 1.2)) if ghost else "-", r=1.4)
     tc = MID if ghost else INK
-    cv.text(cx, y + 5.2, rf"$\Delta_{{{seq}}}$", size=TINY, ha="center", color=tc)
+    letter = r"\Delta" if (ghost and not struck) else r"\Omega"   # an applied (committed) card is confirmed
+    cv.text(cx, y + 5.2, rf"${letter}_{{{seq}}}$", size=TINY, ha="center", color=tc)
     cv.line([(x + 2, y + 9.5), (x + w - 2, y + 9.5)], lw=0.3, color=MID if not ghost else PALE)
     for j, (k, val) in enumerate(sorted(delta.items())):
         cv.text(cx, y + 14 + j * line, f"{k} $\\leftarrow$ " + (r"$\bot$" if val == TOMB else val),
@@ -251,7 +253,8 @@ def alt_containers(out):
             if d is None:
                 continue
             ghost = q in s.gone
-            cv.text(px + 2, y + 0.3, rf"$\Delta_{{{q}}}$", size=SMALL, color=MID if ghost else INK)
+            letter = r"\Delta" if (ghost and s.kind == "commit") else r"\Omega"
+            cv.text(px + 2, y + 0.3, rf"${letter}_{{{q}}}$", size=SMALL, color=MID if ghost else INK)
             for k, val in d.items():
                 if ghost:
                     kv_cell(cv, col(k), y, w, h, val, fill=PAPER, edge=MID, ls=(0, (1.5, 1.2)), tc=MID, size=TINY)
@@ -278,7 +281,7 @@ def alt_containers(out):
         cv.arrow((x0 + 2.5 * p, py1 + 1), (x0 + 2.5 * p, py1 + 11), lw=0.8,
                  color=INK if s.kind == "commit" else LIGHT)
         head = 7 if s.kind == "commit" else s.st.log[0][0]
-        cv.text(x0 + 2.5 * p + 4, py1 + 6, rf"commit $\Delta_{{{head}}}$" + ("" if s.kind == "commit" else " (next)"),
+        cv.text(x0 + 2.5 * p + 4, py1 + 6, rf"commit $\Omega_{{{head}}}$" + ("" if s.kind == "commit" else " (next)"),
                 size=TINY, color=DARK if s.kind == "commit" else MID)
 
         # confirmed container
@@ -333,7 +336,8 @@ def alt_table(out):
             cv.line([(xb, ytop - 1), (xb, yh + 5 * rh + 1)], lw=0.5, z=3)
         logd = dict(s.st.log)
         for j, (c, grp) in enumerate(cols):
-            lab = {"S": "$S$", "C": "$C$"}.get(c) or rf"$\Delta_{{{c}}}$"
+            letter = r"\Delta" if (c in s.gone and s.kind == "commit") else r"\Omega"
+            lab = {"S": "$S$", "C": "$C$"}.get(c) or rf"${letter}_{{{c}}}$"
             gone = c in s.gone
             cv.text(xs[j], ytop + 13, lab, size=TINY, ha="center",
                     color=MID if gone else INK, weight="bold" if c in s.new else "normal")
@@ -388,7 +392,7 @@ def alt_chains(out):
     cv.text(colx[12], 6, "staged", size=SMALL, ha="center", color=MID)
     cv.text(colx["S"], 20, "$S$", size=TINY, ha="center", color=DARK)
     for q in (7, 8, 9, 10):
-        cv.text(colx[q], 20, rf"$\Delta_{{{q}}}$", size=TINY, ha="center", color=DARK)
+        cv.text(colx[q], 20, rf"$\Omega_{{{q}}}$", size=TINY, ha="center", color=DARK)
     cv.text(colx[12], 20, "batch 12", size=TINY, ha="center", color=MID)
 
     logd = dict(st.log)
@@ -425,10 +429,10 @@ def alt_chains(out):
     # key
     yk = yb + 18
     cv.line([(0, yk), (10, yk)], lw=1.3)
-    cv.text(14, yk, r"commit frontier: commit $\Delta_7$ moves it one column right, folding $\Delta_7$ into $S$",
+    cv.text(14, yk, r"commit frontier: commit $\Omega_7$ moves it one column right; $\Omega_7$ folds into $S$ as $\Delta_7$",
             size=TINY, color=DARK)
     cv.line([(0, yk + 10), (10, yk + 10)], lw=0.9, ls=(0, (2.5, 1.8)))
-    cv.text(14, yk + 10, r"backtrack to $\Delta_9$: drop every version right of the cut", size=TINY, color=DARK)
+    cv.text(14, yk + 10, r"backtrack to $\Omega_9$: drop every version right of the cut", size=TINY, color=DARK)
     cv.box(2, yk + 16, 8, 7, fill=DARK, edge=DARK, lw=0.3, r=1)
     cv.text(14, yk + 20, "newest pending version of a key: exactly what $C$ holds", size=TINY, color=DARK)
     cv.save(os.path.join(out, f"{PFX}-d-version-chains"))
@@ -453,11 +457,11 @@ def alt_pipeline(out):
     # executing batch
     bx = 72
     cv.box(bx - 22, ymid - 22, 44, 38, fill=PAPER, edge=INK, lw=0.6, ls=(0, (2.2, 1.2)), r=1.8)
-    cv.text(bx, ymid - 15, r"batch 10 · $\delta_{10}$", size=TINY, ha="center")
-    cv.text(bx, ymid - 5, "writes → δ", size=TINY, ha="center", color=DARK)
-    cv.text(bx, ymid + 5, "reads: δ, C, S", size=TINY, ha="center", color=DARK)
+    cv.text(bx, ymid - 15, r"batch 10 · $\omega_{10}$", size=TINY, ha="center")
+    cv.text(bx, ymid - 5, r"writes $\rightarrow$ $\omega$", size=TINY, ha="center", color=DARK)
+    cv.text(bx, ymid + 5, r"reads: $\omega$, C, S", size=TINY, ha="center", color=DARK)
     cv.arrow((bx + 22, ymid - 3), (126, ymid - 3), lw=0.8)
-    cv.text(110, ymid - 8, r"append $\Delta_{10}$", size=TINY, ha="center", color=DARK)
+    cv.text(110, ymid - 8, r"append $\Omega_{10}$", size=TINY, ha="center", color=DARK)
 
     # speculative region
     rx0, rx1 = 128, 330
@@ -470,7 +474,7 @@ def alt_pipeline(out):
         card(cv, cx[q], ymid, q, st.delta(q), w=32)
     cv.text(cx[order[0]], ymid + 24, "tail", size=TINY, ha="center", color=MID)
     cv.text(cx[order[-1]], ymid + 24, "head", size=TINY, ha="center", color=MID)
-    cv.text((cx[order[0]] + cx[order[-1]]) / 2, ymid + 34, r"pending log: batch, replies and $\Delta$ per entry",
+    cv.text((cx[order[0]] + cx[order[-1]]) / 2, ymid + 34, r"pending log: batch, replies and $\Omega$ per entry",
             size=TINY, ha="center", color=DARK)
     # C over the log
     cy = 36
@@ -485,13 +489,13 @@ def alt_pipeline(out):
     # backtrack cut between 8 and 9
     xc = (cx[9] + cx[8]) / 2
     cv.line([(xc, ymid - 18), (xc, ymid + 19)], lw=0.9, ls=(0, (2.5, 1.8)))
-    cv.text(xc, ymid - 24, r"backtrack to $\Delta_9$ cuts here", size=TINY, ha="center", color=DARK,
+    cv.text(xc, ymid - 24, r"backtrack to $\Omega_9$ cuts here", size=TINY, ha="center", color=DARK,
             bbox=dict(boxstyle="round,pad=0.2,rounding_size=0.8", fc=PEND_FILL, ec="none"))
 
     # commit
     cv.arrow((rx1 + 2, ymid), (rx1 + 48, ymid), lw=1.2, head=(4, 2))
-    cv.text(rx1 + 25, ymid - 8, r"commit $\Delta_7$", size=SMALL, ha="center", weight="bold")
-    cv.text(rx1 + 25, ymid + 6, r"apply $\Delta_7$," + "\n" + r"send its replies", size=TINY, ha="center", color=DARK,
+    cv.text(rx1 + 25, ymid - 8, r"commit $\Omega_7$", size=SMALL, ha="center", weight="bold")
+    cv.text(rx1 + 25, ymid + 6, r"apply as $\Delta_7$," + "\n" + r"send its replies", size=TINY, ha="center", color=DARK,
             linespacing=1.1, va="top")
 
     # confirmed store (a cylinder)
@@ -562,7 +566,7 @@ def alt_sheets(out):
                 x, yy = cell_at(y, k)
                 cv.text(x, yy + 0.3, v(val), size=SMALL, ha="center", color=MID if gone else INK,
                         weight="bold" if q in s.new else "normal", z=3 + (140 - y) / 100)
-            lab = rf"$\Delta_{{{q}}}$" + ("  new" if q in s.new else "")
+            lab = rf"$\Omega_{{{q}}}$" + ("  new" if q in s.new else "")
             cv.text(ox + 5 * kx + 14, y - 6, lab, size=TINY, color=MID if gone else INK)
             y -= 13
         # the view from above
@@ -574,7 +578,7 @@ def alt_sheets(out):
                 kv_cell(cv, x, cy, 12.5, 10, s.st.C[k], fill=DARK, edge=INK if k in s.C_changed() else DARK,
                         lw=1.2 if k in s.C_changed() else 0.3, tc=PAPER, size=TINY)
     cv.text(0, 149, "Thick rule: commit frontier. Solid sheet: confirmed $S$. Gray sheets: pending "
-            r"$\Delta$s, oldest lowest; dashed: dropped." + "\n"
+            r"$\Omega$s (speculated), oldest lowest; dashed: dropped." + "\n"
             "Looking down a column gives what a read returns; $C$ is that view over the pending sheets alone.",
             linespacing=1.3, size=TINY, color=MID)
     cv.save(os.path.join(out, f"{PFX}-f-sheets"))

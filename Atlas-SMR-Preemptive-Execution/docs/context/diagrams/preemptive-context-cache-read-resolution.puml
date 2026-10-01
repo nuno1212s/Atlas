@@ -19,8 +19,8 @@ skinparam ActivityDiamondFontSize 11
 start
 :read(column, key)
 inside CachingState;
-if (δ (this batch) has key?) then (yes)
-  :v = δ[key];
+if (ω (this batch) has key?) then (yes)
+  :v = ω[key];
 elseif (C (all pending batches) has key?) then (yes)
   :v = C[key];
 else (no)
@@ -28,6 +28,6 @@ else (no)
   note right: the only lookup that\ntouches application state
 endif
 :return v, where ⊥ means absent;
-note right: a ⊥ in δ or C hides\nwhatever S holds for the key
+note right: a ⊥ in ω or C hides\nwhatever S holds for the key
 stop
 @enduml

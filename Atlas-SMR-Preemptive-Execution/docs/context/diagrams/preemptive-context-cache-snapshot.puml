@@ -21,7 +21,7 @@ top to bottom direction
 skinparam nodesep 20
 skinparam ranksep 22
 
-package "before commit Δ7" as B {
+package "before commit Ω7" as B {
   map "C · accumulated_cache" as C0 {
     a => 6
     b => ⊥
@@ -29,14 +29,14 @@ package "before commit Δ7" as B {
     d => 9
   }
   package "pending log" as L0 {
-    map "Δ7 · head" as D7 {
+    map "Ω7 · head" as D7 {
       a => 5
       d => 9
     }
-    map "Δ8" as D8 {
+    map "Ω8" as D8 {
       b => ⊥
     }
-    map "Δ9 · tail" as D9 {
+    map "Ω9 · tail" as D9 {
       a => 6
       c => 4
     }
@@ -49,17 +49,17 @@ package "before commit Δ7" as B {
   }
 }
 
-package "after commit Δ7" as A {
+package "after commit Ω7 (now Δ7)" as A {
   map "C · refolded" as C1 {
     a => 6
     b => ⊥
     c => 4
   }
   package "pending log " as L1 {
-    map "Δ8 · head" as E8 {
+    map "Ω8 · head" as E8 {
       b => ⊥
     }
-    map "Δ9 · tail" as E9 {
+    map "Ω9 · tail" as E9 {
       a => 6
       c => 4
     }

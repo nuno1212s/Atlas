@@ -2,7 +2,8 @@
 
     python3 dual_flow.py <output-dir>
 
-The dual-state log holds whole batches (B7 …) and their held replies, never a delta: speculation
+Notation as in every figure: Ωk is decision k while speculated, Δk once confirmed. Here the
+log holds whole batches and their held replies, never a write set: speculation
 writes straight into a second full copy S_p, a commit re-executes the batch on S in the confirmed
 worker, and a backtrack clones S into S_p and re-executes the surviving batches.
 """
@@ -10,17 +11,17 @@ import os
 import sys
 
 from executor_model import BATCH, DUAL, KEYS, TOMB, op_text
-from flow_common import (B, PEND_FILL, badge, cell, changes, header, key_row, marks_for, parrow,
+from flow_common import (D, W, PEND_FILL, badge, cell, changes, header, key_row, marks_for, parrow,
                          region, strike, tx)
 from paperfig import BODY, DARK, FULL, INK, LIGHT, MID, PAPER, SMALL, TINY, Canvas
 
 PFX = "preemptive-context-dual-flow"
 
 STEPS = [
-    ("0", "start", tx(rf"{B(7)}, {B(8)}, {B(9)} speculated on $S_p$"), "start"),
-    ("1", rf"speculate {B(10)}", r"execute $B_{10}$ on $S_p$ in place", "spec"),
-    ("2", rf"commit {B(7)}", r"re-execute $B_7$ on $S$ (confirmed worker)", "commit"),
-    ("3", rf"backtrack to {B(9)}", r"$S_p \leftarrow$ clone($S$) (blocking), replay $B_8$", "back"),
+    ("0", "start", tx(rf"{W(7)}, {W(8)}, {W(9)} speculated on $S_p$"), "start"),
+    ("1", rf"speculate {W(10)}", r"execute batch 10 on $S_p$ in place", "spec"),
+    ("2", rf"commit {W(7)}", rf"{W(7)} confirmed as {D(7)}: re-executed on $S$", "commit"),
+    ("3", rf"backtrack to {W(9)}", r"$S_p \leftarrow$ clone($S$) (blocking), replay $\Omega_8$", "back"),
 ]
 
 
@@ -32,16 +33,17 @@ def notes(i):
     st, prev = DUAL[i], DUAL[i - 1] if i else None
     kind = STEPS[i][3]
     if kind == "start":
-        return ["$S_p$ = S after B7, B8, B9".replace("B7", B(7)).replace("B8", B(8)).replace("B9", B(9)),
+        return [rf"$S_p$ = S after {W(7)}, {W(8)}, {W(9)}",
                 "S: confirmed through seq 6", "log: batches + held replies"]
     added = [q for q in st.seqs() if q not in prev.seqs()]
     removed = [q for q in prev.seqs() if q not in st.seqs()]
-    log = "log: " + ", ".join([f"+ {B(q)}" for q in added] + [f"− {B(q)}" for q in removed])
+    gone = [f"− {W(q)} (now {D(q)})" if kind == "commit" else f"− {W(q)}" for q in removed]
+    log = "log: " + ", ".join([f"+ {W(q)}" for q in added] + gone)
     out = [log, tx(changes(prev.P, st.P, "$S_p$")), tx(changes(prev.S, st.S, "S"))]
     if kind == "spec":
-        out.append(rf"replies of {B(10)} held")
+        out.append(rf"replies of {W(10)} held")
     elif kind == "back":
-        out.append(rf"{B(8)} replayed, replies redone")
+        out.append(rf"{W(8)} replayed, replies redone")
     return out
 
 
@@ -79,7 +81,7 @@ def b_panel(cv, px, py, i):
     for q, state in rows_for(i):
         y = slots[q]
         ghost = state in ("applied", "dropped")
-        cv.text(px + 3, y + 0.3, B(q), size=SMALL, color=MID if ghost else INK)
+        cv.text(px + 3, y + 0.3, D(q) if state == "applied" else W(q), size=SMALL, color=MID if ghost else INK)
         cv.text(x0 + 2, y + 0.3, ops_text(q), size=TINY - 0.7, color=MID if ghost else INK,
                 weight="bold" if state in ("new", "replayed") else "normal")
         if state == "dropped":
@@ -111,7 +113,7 @@ def b_panel(cv, px, py, i):
     elif kind == "commit":
         y = slots[7]
         parrow(cv, [(gr + 0.5, y), (gr + 6, y), (gr + 6, yS), (gr + 0.5, yS)], lw=1.1, head=(3.6, 1.8))
-        cv.text(gr + 9, (y + yP) / 2 + 3, tx("forward " + B(7) + "\n" + r"re-execute on $S$"),
+        cv.text(gr + 9, (y + yP) / 2 + 3, tx("forward " + D(7) + "\n" + r"re-execute on $S$"),
                 size=TINY, color=DARK, linespacing=1.1)
         parrow(cv, [(gr + 6, y), (px + 176, y)], lw=0.7)
         cv.text(px + 178, y + 0.3, "replies → clients", size=TINY, color=DARK)
@@ -124,7 +126,7 @@ def b_panel(cv, px, py, i):
         cv.text(gr + 15, (yP + yS) / 2 + 2, "clone", size=TINY, color=DARK)
         y = slots[8]
         parrow(cv, [(gr + 0.5, y), (gr + 5, y), (gr + 5, yP - 2), (gr + 0.5, yP - 2)], lw=0.9)
-        cv.text(gr + 8, (y + yP) / 2 - 2, tx("replay " + B(8)), size=TINY, color=DARK)
+        cv.text(gr + 8, (y + yP) / 2 - 2, tx("replay " + W(8)), size=TINY, color=DARK)
 
     gx = x0 + 2.5 * p
     active = kind in ("commit", "back")
@@ -178,14 +180,14 @@ def fig_c(out):
             for k, v in gone.items():
                 cell(cv, xx, ry[k], sw - 8, 9.5, kindc, v, "gone")
                 strike(cv, xx - 5, ry[k] + 3.5, xx + 5, ry[k] - 3.5, lw=0.5)
-        cv.text(x, bot + 8, "log: " + " ".join(B(q) for q in st.seqs()), size=TINY, color=DARK)
-        sent = rf"sent {B(7)}; " if kind == "commit" else ""
-        cv.text(x, bot + 18, f"replies: {sent}held " + ", ".join(B(q) for q in st.seqs()), size=TINY, color=DARK)
+        cv.text(x, bot + 8, "log: " + " ".join(W(q) for q in st.seqs()), size=TINY, color=DARK)
+        sent = rf"sent {D(7)}; " if kind == "commit" else ""
+        cv.text(x, bot + 18, f"replies: {sent}held " + ", ".join(W(q) for q in st.seqs()), size=TINY, color=DARK)
         if g:
             x1, x2 = gx(g - 1) + 2 * sw + 8, x - 3
             cv.text((x1 + x2) / 2, 7, title, size=TINY + 0.5, ha="center", weight="bold")
             cv.arrow((x1, 14), (x2, 14), lw=1.0, head=(3.6, 1.8))
-            short = {"spec": r"run on $S_p$", "commit": r"re-run on $S$", "back": r"clone, replay $B_8$"}[kind]
+            short = {"spec": r"run on $S_p$", "commit": rf"{D(7)}: re-run on $S$", "back": r"clone, replay $\Omega_8$"}[kind]
             cv.text((x1 + x2) / 2, 20, short, size=TINY - 0.4, ha="center", color=DARK)
     cv.text(0, 141, "Both columns are full states ($S_p$ = preemptive_state). Bold: changed in this step (small gray: before). "
             "Shaded: the speculative copy, discarded and re-cloned on backtrack.", size=TINY, color=MID)

@@ -21,7 +21,18 @@ def val(x):
 
 
 def D(q):
+    """A decision once consensus has confirmed it."""
     return rf"$\Delta_{{{q}}}$"
+
+
+def W(q):
+    """A decision while it is still speculated (pending in the log)."""
+    return rf"$\Omega_{{{q}}}$"
+
+
+def w(q):
+    """The private write set of a batch while it executes (CachingState.delta)."""
+    return rf"$\omega_{{{q}}}$"
 
 
 def B(q):

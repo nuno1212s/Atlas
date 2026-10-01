@@ -6,17 +6,17 @@ import os
 import sys
 
 from executor_model import CRUD, KEYS, TOMB
-from flow_common import (D, PEND_FILL, badge, cell, changes, curved, header, key_row, marks_for,
+from flow_common import (D, W, w as om, PEND_FILL, badge, cell, changes, curved, header, key_row, marks_for,
                          parrow, region, strike, tx)
 from paperfig import BODY, DARK, FULL, COLUMN, INK, LIGHT, MID, PAPER, SMALL, TINY, Canvas
 
 PFX = "preemptive-context-cache-flow"
 
 STEPS = [
-    ("0", "start", tx(rf"{D(7)}, {D(8)}, {D(9)} speculated"), "start"),
-    ("1", rf"speculate {D(10)}", r"$C \leftarrow C \oplus \Delta_{10}$", "spec"),
-    ("2", rf"commit {D(7)}", r"$S \leftarrow S \oplus \Delta_7$, refold $C$", "commit"),
-    ("3", rf"backtrack to {D(9)}", rf"drop {D(9)}, {D(10)}; refold $C$", "back"),
+    ("0", "start", tx(rf"{W(7)}, {W(8)}, {W(9)} speculated"), "start"),
+    ("1", rf"speculate {W(10)}", r"$C \leftarrow C \oplus \Omega_{10}$", "spec"),
+    ("2", rf"commit {W(7)}", rf"{W(7)} confirmed as {D(7)}: " + r"$S \leftarrow S \oplus \Delta_7$, refold $C$", "commit"),
+    ("3", rf"backtrack to {W(9)}", rf"drop {W(9)}, {W(10)}; refold $C$", "back"),
 ]
 
 
@@ -25,13 +25,14 @@ def step_notes(i):
     st, prev = CRUD[i], CRUD[i - 1] if i else None
     kind = STEPS[i][3]
     if kind == "start":
-        return [tx(rf"$C$ = {D(7)} ⊕ {D(8)} ⊕ {D(9)}"), "S: confirmed through seq 6", "staged: batch 12"]
+        return [tx(rf"$C$ = {W(7)} ⊕ {W(8)} ⊕ {W(9)}"), "S: confirmed through seq 6", "staged: batch 12"]
     added = [q for q in st.seqs() if q not in prev.seqs()]
     removed = [q for q in prev.seqs() if q not in st.seqs()]
-    log = "log: " + ", ".join([f"+ {D(q)}" for q in added] + [f"− {D(q)}" for q in removed])
+    gone = [f"− {W(q)} (now {D(q)})" if kind == "commit" else f"− {W(q)}" for q in removed]
+    log = "log: " + ", ".join([f"+ {W(q)}" for q in added] + gone)
     out = [log, tx(changes(prev.C, st.C, "C")), tx(changes(prev.S, st.S, "S"))]
     if kind == "spec":
-        out.append(rf"replies of {D(10)} held")
+        out.append(rf"replies of {W(10)} held")
     elif kind == "commit":
         out.append(rf"replies of {D(7)} → clients".replace("→", r"$\rightarrow$"))
     else:
@@ -74,7 +75,7 @@ def b1_panel(cv, px, py, i):
     for q, d, state in log_rows(i):
         y = slots[q]
         ghost = state in ("applied", "dropped")
-        cv.text(px + 3, y + 0.3, D(q), size=SMALL, color=MID if ghost else INK)
+        cv.text(px + 3, y + 0.3, D(q) if state == "applied" else W(q), size=SMALL, color=MID if ghost else INK)
         for k, v in d.items():
             cell(cv, col[k], y, w, h, "D", v, "gone" if ghost else ("chg" if state == "new" else None))
         if state == "dropped":
@@ -163,7 +164,7 @@ def mini(cv, x, y, i, role):
         ghost = state in ("applied", "dropped")
         consumed = role == "before" and ((kind == "commit" and q == st.log[0][0]) or
                                          (kind == "back" and q >= 9))
-        cv.text(x + 2, yy + 0.3, D(q), size=TINY, color=MID if ghost else INK)
+        cv.text(x + 2, yy + 0.3, D(q) if state == "applied" else W(q), size=TINY, color=MID if ghost else INK)
         for k, v in d.items():
             mark = "gone" if ghost else ("chg" if state == "new" or consumed else None)
             cell(cv, col[k], yy, w, h, "D", v, mark, size=TINY - 0.4)
@@ -225,7 +226,7 @@ def fig_b3(out):
     region(cv, 0, 24, gr + 6, 96, "pend", "pending · discardable")
     region(cv, 0, 134, gr + 6, 24, "conf", "confirmed · authoritative")
 
-    cv.text(3, yd + 0.3, r"$\delta_{10}$", size=SMALL)
+    cv.text(3, yd + 0.3, om(10), size=SMALL)
     for k, v in d10.items():
         cell(cv, col[k], yd, w, h, "d", v)
     cv.text(3, yC + 0.3, "$C$", size=SMALL)
@@ -233,7 +234,7 @@ def fig_b3(out):
         cell(cv, col[k], yC, w, h, "C", v)
     cv.line([(x0, 73), (gr, 73)], lw=0.3, color=MID)
     for q, y in ((9, y9), (8, y8), (7, y7)):
-        cv.text(3, y + 0.3, D(q), size=SMALL)
+        cv.text(3, y + 0.3, W(q), size=SMALL)
         for k, v in st.entry(q).items():
             cell(cv, col[k], y, w, h, "D", v)
     cv.text(3, yS + 0.3, "$S$", size=SMALL)
@@ -262,11 +263,11 @@ def fig_b3(out):
 
     nl = "\n"
     notes = [
-        ("1", 30, "execute batch 10;" + nl + "every write goes" + nl + "into δ10 only"),
-        ("2", 52, "a read tries δ10," + nl + "then C, then S; the" + nl + "log is never read"),
-        ("3", 76, tx("batch ends: δ10 is" + nl + rf"appended as {D(10)}," + nl + rf"and C ⊕= {D(10)}")),
-        ("5", 101, tx(rf"backtrack to {D(9)}:" + nl + rf"drop {D(9)} and newer," + nl + "then refold C")),
-        ("4", 127, tx(rf"commit {D(7)}, the head:" + nl + rf"S ⊕= {D(7)}, pop it," + nl + "refold C, send replies")),
+        ("1", 30, "execute batch 10;" + nl + "every write goes" + nl + rf"into {om(10)} only"),
+        ("2", 52, rf"a read tries {om(10)}," + nl + "then C, then S; the" + nl + "log is never read"),
+        ("3", 76, tx(rf"batch ends: {om(10)} is" + nl + rf"appended as {W(10)}," + nl + rf"and C ⊕= {W(10)}")),
+        ("5", 101, tx(rf"backtrack to {W(9)}:" + nl + rf"drop {W(9)} and newer," + nl + "then refold C")),
+        ("4", 127, tx(rf"commit {W(7)}, the head:" + nl + rf"it becomes {D(7)}; S ⊕= {D(7)}," + nl + "refold C, send replies")),
     ]
     for n, y, text in notes:
         badge(cv, 138, y, n, r=3.6)
@@ -302,7 +303,7 @@ def c1_panel(cv, px, py, i):
     rows = {q: (d, s) for q, d, s in log_rows(i)}
     for q, x in xq.items():
         d, s = rows.get(q, (None, None))
-        cv.text(x, top + 13.5, D(q), size=TINY, ha="center",
+        cv.text(x, top + 13.5, D(q) if s == "applied" else W(q), size=TINY, ha="center",
                 color=MID if s in ("applied", "dropped") or d is None else INK,
                 weight="bold" if s == "new" else "normal")
     for k in KEYS:
@@ -399,9 +400,9 @@ def fig_c2(out):
             for k, v in gone.items():
                 cell(cv, xx, ry[k], sw - 8, 9.5, kindc, v, "gone")
                 strike(cv, xx - 5, ry[k] + 3.5, xx + 5, ry[k] - 3.5, lw=0.5)
-        cv.text(x, bot + 8, "log: " + " ".join(D(q) for q in st.seqs()), size=TINY, color=DARK)
+        cv.text(x, bot + 8, "log: " + " ".join(W(q) for q in st.seqs()), size=TINY, color=DARK)
         replies = {"start": "held", "spec": "held"}.get(kind)
-        held = ", ".join(D(q) for q in st.seqs())
+        held = ", ".join(W(q) for q in st.seqs())
         sent = rf"sent {D(7)}; " if kind == "commit" else ""
         cv.text(x, bot + 18, f"replies: {sent}held {held}", size=TINY, color=DARK)
         if g:
@@ -409,7 +410,9 @@ def fig_c2(out):
             x1, x2 = gx(g - 1) + 2 * sw + 8, x - 3
             cv.text((x1 + x2) / 2, 7, title, size=TINY + 0.5, ha="center", weight="bold")
             cv.arrow((x1, 14), (x2, 14), lw=1.0, head=(3.6, 1.8))
-            cv.text((x1 + x2) / 2, 20, effect, size=TINY - 0.8, ha="center", color=DARK)
+            short = {"spec": tx(rf"C ⊕= {W(10)}"), "commit": tx(rf"{W(7)} → {D(7)}, into S"),
+                     "back": rf"drop {W(9)}, {W(10)}"}[kind]
+            cv.text((x1 + x2) / 2, 20, short, size=TINY - 0.6, ha="center", color=DARK)
     cv.text(0, 141, "Bold: changed in this step (small gray: the value before). Dashed and struck: "
             "removed. Shaded columns are speculative and discardable.", size=TINY, color=MID)
     cv.save(os.path.join(out, f"{PFX}-c2-timeline"))

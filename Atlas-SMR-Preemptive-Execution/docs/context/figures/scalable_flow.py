@@ -2,20 +2,21 @@
 
     python3 scalable_flow.py <output-dir>
 
-Cross-batch layer: the log of Δs and their fold C, exactly as in the CRUD cache.
+Cross-batch layer: the log of speculated decisions Ω and their fold C, exactly as in the CRUD
+cache (Ωk is decision k while speculated, Δk once confirmed; every entry drawn here is speculated).
 Intra-batch layer (rebuilt for every batch, scalable_crud/pending_state.rs:197-307):
   ① each operation runs in parallel through its own local cache ℓ over C over S
   ② accesses are compared; a Write or Delete with anything on the same key collides
   ③ non-colliders' ℓ are merged, in batch order, into batch_delta (bd)
   ④ colliders re-run sequentially, in batch order, over current_view = C ⊕ bd
-  ⑤ bd becomes Δ10: appended to the log and merged into C
+  ⑤ bd becomes Ω10 (speculated): appended to the log and merged into C
 Commit and backtrack are the CRUD cache's (crud_flow.py figures).
 """
 import os
 import sys
 
 from executor_model import KEYS, SCALABLE, TOMB, TRACE10, op_text
-from flow_common import (D, PEND_FILL, WORK_FILL, badge, cell, curved, key_row, marks_for, parrow,
+from flow_common import (W as D, PEND_FILL, WORK_FILL, badge, cell, curved, key_row, marks_for, parrow,
                          region, tx, val)
 from paperfig import BODY, DARK, FULL, INK, LIGHT, MID, PAPER, SMALL, TINY, Canvas
 

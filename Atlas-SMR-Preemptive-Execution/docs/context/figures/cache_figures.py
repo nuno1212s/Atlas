@@ -4,10 +4,10 @@
 
 Running example, identical in every figure (see crud-cache-visuals.md §2):
   S  (confirmed through seq 6) = {a:1, b:2, c:3, e:7}
-  Δ7 = {a:5, d:9}   Δ8 = {b:⊥}   Δ9 = {a:6, c:4}
-  C  = Δ7 ⊕ Δ8 ⊕ Δ9 = {a:6, b:⊥, c:4, d:9}
+  Ω7 = {a:5, d:9}   Ω8 = {b:⊥}   Ω9 = {a:6, c:4}   (Ω: speculated decision, Δ: once confirmed)
+  C  = Ω7 ⊕ Ω8 ⊕ Ω9 = {a:6, b:⊥, c:4, d:9}
   next_confirmed = 7, next_preemptive = 10, staged = {12}
-  batch 10 = c ← 5, e ← 8, read e, read b  →  Δ10 = {c:5, e:8} (executor_model.py)
+  batch 10 = c ← 5, e ← 8, read e, read b  →  Ω10 = {c:5, e:8} (executor_model.py)
   the read-path figure alone uses its own mid-batch example: read a, read b, read e, update(c, 5)
 """
 import os
@@ -108,14 +108,14 @@ def fig_structure(out):
     cv.line([(x0 - 3, yf), (x0 + 5 * p + 3, yf)], lw=1.0)
 
     row_label(cv, 0, yc, "$C$", "accumulated_cache")
-    row_label(cv, 0, y9, r"$\Delta_9$", "tail", beside=True)
-    row_label(cv, 0, y8, r"$\Delta_8$")
-    row_label(cv, 0, y7, r"$\Delta_7$", "head", beside=True)
+    row_label(cv, 0, y9, r"$\Omega_9$", "tail", beside=True)
+    row_label(cv, 0, y8, r"$\Omega_8$")
+    row_label(cv, 0, y7, r"$\Omega_7$", "head", beside=True)
     row_label(cv, 0, ys, "$S$", "confirmed_state")
 
     cv.text(right, yc, "newest entry\nper key in the log", size=TINY, color=DARK, linespacing=1.15)
     cv.bracket(right - 1, y9 - 7, y7 + 7)
-    cv.text(right + 5, (y9 + y7) / 2, "pending log;\nentry per batch:\nbatch, replies, Δ",
+    cv.text(right + 5, (y9 + y7) / 2, "pending log;\nentry per batch:\nbatch, replies, Ω",
             size=TINY, color=DARK, linespacing=1.15)
     cv.text(right, yf, "commit frontier", size=TINY, color=DARK)
     cv.text(right, ys, "gray: shadowed,\nnever read", size=TINY, color=DARK, linespacing=1.15)
@@ -147,7 +147,7 @@ def fig_read_path(out):
         cv.arrow((col(k), 19), (col(k), stop - h / 2 - 0.8), lw=lw,
                  head=(3.6, 1.8) if lw > 1 else (3.2, 1.5))
 
-    row_label(cv, 0, yd, r"$\delta_{10}$", "batch")
+    row_label(cv, 0, yd, r"$\omega_{10}$", "batch")
     row_label(cv, 0, yc, "$C$", "pending")
     row_label(cv, 0, ys, "$S$", "confirmed")
 
@@ -198,27 +198,27 @@ def panel(cv, px, py, num, title, effect, c, log, s, ptr, geo):
 
 
 STEPS = [
-    ("0", "start", r"$\Delta_7, \Delta_8, \Delta_9$ speculated",
+    ("0", "start", r"$\Omega_7, \Omega_8, \Omega_9$ speculated",
      (C0, {}),
-     [(r"$\Delta_9$", D9, {}, None), (r"$\Delta_8$", D8, {}, None), (r"$\Delta_7$", D7, {}, None)],
+     [(r"$\Omega_9$", D9, {}, None), (r"$\Omega_8$", D8, {}, None), (r"$\Omega_7$", D7, {}, None)],
      (S0, {}),
      "$n_c$ = 7,  $n_p$ = 10\nstaged: batch 12"),
-    ("1", r"speculate $\Delta_{10}$", r"$C \leftarrow C \oplus \Delta_{10}$, append",
+    ("1", r"speculate $\Omega_{10}$", r"$C \leftarrow C \oplus \Omega_{10}$, append",
      ({**C0, "c": "5", "e": "8"}, {"c": "hit", "e": "hit"}),
-     [(r"$\Delta_{10}$", {"c": "5", "e": "8"}, {"c": "hit", "e": "hit"}, "new"), (r"$\Delta_9$", D9, {}, None),
-      (r"$\Delta_8$", D8, {}, None), (r"$\Delta_7$", D7, {}, None)],
+     [(r"$\Omega_{10}$", {"c": "5", "e": "8"}, {"c": "hit", "e": "hit"}, "new"), (r"$\Omega_9$", D9, {}, None),
+      (r"$\Omega_8$", D8, {}, None), (r"$\Omega_7$", D7, {}, None)],
      (S0, {}),
-     r"$n_c$ = 7,  $n_p$ = 11" + "\n" + r"replies of $\Delta_{10}$ held"),
-    ("2", r"commit $\Delta_7$", r"$S \leftarrow S \oplus \Delta_7$, refold $C$",
+     r"$n_c$ = 7,  $n_p$ = 11" + "\n" + r"replies of $\Omega_{10}$ held"),
+    ("2", r"commit $\Omega_7$", r"$S \leftarrow S \oplus \Delta_7$, refold $C$",
      ({"a": "6", "b": "⊥", "c": "5", "d": "9", "e": "8"}, {"d": "gone"}),
-     [(r"$\Delta_{10}$", {"c": "5", "e": "8"}, {}, None), (r"$\Delta_9$", D9, {}, None),
-      (r"$\Delta_8$", D8, {}, None), (r"$\Delta_7$", D7, {}, "applied")],
+     [(r"$\Omega_{10}$", {"c": "5", "e": "8"}, {}, None), (r"$\Omega_9$", D9, {}, None),
+      (r"$\Omega_8$", D8, {}, None), (r"$\Delta_7$", D7, {}, "applied")],
      ({**S0, "a": "5", "d": "9"}, {"a": "hit", "d": "hit"}),
      r"$n_c$ = 8,  $n_p$ = 11" + "\n" + r"replies of $\Delta_7$ sent"),
-    ("3", r"backtrack to $\Delta_9$", r"drop $\Delta_9, \Delta_{10}$, refold $C$",
+    ("3", r"backtrack to $\Omega_9$", r"drop $\Omega_9, \Omega_{10}$, refold $C$",
      ({"a": "6", "b": "⊥", "c": "5", "e": "8"}, {"a": "gone", "c": "gone", "e": "gone"}),
-     [(r"$\Delta_{10}$", {"c": "5", "e": "8"}, {}, "dropped"), (r"$\Delta_9$", D9, {}, "dropped"),
-      (r"$\Delta_8$", D8, {}, "kept")],
+     [(r"$\Omega_{10}$", {"c": "5", "e": "8"}, {}, "dropped"), (r"$\Omega_9$", D9, {}, "dropped"),
+      (r"$\Omega_8$", D8, {}, "kept")],
      ({**S0, "a": "5", "d": "9"}, {}),
      "$n_c$ = 8,  $n_p$ = 9\nstaged batch 12 evicted"),
 ]
@@ -269,19 +269,20 @@ def fig_vcs(out):
             circ = __import__("matplotlib.patches", fromlist=["Circle"]).Circle(
                 (cx, y), r, facecolor=fill, edgecolor=edge, lw=0.8, ls=ls, zorder=3)
             cv.ax.add_patch(circ)
-            label = lab if lab == "…" else r"$\Delta_{" + lab + "}$"
+            letter = r"\Delta" if st == "main" else r"\Omega"
+            label = lab if lab == "…" else "$" + letter + "_{" + lab + "}$"
             cv.text(cx, y + 0.2, label, size=TINY - 0.4, ha="center",
                     color=PAPER if st == "main" else (MID if st == "gone" else INK))
             prev = cx
 
     rows = [
         ("state", [("5", "main"), ("6", "main"), ("7", "pend"), ("8", "pend"), ("9", "pend"), ("10", "work")],
-         r"main = $S$;  unmerged commits = $\Delta_7, \Delta_8, \Delta_9$;  HEAD view = $C$ over $S$;  "
-         r"working tree = $\delta_{10}$"),
-        (r"commit $\Delta_7$", [("5", "main"), ("6", "main"), ("7", "main"), ("8", "pend"), ("9", "pend")],
-         r"fast-forward main by one commit ($S \leftarrow S \oplus \Delta_7$), then re-derive the HEAD view (refold $C$)"),
-        (r"backtrack to $\Delta_9$", [("5", "main"), ("6", "main"), ("7", "pend"), ("8", "pend"), ("9", "gone"), ("9", "work")],
-         r"reset --hard to $\Delta_8$, then commit the re-proposed $\Delta_9$;  $\Delta_7, \Delta_8$ kept, never re-executed"),
+         r"main = $S$ ($\Delta$s);  unmerged commits = $\Omega_7, \Omega_8, \Omega_9$;  HEAD view = $C$ over $S$;  "
+         r"working tree = $\omega_{10}$"),
+        (r"commit $\Omega_7$", [("5", "main"), ("6", "main"), ("7", "main"), ("8", "pend"), ("9", "pend")],
+         r"$\Omega_7$ becomes $\Delta_7$: fast-forward main by one ($S \leftarrow S \oplus \Delta_7$), then refold $C$"),
+        (r"backtrack to $\Omega_9$", [("5", "main"), ("6", "main"), ("7", "pend"), ("8", "pend"), ("9", "gone"), ("9", "work")],
+         r"reset --hard to $\Omega_8$, then commit the re-proposed $\Omega_9$;  $\Omega_7, \Omega_8$ kept, never re-executed"),
         ("state transfer", [("5", "main"), ("6", "main"), ("…", "main"), ("40", "main"), ("8", "gone"), ("9", "gone")],
          r"replace main with a snapshot through $\Delta_{40}$;  the branch and the reorder buffer are discarded"),
     ]
@@ -291,7 +292,7 @@ def fig_vcs(out):
         chain(y, spec)
         cv.text(notes_x, y, note, size=SMALL, color=DARK)
         y += 20
-    cv.text(0, y - 2, "filled: confirmed     outlined: pending (Δ, replies, batch)     "
+    cv.text(0, y - 2, "filled: confirmed (Δ)     outlined: speculated (Ω: write set, replies, batch)     "
             "dashed: executing or re-proposed     dotted: discarded", size=TINY, color=MID)
     cv.save(os.path.join(out, f"{PFX}-vcs-analogy"))
 
@@ -325,7 +326,7 @@ def fig_footprint(out):
     for i in range(3):
         x = seg(x, y2, 8, "", LIGHT, edge=MID) - 0.5
     seg(x + 1, y2, common, "batches\n+ replies", PALE, edge=MID, ls=(0, (1.6, 1.2)), tc=DARK)
-    cv.text(x0 + sw + 1.5 + 13 + 12, y2 - 12, r"$\Delta$ log", size=TINY, color=DARK)
+    cv.text(x0 + sw + 1.5 + 13 + 12, y2 - 12, r"$\Omega$ log", size=TINY, color=DARK)
     cv.text(0, y2 + 14, r"commit: $S \leftarrow S \oplus \Delta_{\mathrm{head}}$, refold $C$" + "\nbacktrack: truncate the log, refold $C$",
             size=TINY, color=DARK, va="top", linespacing=1.2)
 

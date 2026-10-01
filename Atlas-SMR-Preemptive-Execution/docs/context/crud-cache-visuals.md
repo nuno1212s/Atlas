@@ -6,6 +6,13 @@ per-batch write log that the cache can be re-derived from. The drafts try differ
 so one or two can be chosen for the paper. Every figure uses the **same running example** (§2), is
 grayscale-safe, and is sized with a two-column venue in mind.
 
+**Notation.** Ωk is decision k while it is *speculated*: a pending log entry, which in the
+cache executors carries the batch's write set. Δk is the same decision once consensus has
+*confirmed* it: a commit turns the head Ω7 into Δ7 and applies it to `S`. Lowercase ω10 is the
+private write set of batch 10 while it executes (`CachingState.delta`). It becomes Ω10 when the
+batch ends. The dual-state executor's entries hold whole batches rather than write sets, but use
+the same letters for the same two states.
+
 | # | Style | Tool | Output name | Size | Fits |
 |---|---|---|---|---|---|
 | V1 | Three-tier read path | matplotlib | `preemptive-context-cache-read-path` | 241 × 118 pt | one column, at print size |
@@ -32,27 +39,27 @@ How your description of the design maps to the code, and where the code differs 
 |---|---|---|
 | confirmed state | `confirmed_state: S` | The one authoritative copy. Written only by a commit (apply a delta), direct execution, catch-up and state install. Speculation never writes it. |
 | a smaller cache holding only pending information | `accumulated_cache: AccumulatedCache` | `column → key → Option<value>`, where `None` (drawn **⊥**) is a tombstone for a deleted key. It holds **only keys written by pending batches**. It is never filled from reads of `S`, so it is not a read cache. Its size is the union of the pending write sets. |
-| write log | `pending: VecDeque<PendingCachedUpdate>` | One entry per speculated batch, oldest at the front. Each entry holds: **the batch itself**, its **held replies**, **Δ** and a timestamp. Δ is the batch's *net* write set: the last value per key, with tombstones for deletes. The log is per batch, not per operation. Reads, and the order of writes inside a batch, are not recorded. |
-| replay | two different mechanisms | **(a) Refold.** On every commit and every backtrack, `C` is rebuilt by folding the surviving Δs oldest first. Nothing is re-executed. **(b) Re-execution.** The stored batch copies are sent back to the reorder buffer and speculated again. This happens only on the fallback route. |
-| *(not in your description)* | `CachingState.delta` (**δ**) | The write set of the batch *currently executing*, private to it. It becomes that batch's Δ when the batch ends. |
-| *(not in your description)* | `staged: BTreeMap<SeqNo, batch>` | The reorder buffer. It holds batches that arrived ahead of their turn, as inputs only: nothing has been executed and there is no Δ. |
+| write log | `pending: VecDeque<PendingCachedUpdate>` | One entry per speculated batch, oldest at the front. Each entry holds: **the batch itself**, its **held replies**, **Ω** (the write set) and a timestamp. Ω is the batch's *net* write set: the last value per key, with tombstones for deletes. The log is per batch, not per operation. Reads, and the order of writes inside a batch, are not recorded. |
+| replay | two different mechanisms | **(a) Refold.** On every commit and every backtrack, `C` is rebuilt by folding the surviving Ωs oldest first. Nothing is re-executed. **(b) Re-execution.** The stored batch copies are sent back to the reorder buffer and speculated again. This happens only on the fallback route. |
+| *(not in your description)* | `CachingState.delta` (**ω**) | The write set of the batch *currently executing*, private to it. It becomes that batch's Ω when the batch ends. |
+| *(not in your description)* | `staged: BTreeMap<SeqNo, batch>` | The reorder buffer. It holds batches that arrived ahead of their turn, as inputs only: nothing has been executed and there is no Ω. |
 
 What each operation does to the structure:
 
-| Operation | δ | C | log | S |
+| Operation | ω | C | log | S |
 |---|---|---|---|---|
-| read (in a batch) | checked first | checked second | — | checked last; a ⊥ in δ or C stops the read before `S` |
+| read (in a batch) | checked first | checked second | — | checked last; a ⊥ in ω or C stops the read before `S` |
 | create / update / delete (in a batch) | receives the write (`delete` writes ⊥) | — | — | — |
-| batch ends | becomes Δ | `C ⊕= Δ` (merge, newer wins) | append `(batch, replies, Δ)` | — |
-| commit of the head | — | refold from the remaining Δs | pop the head; release its replies | `S ⊕= Δhead`: `Some(v)` becomes `update`, ⊥ becomes `delete` |
-| backtrack to *k* | — | refold from the Δs that survive | drop entries ≥ *k*; staged ≥ *k* is also evicted | — |
+| batch ends | becomes Ω | `C ⊕= Ω` (merge, newer wins) | append `(batch, replies, Ω)` | — |
+| commit of the head | — | refold from the remaining Ωs | pop the head; release its replies | `S ⊕= Δhead`: `Some(v)` becomes `update`, ⊥ becomes `delete` |
+| backtrack to *k* | — | refold from the Ωs that survive | drop entries ≥ *k*; staged ≥ *k* is also evicted | — |
 | fallback (commit of a batch still in `staged`) | — | cleared | every entry's batch goes back to `staged` | the batch runs directly with `update_batch` |
 | state install / catch-up | — | cleared | cleared, and `staged` cleared too | replaced / batches applied directly |
 | unordered read (read pool) | — | — | — | reads `S` only; speculative values are never visible |
 
 **Invariants the figures rely on:**
 
-1. `C ≡ fold(Δ in log order)` at all times. This is stated in `02` §3.5, and every mutation path either merges, refolds or clears.
+1. `C ≡ fold(Ω in log order)` at all times. This is stated in `02` §3.5, and every mutation path either merges, refolds or clears.
 2. *(Inferred from the code paths, not asserted in code.)* The log covers exactly the sequence
    numbers `[next_confirmed, next_preemptive)`, contiguous and ascending.
 3. *(Inferred from the code paths, not asserted in code.)* Every key in `staged` is
@@ -63,7 +70,7 @@ What each operation does to the structure:
   - `AccumulatedCache` and ⊥: `:4-5`
   - `CachingState`: `:9-13`
   - read order: `:30-44`
-  - writes into δ: `:46-75`
+  - writes into ω: `:46-75`
   - merge: `:79-86`
   - apply: `:89-102`
   - refold: `:105-113`
@@ -92,25 +99,25 @@ There is one column (the benchmark uses a single `CRUD_COLUMN`), and the keys ar
 | | a | b | c | d | e | Meaning |
 |---|---|---|---|---|---|---|
 | S (through seq 6) | 1 | 2 | 3 | | 7 | |
-| Δ7 (head) | 5 | | | 9 | | update a, create d |
-| Δ8 | | ⊥ | | | | delete b |
-| Δ9 (tail) | 6 | | 4 | | | update a, update c |
-| **C = Δ7 ⊕ Δ8 ⊕ Δ9** | 6 | ⊥ | 4 | 9 | | |
+| Ω7 (head) | 5 | | | 9 | | update a, create d |
+| Ω8 | | ⊥ | | | | delete b |
+| Ω9 (tail) | 6 | | 4 | | | update a, update c |
+| **C = Ω7 ⊕ Ω8 ⊕ Ω9** | 6 | ⊥ | 4 | 9 | | |
 
 `next_confirmed = 7`, `next_preemptive = 10`, and `staged = {12}` (11 has not arrived).
 
 Batch 10 is `c ← 5, e ← 8, read e, read b` (operations o1–o4). This batch is the one every
 executor runs. On the scalable executor it collides: o2 writes `e` and o3 reads it. V1 (read
 path) alone uses its own mid-batch illustration: `read a → 6` (from C), `read b → absent` (a ⊥ in
-C hides `S`'s 2), `read e → 7` (from S), and `update(c, 5)`, which goes into δ only.
+C hides `S`'s 2), `read e → 7` (from S), and `update(c, 5)`, which goes into ω only.
 
 All numbers come from `figures/executor_model.py`, a small executable model of the three
 executors. Its self-checks assert the states below.
 
 The storyboards continue the example:
-1. **Speculate Δ10:** `Δ10 = {c:5, e:8}`. The held replies are `4, 7, 8, none`.
-2. **Commit Δ7:** `S` becomes `{a:5, b:2, c:3, d:9, e:7}`, and `C` is refolded to `{a:6, b:⊥, c:5, e:8}`.
-3. **Backtrack to Δ9:** Δ9 and Δ10 are dropped, `staged {12}` is evicted, and `C = Δ8 = {b:⊥}`.
+1. **Speculate Ω10:** `Ω10 = {c:5, e:8}`. The held replies are `4, 7, 8, none`.
+2. **Commit Ω7:** `S` becomes `{a:5, b:2, c:3, d:9, e:7}`, and `C` is refolded to `{a:6, b:⊥, c:5, e:8}`.
+3. **Backtrack to Ω9:** Ω9 and Ω10 are dropped, `staged {12}` is evicted, and `C = Ω8 = {b:⊥}`.
 
 ---
 
@@ -119,9 +126,9 @@ The storyboards continue the example:
 | Mark | Meaning |
 |---|---|
 | white cell, black outline | entry in `S` |
-| light-gray cell | entry in a log Δ |
+| light-gray cell | entry in a log Ω (speculated) |
 | dark cell, white text | entry in `C` |
-| dashed cell | entry in the executing batch's δ |
+| dashed cell | entry in the executing batch's ω |
 | empty column slot (only a faint column guide) | no entry, so the read falls through |
 | ⊥ | tombstone (the key was deleted) |
 | gray text | entry shadowed by a newer layer; a read never sees it |
@@ -139,34 +146,34 @@ The PlantUML figures use the shared style header of [README.md](README.md) (§0)
 
 ## V1 — Three-tier read path
 
-One batch's view of the structure: δ over C over S. Plumb lines show where each read stops. The
-write arrow shows that a write never goes below δ. This is the "overlay filesystem" picture,
+One batch's view of the structure: ω over C over S. Plumb lines show where each read stops. The
+write arrow shows that a write never goes below ω. This is the "overlay filesystem" picture,
 aimed at readers who need to know *what a read returns* and nothing about the log.
 
 - **Strengths:** It is the smallest figure that explains the tombstone. `read b` stops at ⊥ even though `S` still holds `b = 2`. It has no time dimension.
 - **Weaknesses:** It hides the log entirely, so `C` looks like a primary structure rather than a derived one.
 
-**Evidence:** `caching_state.rs:30-44` (read order), `:46-75` (writes into δ only).
+**Evidence:** `caching_state.rs:30-44` (read order), `:46-75` (writes into ω only).
 
 ## V2 — The cache is the top view of the log
 
-The log's Δ rows are stacked above `S`, newest on top. Each `C` entry has an arrow up from the
+The log's Ω rows are stacked above `S`, newest on top. Each `C` entry has an arrow up from the
 newest row that holds its key, so `C` is literally "look down each column; the first entry wins".
-Shadowed values (Δ7's `a = 5`, and `S`'s `a`, `b`, `c`) are gray.
+Shadowed values (Ω7's `a = 5`, and `S`'s `a`, `b`, `c`) are gray.
 
 - **Strengths:** It shows that `C` is a *materialised view* of the log, which is the relationship behind both "smaller" and "replay". A reader can re-derive `C` by eye. Its row geometry is also the storyboard's.
-- **Weaknesses:** It shows no operation. The δ tier is left out, because it would be one more row above `C` and blur the picture.
+- **Weaknesses:** It shows no operation. The ω tier is left out, because it would be one more row above `C` and blur the picture.
 
 **Evidence:** `caching_state.rs:105-113` (fold, later deltas override), `pending_state.rs:217` (merge on speculate), `:316` (refold on commit).
 
 ## V3 — Storyboard: speculate, commit, backtrack
 
-Four panels in V2's layout (0 start, 1 speculate Δ10, 2 commit Δ7, 3 backtrack to Δ9), as a 1 × 4
+Four panels in V2's layout (0 start, 1 speculate Ω10, 2 commit Ω7, 3 backtrack to Ω9), as a 1 × 4
 strip for full width and as a 2 × 2 block for one column. Each panel
 shows the sequence pointers and what happened to replies and `staged`. This is the figure for the
 claims that a commit is "apply a delta and refold" and a backtrack is "truncate and refold".
-- **Panel 2** shows `d` leaving `C` when Δ7 reaches `S`: `C` shrinks on a commit.
-- **Panel 3** shows Δ8 surviving the backtrack without re-execution.
+- **Panel 2** shows `d` leaving `C` when Ω7 is confirmed as Δ7 and reaches `S`: `C` shrinks on a commit.
+- **Panel 3** shows Ω8 surviving the backtrack without re-execution.
 
 - **Strengths:** It shows the dynamics and the cost argument in one place. Every cell can be checked against §2.
 - **Weaknesses:** The strip needs full width, and the 2 × 2 block is tall for a column. There are many cells to keep consistent, which is why it is generated from the §2 data rather than hand-drawn.
@@ -179,7 +186,7 @@ claims that a commit is "apply a delta and refold" and a backtrack is "truncate 
 ## V4 — Object snapshot, before and after a commit
 
 A UML object diagram built from PlantUML `map`s. Each structure is a key→value table, the log is
-a package of Δ maps linked by `next`, and `C` is labelled as a fold of the log.
+a package of Ω maps linked by `next`, and `C` is labelled as a fold of the log.
 
 - **Strengths:** It is plain UML, so it sits naturally next to the class diagrams in `02` and `M2`, and it is a text source that diffs well.
 - **Weaknesses:** PlantUML chooses the placement. There is a lot of white space, and the layout cannot be made to line keys up across maps the way V2 does.
@@ -210,7 +217,7 @@ top to bottom direction
 skinparam nodesep 20
 skinparam ranksep 22
 
-package "before commit Δ7" as B {
+package "before commit Ω7" as B {
   map "C · accumulated_cache" as C0 {
     a => 6
     b => ⊥
@@ -218,14 +225,14 @@ package "before commit Δ7" as B {
     d => 9
   }
   package "pending log" as L0 {
-    map "Δ7 · head" as D7 {
+    map "Ω7 · head" as D7 {
       a => 5
       d => 9
     }
-    map "Δ8" as D8 {
+    map "Ω8" as D8 {
       b => ⊥
     }
-    map "Δ9 · tail" as D9 {
+    map "Ω9 · tail" as D9 {
       a => 6
       c => 4
     }
@@ -238,17 +245,17 @@ package "before commit Δ7" as B {
   }
 }
 
-package "after commit Δ7" as A {
+package "after commit Ω7 (now Δ7)" as A {
   map "C · refolded" as C1 {
     a => 6
     b => ⊥
     c => 4
   }
   package "pending log " as L1 {
-    map "Δ8 · head" as E8 {
+    map "Ω8 · head" as E8 {
       b => ⊥
     }
-    map "Δ9 · tail" as E9 {
+    map "Ω9 · tail" as E9 {
       a => 6
       c => 4
     }
@@ -309,8 +316,8 @@ skinparam ActivityDiamondFontSize 11
 start
 :read(column, key)
 inside CachingState;
-if (δ (this batch) has key?) then (yes)
-  :v = δ[key];
+if (ω (this batch) has key?) then (yes)
+  :v = ω[key];
 elseif (C (all pending batches) has key?) then (yes)
   :v = C[key];
 else (no)
@@ -318,7 +325,7 @@ else (no)
   note right: the only lookup that\ntouches application state
 endif
 :return v, where ⊥ means absent;
-note right: a ⊥ in δ or C hides\nwhatever S holds for the key
+note right: a ⊥ in ω or C hides\nwhatever S holds for the key
 stop
 @enduml
 ```
@@ -367,11 +374,11 @@ skinparam rectangle {
 }
 rectangle "S\n≤ 6" as s6 #lightgray
 package "pending log · VecDeque<PendingCachedUpdate>" as log {
-  rectangle "Δ7 · head\nbatch, replies, Δ\n▲ next_confirmed" as p7
-  rectangle "Δ8\nbatch, replies, Δ" as p8
-  rectangle "Δ9 · tail\nbatch, replies, Δ" as p9
+  rectangle "Ω7 · head\nbatch, replies, Ω\n▲ next_confirmed" as p7
+  rectangle "Ω8\nbatch, replies, Ω" as p8
+  rectangle "Ω9 · tail\nbatch, replies, Ω" as p9
 }
-rectangle "batch 10 → δ10\nexecuting\n▲ next_preemptive" as x10 #line.dashed
+rectangle "batch 10 → ω10\nexecuting\n▲ next_preemptive" as x10 #line.dashed
 rectangle "batch 11\nmissing" as g11 #line.dotted
 package "staged · BTreeMap" as stg {
   rectangle "batch 12\nnot executed" as s12
@@ -383,10 +390,10 @@ p9 -[hidden]- x10
 x10 -[hidden]- g11
 g11 -[hidden]- s12
 legend bottom left
-  commit Δ7:  pop the head, S ⊕= Δ7, refold C from Δ8 and Δ9, release the replies held with Δ7
-  speculate Δ10:  execute batch 10 through δ10, C ⊕= δ10, append it as Δ10
-  backtrack to Δk:  drop Δk and every later entry, evict all staged batches, refold C
-  batch 11 arrives:  speculate it into Δ11, then drain batch 12 from staged into Δ12
+  commit Ω7:  pop the head, which becomes Δ7; S ⊕= Δ7, refold C from Ω8 and Ω9, release its replies
+  speculate Ω10:  execute batch 10 through ω10, C ⊕= ω10, append it as Ω10
+  backtrack to Ωk:  drop Ωk and every later entry, evict all staged batches, refold C
+  batch 11 arrives:  speculate it into Ω11, then drain batch 12 from staged into Ω12
 endlegend
 @enduml
 ```
@@ -394,14 +401,14 @@ endlegend
 ## V7 — Version-control analogy
 
 Filled commits are `main` (= `S`), outlined commits are the unmerged log, the dashed commit is the
-working tree (= δ), and `HEAD`'s view is `C` over `S`. The rows map each operation to a git
+working tree (= ω), and `HEAD`'s view is `C` over `S`. The rows map each operation to a git
 operation:
-- commit is a fast-forward by one;
+- commit is a fast-forward by one (Ω7 becomes Δ7);
 - backtrack is `reset --hard` and then a new commit;
 - state transfer replaces `main`.
 
 - **Strengths:** Readers familiar with git get the idea in one glance, which makes it good for slides and talks.
-- **Weaknesses:** The analogy is loose in one place that matters. Git replays commits by re-applying them, while here a refold re-applies Δs and never re-executes a batch. The figure says so in the backtrack row, but a reviewer could still read "rebase", so it is risky as the only figure in a paper.
+- **Weaknesses:** The analogy is loose in one place that matters. Git replays commits by re-applying them, while here a refold re-applies Ωs and never re-executes a batch. The figure says so in the backtrack row, but a reviewer could still read "rebase", so it is risky as the only figure in a paper.
 
 **Evidence:** as V3. For state transfer: `pending_state.rs:409-416`.
 
@@ -409,7 +416,7 @@ operation:
 
 Two panels:
 - dual-state: two full copies of `S`;
-- CRUD cache: one `S`, a small `C` and a strip of Δs.
+- CRUD cache: one `S`, a small `C` and a strip of Ωs.
 
 The commit and backtrack cost is written under each.
 
@@ -429,20 +436,23 @@ figures come from `figures/executor_model.py`, so the three executors run the sa
 
 | Figure (output name) | Script | Size | Idea |
 |---|---|---|---|
-| `preemptive-context-cache-flow-b1-containers-arrows` | `crud_flow.py` | 505 × 328 pt | B as a 2 × 2 storyboard. Each step draws its flows: batch 10 *executes* into Δ10, which *merges* into C; *apply* Δ7 into S, with replies → clients; rows *dropped*, then *refold*. A change list sits beside each step. |
+| `preemptive-context-cache-flow-b1-containers-arrows` | `crud_flow.py` | 505 × 328 pt | B as a 2 × 2 storyboard. Each step draws its flows: batch 10 *executes* into Ω10, which *merges* into C; *apply* Ω7 into S, with replies → clients; rows *dropped*, then *refold*. A change list sits beside each step. |
 | `…-cache-flow-b2-before-after` | `crud_flow.py` | 505 × 378 pt | One row per operation: the state before (what the step consumes is outlined), a long arrow carrying the operation and its bullet list of changes, and the state after (changed cells in bold, removed ones dashed). |
-| `…-cache-flow-b3-mechanism` | `crud_flow.py` | 241 × 172 pt | A single-column map with five numbered flows: execute into δ; reads δ → C → S, skipping the log; δ appended as Δ and merged into C; commit of the head into S; the backtrack cut. Here C sits *above* the log, so the head commits straight down into S. |
-| `…-cache-flow-c1-table-arrows` | `crud_flow.py` | 505 × 234 pt | C as a 2 × 2 storyboard. Arrows run along each key's row, from the newest log entry into C (fold/merge) and from Δ7 back across the double rule into S (commit). S cells show their transition in place (old value struck, new value in bold). |
+| `…-cache-flow-b3-mechanism` | `crud_flow.py` | 241 × 172 pt | A single-column map with five numbered flows: execute into ω; reads ω → C → S, skipping the log; ω appended as Ω and merged into C; commit of the head into S; the backtrack cut. Here C sits *above* the log, so the head commits straight down into S. |
+| `…-cache-flow-c1-table-arrows` | `crud_flow.py` | 505 × 234 pt | C as a 2 × 2 storyboard. Arrows run along each key's row, from the newest log entry into C (fold/merge) and from Ω7 back across the double rule into S (commit). S cells show their transition in place (old value struck, new value in bold). |
 | `…-cache-flow-c2-timeline` | `crud_flow.py` | 505 × 146 pt | One table over time: S and C side by side after every step, with the operations as arrows between the column groups and the log and reply status as footer rows. It makes visible that only a commit changes S. |
 | `preemptive-context-dual-flow-b-containers-arrows` | `dual_flow.py` | 505 × 328 pt | B for the dual-state executor: preemptive worker (the log of *batches* and the full copy S_p) over confirmed worker (S). Flows: execute on S_p in place; forward B7 to be re-executed on S; clone S into S_p (blocking), then replay B8. |
 | `…-dual-flow-c-timeline` | `dual_flow.py` | 505 × 146 pt | C2 for the dual-state executor: S and S_p (both full states) after every step. |
-| `preemptive-context-scalable-flow-b-two-layers` | `scalable_flow.py` | 505 × 250 pt | The two caching layers as nested bands: the cross-batch layer (log and C) above the intra-batch workspace (steps ① to ⑤ for batch 10), above S. Arrows cross between the layers: every unit reads C, C is copied into the view, Δ10 is appended and merged into C, and misses fall to S. |
-| `…-scalable-flow-c-table` | `scalable_flow.py` | 505 × 160 pt | C for the scalable executor. The intra-batch layer becomes extra column groups: per-operation local caches, the collision row, `bd` after pass 1, the re-runs of pass 2, then Δ10 and the C after. |
+| `preemptive-context-scalable-flow-b-two-layers` | `scalable_flow.py` | 505 × 250 pt | The two caching layers as nested bands: the cross-batch layer (log and C) above the intra-batch workspace (steps ① to ⑤ for batch 10), above S. Arrows cross between the layers: every unit reads C, C is copied into the view, Ω10 is appended and merged into C, and misses fall to S. |
+| `…-scalable-flow-c-table` | `scalable_flow.py` | 505 × 160 pt | C for the scalable executor. The intra-batch layer becomes extra column groups: per-operation local caches, the collision row, `bd` after pass 1, the re-runs of pass 2, then Ω10 and the C after. |
 
-**Labelling.** An action is always named by the log entry the figure draws: Δk for the CRUD
-cache and the scalable executor, and Bk for the dual-state executor. The dual-state log holds
-whole batches (and their held replies) and never a delta, so a Δ label there would claim
-something the code does not keep. A staged batch has no Δ yet and stays "batch 12".
+**Labelling** (from iteration 02). An action names the decision it acts on:
+- Ωk while the decision is speculated: `speculate Ω10`, `commit Ω7`, `backtrack to Ω9`.
+- Δk once consensus has confirmed it. A commit turns Ω7 into Δ7, which is applied to `S`
+  (`S ← S ⊕ Δ7`), and the replies sent are Δ7's.
+
+The dual-state executor follows the same rule even though its entries hold batches, not write
+sets. A staged batch is not a decision yet, so it stays "batch 12".
 
 **Dual-state, as the figures draw it:**
 - *Speculate.* The batch runs directly on S_p, the preemptive worker's full copy (`preemptive_state`).
@@ -455,16 +465,16 @@ something the code does not keep. A staged batch has no Δ yet and stays "batch 
   `confirmed_worker/confirmed_requests.rs:44` (re-execution).
 
 **Scalable, the two caching layers.**
-- *Cross-batch layer.* The log of Δs and its fold C, identical to the CRUD cache. Commit and
+- *Cross-batch layer.* The log of Ωs and its fold C, identical to the CRUD cache. Commit and
   backtrack are the CRUD cache's, so B1, B2, C1 and C2 apply unchanged.
 - *Intra-batch layer.* Rebuilt for every batch. It holds:
   - one local cache ℓ per operation, which reads ℓ, then C, then S and records every access;
   - the collision set, where a Write or Delete on the same key as any other access collides;
   - `batch_delta` (bd), the non-colliders' ℓs merged in batch order;
   - `current_view = C ⊕ bd`, over which the colliders re-run one at a time, in batch order,
-    each through its own `CachingState` δ.
+    each through its own `CachingState` ω.
 
-  The final bd *is* Δ10.
+  The final bd *is* Ω10.
 - *Evidence:* `scalable_crud/execution_unit.rs:17-113` (the unit), `:140-167` (collisions);
   `scalable_crud/pending_state.rs:225-240` (parallel pass), `:262-270` (pass 1), `:272-285`
   (pass 2), `:294-301` (append and merge).
@@ -493,12 +503,12 @@ alternatives cannot drift from each other.
 
 | Route | Output name | Size | How it separates the two | Trade-off |
 |---|---|---|---|---|
-| **A. Swimlanes** | `preemptive-context-cache-alt-a-swimlanes` | 505 × 244 pt | Two lanes run top to bottom: *confirmed* (white, solid) and *speculative* (gray, dashed). Time runs down, one row per step. The log's cards line up by sequence number, with the head next to the lane boundary, and the commit arrow crosses into `S`. | The clearest separation and the only route showing each Δ as a write set (`a ← 5`). It is tall. |
+| **A. Swimlanes** | `preemptive-context-cache-alt-a-swimlanes` | 505 × 244 pt | Two lanes run top to bottom: *confirmed* (white, solid) and *speculative* (gray, dashed). Time runs down, one row per step. The log's cards line up by sequence number, with the head next to the lane boundary, and the commit arrow crosses into `S`. | The clearest separation and the only route showing each Ω as a write set (`a ← 5`). It is tall. |
 | **B. Containers** | `…-alt-b-containers` | 505 × 176 pt | The current storyboard, with the log and `C` boxed as *pending · discardable* above a separate *confirmed · authoritative* box. A `commit ↓` gate between them is active only in step 2. | The smallest change from V3. The shared key columns still invite comparing `C` with `S` cell by cell. |
 | **C. Version table** | `…-alt-c-version-table` | 505 × 112 pt | One row per key, read left to right as that key's history: the confirmed value, then the pending writes in order, then `C` (the last one). A double rule separates *confirmed*. | The most compact, and the most paper-like (a booktabs table). Backtrack shows as struck columns. There are no arrows, so the reader must know what refold means. |
-| **D. Version chains** | `…-alt-d-version-chains` | 241 × 160 pt | A single picture, not a storyboard. Each key is a chain `S → Δ7 → Δ9 …`, and the dark cell is the newest pending version, which is *exactly* what `C` holds. Commit is the frontier line moving right; backtrack is a cut. | Fits one column and shows that `C` is not a separate copy of anything. It is MVCC-flavoured, which suits database-minded reviewers. The operations are described rather than shown step by step. |
-| **E. Pipeline** | `…-alt-e-pipeline` | 505 × 124 pt | Batches flow left to right: consensus, the executing batch (δ), the *speculative* region (log cards and `C`), then `commit` into a *confirmed* store drawn as a database. | Presents the design as a system rather than a data structure, and is the only route that places the reorder buffer and the executing batch. A single state, no storyboard. |
-| **F. Transparent sheets** | `…-alt-f-sheets` | 505 × 158 pt | `S` is a solid base sheet below the commit frontier. Each Δ is a gray sheet stacked above it, and looking down a column gives what a read returns. Commit fuses the lowest sheet into the base; backtrack lifts the top sheets away. | The most intuitive "overlay" metaphor. The isometric sheets cost width, and values on a slanted sheet are harder to scan than a grid. |
+| **D. Version chains** | `…-alt-d-version-chains` | 241 × 160 pt | A single picture, not a storyboard. Each key is a chain `S → Ω7 → Ω9 …`, and the dark cell is the newest pending version, which is *exactly* what `C` holds. Commit is the frontier line moving right; backtrack is a cut. | Fits one column and shows that `C` is not a separate copy of anything. It is MVCC-flavoured, which suits database-minded reviewers. The operations are described rather than shown step by step. |
+| **E. Pipeline** | `…-alt-e-pipeline` | 505 × 124 pt | Batches flow left to right: consensus, the executing batch (ω), the *speculative* region (log cards and `C`), then `commit` into a *confirmed* store drawn as a database. | Presents the design as a system rather than a data structure, and is the only route that places the reorder buffer and the executing batch. A single state, no storyboard. |
+| **F. Transparent sheets** | `…-alt-f-sheets` | 505 × 158 pt | `S` is a solid base sheet below the commit frontier. Each Ω is a gray sheet stacked above it, and looking down a column gives what a read returns. Commit fuses the lowest sheet into the base; backtrack lifts the top sheets away. | The most intuitive "overlay" metaphor. The isometric sheets cost width, and values on a slanted sheet are harder to scan than a grid. |
 
 Nothing is committed to yet. The routes combine well: D or E as the structural figure, plus A or C
 for the dynamics.
@@ -519,7 +529,7 @@ Everything here is **inferred from reading the code**. None of it was reproduced
 is drawn as fact in the figures.
 
 1. **Refolding on commit is space reclamation, not a correctness requirement.** After `S ⊕= Δhead`, every `C` entry that came from Δhead now equals the value in `S`, or is overridden by a later Δ. So reads would return the same values without the refold, which only shrinks `C`.
-   - The refold costs O(Σ|Δ|) on every commit (`pending_state.rs:316`).
+   - The refold costs O(Σ|Ω|) on every commit (`pending_state.rs:316`).
    - This refines `02` §7. That section is right that *removing* the head's contribution needs per-key provenance, but it does not say that the removal is optional for correctness.
    - It is recorded here, not as a contradiction.
 
