@@ -444,7 +444,12 @@ figures come from `figures/executor_model.py`, so the three executors run the sa
 | `preemptive-context-dual-flow-b-containers-arrows` | `dual_flow.py` | 505 × 328 pt | B for the dual-state executor: preemptive worker (the log of *batches* and the full copy S_p) over confirmed worker (S). Flows: execute on S_p in place; forward B7 to be re-executed on S; clone S into S_p (blocking), then replay B8. |
 | `…-dual-flow-c-timeline` | `dual_flow.py` | 505 × 146 pt | C2 for the dual-state executor: S and S_p (both full states) after every step. |
 | `preemptive-context-scalable-flow-b-two-layers` | `scalable_flow.py` | 505 × 250 pt | The two caching layers as nested bands: the cross-batch layer (log and C) above the intra-batch workspace (steps ① to ⑤ for batch 10), above S. Arrows cross between the layers: every unit reads C, C is copied into the view, Ω10 is appended and merged into C, and misses fall to S. |
-| `…-scalable-flow-c-table` | `scalable_flow.py` | 505 × 160 pt | C for the scalable executor. The intra-batch layer becomes extra column groups: per-operation local caches, the collision row, `bd` after pass 1, the re-runs of pass 2, then Ω10 and the C after. |
+| `…-scalable-flow-c-table` | `scalable_flow.py` | 505 × 160 pt | C for the scalable executor. The intra-batch layer becomes extra column groups: per-operation local caches, the collision row, ω10 after pass 1, the re-runs of pass 2, then Ω10 and the C after. |
+| `…-scalable-flow-d-middleware` | `scalable_flow.py` | 505 × 286 pt | Three bands, left to right: the speculated view (C over S, read only), the middleware (one container per operation: four in parallel on T1–T4, then the two collider re-runs on the worker), and the decision state (collision check, ω10, Ω10). Dashed arrows run from the exact cell that serves each read into its container; solid arrows carry each container's output to the join and into ω10. |
+| `…-scalable-flow-e-thread-lanes` | `scalable_flow.py` | 505 × 222 pt | A Gantt-style strip over time: the request channel, the worker, the exec pool (T1–T4) and the read pool. It shows the fork–join of step 1 with the worker blocked in `pool.install`, steps 2–5 and the commit on the worker, Finalized(7) and batch 11 waiting in the channel, and unordered reads on S. |
+| `…-scalable-flow-f-request-routing` | `scalable_flow.py` | 505 × 226 pt | Every request type the worker accepts and the path it takes: PreemptiveUpdate (stage, speculate and drain, or backtrack), Finalized (commit, or the staged fallback), UpdateBatch, ExecuteUnordered, CatchUp and PollStateChannel. Each step carries its thread tag. |
+| `…-scalable-flow-g-request-journey` | `scalable_flow.py` | 241 × 318 pt | A single-column trace of two client requests, o2 (`e ← 8`) and o3 (`read e`): their parallel containers and read paths, the collision, the re-runs on the worker, Ω10, the commit, and the replies their clients finally get. |
+| `…-scalable-flow-h-layer-cake` | `scalable_flow.py` | 505 × 196 pt | One column per container, with rows for the layers: the private ℓ, ω10 (worker only), C and S (shared, read only). Each read is a vertical arrow that stops at the layer serving it, which makes the lock-free argument visible: private and mutable versus shared and immutable. |
 
 **Labelling** (from iteration 02). An action names the decision it acts on:
 - Ωk while the decision is speculated: `speculate Ω10`, `commit Ω7`, `backtrack to Ω9`.
@@ -470,11 +475,13 @@ sets. A staged batch is not a decision yet, so it stays "batch 12".
 - *Intra-batch layer.* Rebuilt for every batch. It holds:
   - one local cache ℓ per operation, which reads ℓ, then C, then S and records every access;
   - the collision set, where a Write or Delete on the same key as any other access collides;
-  - `batch_delta` (bd), the non-colliders' ℓs merged in batch order;
-  - `current_view = C ⊕ bd`, over which the colliders re-run one at a time, in batch order,
-    each through its own `CachingState` ω.
+  - `batch_delta`, the batch's write set while it executes, drawn as ω10 (the figures before
+    iteration 03 called it bd): first the non-colliders' ℓs merged in batch order, then each
+    collider re-run's writes;
+  - `current_view = C ⊕ ω10`, over which the colliders re-run one at a time, in batch order,
+    each through its own `CachingState`.
 
-  The final bd *is* Ω10.
+  The final ω10 *is* Ω10.
 - *Evidence:* `scalable_crud/execution_unit.rs:17-113` (the unit), `:140-167` (collisions);
   `scalable_crud/pending_state.rs:225-240` (parallel pass), `:262-270` (pass 1), `:272-285`
   (pass 2), `:294-301` (append and merge).
@@ -487,9 +494,33 @@ Ideas used to fit the second layer into the chosen styles:
   right in pipeline order. The collision is a box across the two cells, and the corrected read
   (`r 7` → `r 8`) sits in the same row, so the fix is visible at a glance.
 
+**Scalable, threads and containers** (figures D–H, from iteration 03):
+- *Threads.*
+  - One worker thread takes every request from the channel and handles them one at a time.
+  - Step ① alone runs on the exec pool (rayon, 4 threads). It is a fork–join: the worker
+    blocks in `pool.install` until the slowest operation finishes.
+  - Steps ②–⑤, the collider re-runs, commit and backtrack all run on the worker.
+  - Unordered reads run on a separate 4-thread read pool, directly over S, with no container.
+- *Containers.* Each operation executes inside a proxy that implements `CRUDState`. The
+  application's `speculatively_execute(&mut impl CRUDState, op)` never touches S or C itself.
+  The proxy sits between the speculated view and the decision being built: it reads its own ℓ,
+  then C, then S, and writes only into its own ℓ, which the worker then folds into ω10.
+  - In step ① the proxy is a `ParallelExecutionUnit` and also logs every access.
+  - In step ④ it is a `CachingState` over `current_view`.
+- *Figure conventions.*
+  - Containers have a double border.
+  - Thread tags: black T1–T4 for the exec pool, white W for the worker, grey R1–R4 for the read
+    pool.
+  - Hatching marks the sections that run in parallel.
+- *Evidence:*
+  - `scalable_crud/mod.rs:42-44` (pool sizes), `:154-164` (the worker thread),
+    `:298-319` (unordered reads on the read pool);
+  - `scalable_crud/pending_state.rs:225-235` (`pool.install`, one unit per operation),
+    `:273-284` (re-runs in a `CachingState` over `current_view`);
+  - `Atlas-SMR-Execution/src/crud_states.rs:31-35` (`speculatively_execute` takes
+    `&mut impl CRUDState`).
+
 Ideas considered and not drawn yet:
-- a Gantt-style strip of the rayon pool (parallel pass, then the sequential pass) for the
-  critical-path figure;
 - a conflict graph (operations as nodes, collisions as edges) for batches with more than one
   collision.
 
@@ -555,7 +586,7 @@ is drawn as fact in the figures.
 
 6. **Scalable: a collider's re-run can see writes from later operations in the batch.**
    (Inferred; not reproduced.)
-   - Pass 2 re-runs each collider over `C ⊕ bd`, and bd already holds *every* non-collider's
+   - Pass 2 re-runs each collider over `C ⊕ ω10`, and ω10 (`batch_delta`) already holds *every* non-collider's
      writes, including those of operations *after* the collider in batch order
      (`scalable_crud/pending_state.rs:272-285`).
    - A non-collider's keys were touched by no other operation *in the parallel pass*, so this

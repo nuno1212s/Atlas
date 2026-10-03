@@ -69,7 +69,7 @@ class Canvas:
 
     def arrow(self, a, b, lw=0.6, color=INK, head=(3.2, 1.5), ls="-", z=4, conn=None,
               both=False):
-        style = f"{'<' if both else ''}-|>,head_length={head[0]},head_width={head[1]}"
+        style = f"{'<|' if both else ''}-|>,head_length={head[0]},head_width={head[1]}"
         p = FancyArrowPatch(a, b, arrowstyle=style, mutation_scale=1, linewidth=lw,
                             color=color, linestyle=ls, shrinkA=0, shrinkB=0, zorder=z,
                             connectionstyle=conn or "arc3,rad=0")
