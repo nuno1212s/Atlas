@@ -14,7 +14,9 @@ shapes are flat and rounded.
 | sand | the read pool |
 | red | discarded (backtrack) |
 
-There are four figure types with three options each:
+There are four figure types with three options each. Since iteration 05, every option is drawn once
+per executor: `<type>-<option>-{crud,dual,scal}`, for the CRUD cache, dual-state and scalable CRUD
+executors, so there are 36 figures in all.
 
 | Script | Type | Options |
 |---|---|---|
@@ -23,8 +25,10 @@ There are four figure types with three options each:
 | `lifecycle.py` | Decision lifecycle | C1 state machine · C2 conveyor belt · C3 branch graph |
 | `requests.py` | Request flow and threads | D1 subway map · D2 sequence diagrams · D3 containers between planes |
 
-`svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). The
-caching sheets take their values from `../figures/executor_model.py`.
+`svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). It also
+holds `Svg(..., ox, oy)`, a canvas whose viewBox origin can be moved, so that a layout drawn once can
+be cropped to one executor without moving any coordinates. The caching sheets take their values
+from `../figures/executor_model.py`.
 
 ## Rendering
 

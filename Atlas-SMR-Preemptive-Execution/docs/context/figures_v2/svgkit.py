@@ -43,13 +43,19 @@ def text_width(s, size, weight=400):
     return len(plain) * size * (0.6 if weight >= 600 else 0.56)
 
 
+EXECUTORS = {"crud": "CRUD cache", "dual": "Dual-state", "scal": "Scalable CRUD"}
+
+
 class Svg:
-    def __init__(self, w, h, bg=WHITE):
-        self.w, self.h = w, h
+    """A canvas of w × h whose top-left corner sits at (ox, oy) in drawing coordinates, so one
+    layout can be cropped into one figure per executor without moving anything."""
+
+    def __init__(self, w, h, bg=WHITE, ox=0, oy=0):
+        self.w, self.h, self.ox, self.oy = w, h, ox, oy
         self.items = []
         self.markers = {}
         if bg:
-            self.rect(0, 0, w, h, r=0, fill=bg)
+            self.rect(ox, oy, w, h, r=0, fill=bg)
 
     # -- shapes ----------------------------------------------------------------
     def _style(self, fill="none", stroke="none", sw=1.0, dash=None, opacity=None, extra=""):
@@ -140,7 +146,9 @@ class Svg:
             self.rect(x0 - pad, y - size * 0.9, w + 2 * pad, size * 1.25, r=3, fill=bg)
         self.text(x, y, s, size=size, fill=fill, anchor=anchor, weight=weight)
 
-    def title(self, title, sub=None, x=32, y=44):
+    def title(self, title, sub=None, x=None, y=None):
+        x = self.ox + 32 if x is None else x
+        y = self.oy + 44 if y is None else y
         self.text(x, y, title, size=22, weight=600)
         if sub:
             self.text(x, y + 24, sub, size=13.5, fill=MUTED)
@@ -151,7 +159,7 @@ class Svg:
                 '<feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#1d2433" flood-opacity="0.12"/></filter>']
         defs += [m for _, m in self.markers.values()]
         return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{self.w}" height="{self.h}" '
-                f'viewBox="0 0 {self.w} {self.h}"><defs>{"".join(defs)}</defs>\n' + "\n".join(self.items) + "\n</svg>\n")
+                f'viewBox="{self.ox} {self.oy} {self.w} {self.h}"><defs>{"".join(defs)}</defs>\n' + "\n".join(self.items) + "\n</svg>\n")
 
     def save(self, stem):
         with open(stem + ".svg", "w") as f:
