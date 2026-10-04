@@ -91,158 +91,27 @@ def clients(s, x, y, n=3):
 # ---------------------------------------------------------------------------
 # X1 — rooms, with the caching layers inside the room that owns them
 # ---------------------------------------------------------------------------
-def x1_rooms_layers(out):
-    s = Svg(1000, 720)
-    s.title("Scalable CRUD", "Architecture + caching · X1 · each thread's room holds the state it owns")
-    s.rect(30, 96, 940, 34, r=17, fill=CONS_T, stroke=CONS, sw=1.3)
-    s.text(500, 118, "consensus", size=13, weight=600, fill=CONS, anchor="middle")
-
-    # exec pool: one container per op, each with its private ℓ
-    room(s, 30, 158, 380, 446, "exec pool", POOL, POOL_T, "4 threads, in parallel")
-    for pos in range(4):
-        op_container(s, 46, 196 + pos * 80, 348, 64, pos)
-    s.arrow([(150, 130), (150, 156)], stroke=CONS)
-    s.label(214, 146, "batch k: one op per thread", size=11, fill=CONS, bg=WHITE)
-
-    # worker: ω, the log and C over S
-    room(s, 430, 158, 540, 446, "worker", WORK, WORK_T, "owns the log, Ω^{*} and Δ^{*}")
-    omega_box(s, 446, 196)
-    s.text(508, 290, "merge ℓ_{1}, ℓ_{4}", size=10.5, fill=MUTED, anchor="middle")
-    s.text(508, 304, "re-run o2, o3", size=10.5, fill=MUTED, anchor="middle")
-    s.arrow([(410, 230), (444, 230)], stroke=LIVE, sw=1.8)
-    s.label(427, 220, "join", size=10.5, fill=LIVE, bg=WHITE)
-    xs = [596, 680, 764, 848]
-    s.arrow([(570, 225), (594, 225)], stroke=SPEC, sw=1.6)
-    wcard(s, xs[0], 196, 10, OMEGA10, dashed=True)
-    for x, (q, d, _) in zip(xs[1:], reversed(LOG0)):
-        wcard(s, x, 196, q, d)
-    s.text(xs[0], 272, "newest", size=10.5, fill=MUTED)
-    s.text(xs[3] + 72, 272, "oldest", size=10.5, fill=MUTED, anchor="end")
-    s.arrow([(xs[0] + 50, 268), (xs[3] + 20, 268)], stroke="#b9bfca", sw=1)
-    s.text(xs[1] + 4, 290, "write log", size=12, weight=600)
-
-    cs, ss = Sheet(500, 436, slot=50, dx=40, dy=-26), Sheet(500, 560, slot=50, dx=40, dy=-26)
-    ss.draw(s, CONF, CONF_T, S0, size=13)
-    cs.draw(s, SPEC, SPEC_T, C0, size=13)
-    s.text(474, cs.y - 2, "Ω^{*}", size=20, weight=600, fill=SPEC, anchor="end")
-    s.text(474, ss.y - 2, "Δ^{*}", size=20, weight=600, fill=CONF, anchor="end")
-    s.arrow([(xs[2] + 36, 256), (xs[2] + 36, 300), (cs.x + cs.w + 26, cs.y - 30)], stroke=SPEC, sw=1.6)
-    s.label(xs[2] + 26, 314, "fold: Ω^{*} = Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WORK_T, anchor="end")
-
-    # commit: confirm k reaches the oldest, Ω7, which becomes Δ7 and is written into S
-    s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 194)], stroke=CONS)
-    s.label(xs[3] + 36, 146, "confirm k", size=11, fill=CONS, bg=WHITE)
-    s.arrow([(xs[3] + 72, 230), (950, 230), (950, ss.y - 12), (ss.x + ss.w + 24, ss.y - 12)], stroke=CONF, sw=2)
-    s.text(944, 380, "commit", size=11.5, fill=CONF, weight=600, anchor="end")
-    s.text(944, 395, "Ω_{7} → Δ_{7}", size=11.5, fill=CONF, anchor="end")
-
-    # cross-thread reads: o3 and o4 read the worker's C and S
-    i = KEYS.index("e")
-    ex_, ey = cs.centre(i)
-    sx_, sy = ss.centre(i)
-    ray(s, [(394, 372), (ex_, 372), (ex_, sy - 11)], [(ex_, ey)])
-    s.text(sx_ + 14, sy - 24, "o3 finds e = 7", size=11, weight=600, fill=DROP)
-    i = KEYS.index("b")
-    bx, by = cs.centre(i)
-    ray(s, [(394, 468), (420, 468), (420, 386), (bx, 386), (bx, by - 11)])
-    s.text(446, 362, "&Ω^{*}, &Δ^{*}: read-only, shared by all four threads", size=10.5, fill=MUTED)
-
-    # clients
-    s.rect(30, 624, 940, 40, r=20, fill="#eef0f3")
-    clients(s, 480, 646)
-    s.arrow([(950, ss.y - 12), (950, 622)], stroke=INK)
-    s.text(944, 612, "replies of Δ_{7}", size=11, fill=INK, anchor="end")
-    legend(s, 32, 700, [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated"),
-                        ("capsule", LIVE, LIVE_T, "container / being built"), ("badge", WORK, None, "thread"),
-                        ("badge", POOL, None, "parallel thread")])
-    s.save(os.path.join(out, f"{PFX}-x1-rooms-layers"))
-
-
-# ---------------------------------------------------------------------------
-# X2 — lanes, with the worker's state as a ledger tape feeding C over S
-# ---------------------------------------------------------------------------
-def kv_box(s, x, y, w, h, name, values, colour, tint, sub=None):
-    s.rect(x, y, w, h, r=12, fill=tint, stroke=colour, sw=1.6, shadow=True)
-    s.text(x + 12, y + 22, name, size=16, weight=600, fill=colour)
-    if sub:
-        s.text(x + w - 10, y + 22, sub, size=10.5, fill=MUTED, anchor="end")
-    strip(s, x + 12, y + 40, values, colour, tint, cell=24, gap=6, size=12)
-
-
-def x2_lanes_ledger(out):
-    s = Svg(1000, 620)
-    s.title("Scalable CRUD", "Architecture + caching · X2 · thread lanes, with the state as a ledger")
-    s.rect(30, 230, 108, 58, r=12, fill=CONS_T, stroke=CONS, sw=1.4)
-    s.text(84, 257, "consensus", size=13.5, weight=600, fill=CONS, anchor="middle")
-    s.text(84, 274, "orders batches", size=10.5, fill=MUTED, anchor="middle")
-    s.rect(156, 96, 744, 480, r=18, fill=PANEL)
-
-    # exec pool lane
-    s.rect(172, 112, 712, 126, r=14, fill=POOL_T)
-    thread_badge(s, 184, 130, "exec pool · 4 threads in parallel", POOL)
-    for pos in range(4):
-        op_container(s, 184 + pos * 174, 150, 164, 76, pos, cell=12, gap=2)
-    s.arrow([(138, 244), (152, 244), (152, 188), (182, 188)], stroke=CONS)
-    s.label(150, 210, "batch k", size=10.5, fill=CONS, bg=PANEL, anchor="end")
-
-    # worker lane: ω → tape (newest left, oldest right) → C over S
-    s.rect(172, 254, 712, 230, r=14, fill=WORK_T)
-    thread_badge(s, 184, 272, "worker", WORK)
-    omega_box(s, 184, 300)
-    s.arrow([(246, 238), (246, 298)], stroke=LIVE, sw=1.8)
-    s.label(246, 262, "join", size=10.5, fill=LIVE, bg=WORK_T)
-    s.text(246, 396, "merge ℓ_{1}, ℓ_{4},", size=10.5, fill=MUTED, anchor="middle")
-    s.text(246, 410, "re-run o2, o3", size=10.5, fill=MUTED, anchor="middle")
-    xs = [338, 420, 502, 584]
-    s.arrow([(308, 330), (336, 330)], stroke=SPEC, sw=1.6)
-    wcard(s, xs[0], 300, 10, OMEGA10, dashed=True)
-    for x, (q, d, _) in zip(xs[1:], reversed(LOG0)):
-        wcard(s, x, 300, q, d)
-    s.text(xs[0], 378, "newest", size=10.5, fill=MUTED)
-    s.arrow([(xs[0] + 50, 374), (xs[3] + 6, 374)], stroke="#b9bfca", sw=1)
-    s.text(xs[3] + 4, 392, "oldest", size=10.5, fill=MUTED, anchor="end")
-    kv_box(s, 702, 290, 168, 76, "Ω^{*}", C0, SPEC, SPEC_T, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
-    kv_box(s, 702, 380, 168, 76, "Δ^{*}", S0, CONF, CONF_T, "confirmed")
-    s.arrow([(658, 314), (700, 314)], stroke=SPEC, sw=1.6)
-    s.label(679, 304, "fold", size=10.5, fill=SPEC, bg=WORK_T)
-    s.arrow([(xs[3] + 46, 360), (xs[3] + 46, 440), (700, 440)], stroke=CONF, sw=2)
-    s.text(668, 474, "commit Ω_{7} → Δ_{7}", size=10.5, fill=CONF, anchor="middle")
-    s.arrow([(138, 274), (152, 274), (152, 470), (xs[3] + 22, 470), (xs[3] + 22, 362)], stroke=CONS)
-    s.label(240, 474, "confirm k", size=10.5, fill=CONS, bg=WORK_T)
-
-    # every op reads the worker's C, then S
-    s.arrow([(786, 238), (786, 288)], stroke=MUTED, dash="4 3")
-    s.label(786, 262, "each op reads ℓ, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
-
-    # replies
-    s.arrow([(870, 418), (930, 418), (930, 398)], stroke=INK)
-    clients(s, 916, 370)
-    s.text(924, 436, "replies", size=11, fill=INK, anchor="middle")
-    legend(s, 32, 600, [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated"),
-                        ("capsule", LIVE, LIVE_T, "container / being built"), ("badge", WORK, None, "thread"),
-                        ("badge", POOL, None, "parallel thread")])
-    s.save(os.path.join(out, f"{PFX}-x2-lanes-ledger"))
-
-
-# ---------------------------------------------------------------------------
-# X3 — see-through layers, with the threads that own and read them around them
-# ---------------------------------------------------------------------------
 def x3_layers_threads(out):
-    s = Svg(1000, 660)
+    from scalable_steps import conf_box, spec_group     # imported here: scalable_steps imports this module
+    s = Svg(1000, 716)
     s.title("Scalable CRUD", "Architecture + caching · X3 · the layers, and the threads that own and read them")
     top = 236
     # exec pool band behind the per-op caches
     s.rect(120, top - 92, 474, 132, r=16, fill=POOL_T)
     thread_badge(s, 132, top - 74, "exec pool · 4 threads in parallel", POOL)
-    # worker band behind C, S and the log
-    s.rect(120, top + 58, 850, 268, r=16, fill=WORK_T)
-    thread_badge(s, 132, top + 76, "worker · owns the log, Ω^{*} and Δ^{*}", WORK)
-
-    cs, ss = Sheet(190, top + 160), Sheet(190, top + 272)
-    ss.draw(s, CONF, CONF_T, S0)
-    sheet_label(s, ss, "Δ^{*}", "confirmed", CONF)
+    # the worker band holds the speculative cache: ω10, the log and Ω*
+    s.rect(120, 290, 850, 206, r=16, fill=WORK_T)
+    thread_badge(s, 132, 308, "worker · holds the speculative cache", WORK)
+    spec_group(s, 130, 322, 830, 166, tx=140, ty=482)
+    cs = Sheet(190, 466)
     cs.draw(s, SPEC, SPEC_T, C0)
-    sheet_label(s, cs, "Ω^{*}", "pending", SPEC)
+    sheet_label(s, cs, "Ω^{*}", "", SPEC)
+    # the confirmed state, apart from the cache
+    conf_box(s, 120, 508, 850, 100)
+    ss = Sheet(190, 596)
+    ss.draw(s, CONF, CONF_T, S0)
+    sheet_label(s, ss, "Δ^{*}", "", CONF)
+
     minis = []
     for pos in range(4):
         local = TRACE10.lanes[pos][0]
@@ -254,7 +123,7 @@ def x3_layers_threads(out):
         s.text(m.x + m.w / 2 + 6, top + 22, f"ℓ_{{{pos + 1}}}", size=11.5, weight=600, fill=LIVE, anchor="middle")
         minis.append(m)
 
-    # o3's read of e: its own ℓ3, then the shared C, then S, where it finds the stale 7
+    # o3's read of e: its own ℓ3, then Ω*, then Δ*, where it finds the stale 7
     i = KEYS.index("e")
     x0, y0 = minis[2].centre(i)
     cx, cy = cs.centre(i)
@@ -262,42 +131,61 @@ def x3_layers_threads(out):
     ray(s, [(x0, y0), (cx, cy), (hx, hy - 12)], [(x0, y0), (cx, cy)])
     s.text(hx + 14, hy - 30, "o3: e → 7, stale", size=11.5, weight=600, fill=DROP)
 
-    # ω and the log on the worker
-    lx, ly = 620, top + 112
-    s.text(lx - 10, ly + 34, "write log", size=12.5, weight=600, anchor="end")
-    xs = [lx + n * 84 for n in range(4)]
+    # ω10 and the log, inside the speculative cache
+    xs = [620, 704, 788, 872]
+    ly = 418
+    s.rect(xs[0], 330, 124, 74, r=10, fill=LIVE_T, stroke=LIVE, sw=1.6, shadow=True)
+    s.text(xs[0] + 10, 349, "ω_{10}", size=14, weight=600, fill=LIVE)
+    s.text(xs[0] + 116, 349, "batch 10", size=10.5, fill=MUTED, anchor="end")
+    strip(s, xs[0] + 10, 372, OMEGA10, LIVE, LIVE_T, cell=18, gap=3)
+    s.text(xs[0] + 136, 354, "merge ℓ_{1}, ℓ_{4}", size=10.5, fill=MUTED)
+    s.text(xs[0] + 136, 368, "re-run o2, o3", size=10.5, fill=MUTED)
     wcard(s, xs[0], ly, 10, OMEGA10, dashed=True)
     for x, (q, d, _) in zip(xs[1:], reversed(LOG0)):
         wcard(s, x, ly, q, d)
-    s.rect(xs[0] - 4, top - 66, 124, 74, r=10, fill=LIVE_T, stroke=LIVE, sw=1.6, shadow=True)
-    s.text(xs[0] + 6, top - 47, "ω_{10}", size=14, weight=600, fill=LIVE)
-    s.text(xs[0] + 112, top - 47, "on the worker", size=10.5, fill=MUTED, anchor="end")
-    strip(s, xs[0] + 6, top - 24, OMEGA10, LIVE, LIVE_T, cell=18, gap=3)
-    s.arrow([(minis[3].x + minis[3].w + 26, top - 30), (xs[0] - 6, top - 30)], stroke=LIVE, sw=1.8)
-    s.label((minis[3].x + minis[3].w + 26 + xs[0]) / 2, top - 40, "join", size=10.5, fill=LIVE, bg=WHITE)
-    s.text(xs[0] + 130, top - 36, "merge ℓ_{1}, ℓ_{4}", size=10.5, fill=MUTED)
-    s.text(xs[0] + 130, top - 22, "re-run o2, o3", size=10.5, fill=MUTED)
-    s.arrow([(xs[0] + 36, top + 10), (xs[0] + 36, ly - 2)], stroke=SPEC, sw=1.6)
-    s.arrow([(xs[2] + 20, ly + 60), (xs[2] + 20, ly + 80), (cs.x + cs.w + 24, ly + 80),
-             (cs.x + cs.w + 12, cs.y - 8)], stroke=SPEC, sw=1.6)
-    s.label(cs.x + cs.w + 120, ly + 84, "fold: Ω^{*} = Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WORK_T)
-    s.arrow([(xs[3] + 36, ly + 60), (xs[3] + 36, ss.y - 14), (ss.x + ss.w + 30, ss.y - 14)], stroke=CONF, sw=2)
-    s.text(xs[3] + 30, ss.y - 22, "commit Ω_{7} → Δ_{7}", size=11, fill=CONF, anchor="end")
+    s.text(xs[2], 412, "write log", size=12, weight=600)
+    jx = minis[3].x + minis[3].w + 26
+    s.arrow([(jx, top - 30), (604, top - 30), (604, 367), (618, 367)], stroke=LIVE, sw=1.8)
+    s.label(jx + 20, top - 40, "join", size=10.5, fill=LIVE, bg=WHITE)
+    s.arrow([(xs[0] + 36, 404), (xs[0] + 36, 416)], stroke=SPEC, sw=1.6)
+    s.arrow([(xs[0] - 2, 447), (cs.x + cs.w + 34, 447)], stroke=SPEC, sw=1.6)
+    s.label(596, 440, "fold", size=10.5, fill=SPEC, bg=WHITE)
+    s.arrow([(xs[3] + 36, ly + 60), (xs[3] + 36, ss.y - 15), (ss.x + ss.w + 30, ss.y - 15)], stroke=CONF, sw=2)
+    s.text(xs[3] + 28, ss.y - 22, "commit Ω_{7} → Δ_{7}", size=11, fill=CONF, anchor="end")
 
     # consensus and clients
     s.rect(820, 100, 150, 40, r=12, fill=CONS_T, stroke=CONS, sw=1.3)
     s.text(895, 125, "consensus", size=13, weight=600, fill=CONS, anchor="middle")
     s.arrow([(900, 140), (900, 160), (xs[3] + 36, 160), (xs[3] + 36, ly - 2)], stroke=CONS)
-    s.text(908, 160, "confirm k", size=10.5, fill=CONS)
+    s.text(908, 160, "confirm 7", size=10.5, fill=CONS)
     s.arrow([(820, 112), (360, 112), (360, top - 94)], stroke=CONS)
     s.label(600, 106, "batch k: one op per thread", size=10.5, fill=CONS, bg=WHITE)
-    clients(s, 880, 580)
-    s.arrow([(xs[3] + 36, ss.y - 14), (xs[3] + 36, 570), (868, 570)], stroke=INK)
-    s.text(xs[3] + 44, 560, "replies", size=11, fill=INK)
-    legend(s, 32, 644, [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated"),
+    clients(s, 880, 640)
+    s.arrow([(xs[3] + 36, ss.y - 15), (xs[3] + 36, 630), (868, 630)], stroke=INK)
+    s.text(xs[3] + 44, 622, "replies", size=11, fill=INK)
+    legend(s, 32, 700, [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated"),
                         ("capsule", LIVE, LIVE_T, "container / being built"), ("badge", WORK, None, "thread"),
                         ("badge", POOL, None, "parallel thread")])
     s.save(os.path.join(out, f"{PFX}-x3-layers-threads"))
+
+
+def _from_overview(out, style, name):
+    """X1 and X2 are drawn by scalable_steps as its overview (step 0); keep the sheet names."""
+    import shutil
+    import tempfile
+    import scalable_steps
+    with tempfile.TemporaryDirectory() as tmp:
+        (scalable_steps.x1 if style == "x1" else scalable_steps.x2)(tmp, 0)
+        for ext in ("svg", "png", "pdf"):
+            shutil.move(os.path.join(tmp, f"arch-scal-{style}-step0.{ext}"), os.path.join(out, f"{PFX}-{name}.{ext}"))
+
+
+def x1_rooms_layers(out):
+    _from_overview(out, "x1", "x1-rooms-layers")
+
+
+def x2_lanes_ledger(out):
+    _from_overview(out, "x2", "x2-lanes-ledger")
 
 
 if __name__ == "__main__":

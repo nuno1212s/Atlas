@@ -26,7 +26,9 @@ Dual-state, main + preemptive + confirmed workers:
   6 run batch 7 again       the confirmed worker re-executes it on Δ* and drops its replies
 Decisions are confirmed in order, so the first confirmation after batch 10 is for 7 (iteration 14).
 State is drawn only while it is used: batch 10's own state appears when it exists, and persistent
-state that a step does not touch is faded. The read pool is not drawn.
+state that a step does not touch is faded. The read pool is not drawn. In the CRUD cache figures the worker holds
+the speculative cache (ω10 as its newest, still open layer, the log and Ω*), and the confirmed state Δ* is drawn
+apart from it (iteration 16).
 """
 import os
 import sys
@@ -36,8 +38,8 @@ from executor_model import BATCH, CRUD, DUAL, KEYS, op_text  # noqa: E402
 
 from caching import Sheet, ray  # noqa: E402
 from scalable_arch import clients, room, wcard  # noqa: E402
-from scalable_steps import (badge_n, chip, confirm_labels, confirm_log, dcard, fade, kv_box,  # noqa: E402
-                            progress, shown, strip)
+from scalable_steps import (badge_n, chip, conf_box, confirm_labels, confirm_log, dcard, fade, kv_box,  # noqa: E402
+                            progress, shown, spec_group, strip)
 from svgkit import (CONF, CONF_T, CONS, CONS_T, INK, LIVE, LIVE_T, MUTED, PANEL, SPEC, SPEC_T,  # noqa: E402
                     WHITE, WORK, WORK_T, Svg, legend, text_width, thread_badge)
 
@@ -256,88 +258,99 @@ def reply_chips(s, x, y):
 # CRUD cache — X1 rooms
 # ---------------------------------------------------------------------------
 def crud_x1(out, step):
-    ex, H = "crud", 810
+    """The worker holds the speculative cache (ω10 over Ω*, and the log); Δ* is drawn apart from it."""
+    ex, H = "crud", 860
     s = Svg(1000, H)
     head(s, ex, "x1", step, H, 812)
     s.rect(30, 96, 940, 34, r=17, fill=CONS_T, stroke=CONS, sw=1.3)
     s.text(500, 118, "consensus", size=13, weight=600, fill=CONS, anchor="middle")
-    room(s, 30, 158, 940, 500, "worker", WORK, WORK_T, "the only thread")
+    room(s, 30, 150, 940, 466, "worker", WORK, WORK_T, "the only thread · holds the speculative cache")
+    ops_box(s, ex, 46, 188, 360, step)
 
-    ops_box(s, ex, 46, 196, 370, step)
-    omega_box(s, 46, 360, step)
-    xs = [596, 680, 764, 848]
-    log_row(s, ex, xs, 196, step)
-    log_labels(s, xs, 272, step)
-    s.text(xs[1] + 4, 292, "write log", size=12, weight=600)
-    if "log" not in USED[ex][step]:
-        fade(s, (xs[0] if step >= 4 else xs[1]) - 6, 188, 254 + (84 if step >= 4 else 0), 112)
-
-    cs, ss = Sheet(500, 470, slot=50, dx=40, dy=-26), Sheet(500, 600, slot=50, dx=40, dy=-26)
-    ss.draw(s, CONF, CONF_T, S7 if step >= 5 else S0, size=13)
-    cs.draw(s, SPEC, SPEC_T, C1 if step >= 3 else C0, size=13)
-    s.text(474, cs.y - 2, "Ω^{*}", size=20, weight=600, fill=SPEC, anchor="end")
-    s.text(474, ss.y - 2, "Δ^{*}", size=20, weight=600, fill=CONF, anchor="end")
-    if "C" not in USED[ex][step]:
-        fade(s, 452, cs.y - 32, 370, 40)
-    if "S" not in USED[ex][step]:
-        fade(s, 452, ss.y - 32, 370, 40)
-    for k in ("c", "e"):
-        if step == 3:
+    # the speculative cache: batch 10's open write set ω10 as its newest layer, then Ω*, plus the log
+    spec_group(s, 46, 404, 908, 200)
+    ws, cs = Sheet(150, 488, slot=46, dx=38, dy=-24), Sheet(150, 572, slot=46, dx=38, dy=-24)
+    if step in (0, 1, 2, 3):
+        ws.draw(s, LIVE, LIVE_T, OMEGA10, size=12)
+        s.text(132, ws.y - 6, "ω_{10}", size=18, weight=600, fill=LIVE, anchor="end")
+        s.text(132, ws.y + 10, "batch 10, open", size=10, fill=MUTED, anchor="end")
+        for k in ({1: ("c", "e"), 2: ("e",)}.get(step, ())):
+            s.poly(ws.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
+    cs.draw(s, SPEC, SPEC_T, C1 if step >= 3 else C0, size=12)
+    s.text(132, cs.y - 6, "Ω^{*}", size=18, weight=600, fill=SPEC, anchor="end")
+    s.text(132, cs.y + 10, "Ω_{7} ⊕ … ⊕ Ω_{10}" if step >= 3 else "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", size=10,
+           fill=MUTED, anchor="end")
+    if step == 3:
+        for k in ("c", "e"):
             s.poly(cs.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
-    for k in ("a", "d"):
-        if step == 5:
-            s.poly(ss.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
+    if "C" not in USED[ex][step]:
+        fade(s, 60, cs.y - 30, 420, 40)
+    xs = [604, 688, 772, 856]
+    log_row(s, ex, xs, 432, step)
+    log_labels(s, xs, 508, step)
+    s.text(xs[1] + 4, 528, "write log", size=12, weight=600)
+    if "log" not in USED[ex][step]:
+        fade(s, (xs[0] if step >= 4 else xs[1]) - 6, 424, 254 + (84 if step >= 4 else 0), 112)
 
-    # step 1: writes go into ω10; reads of the old values come from C and S
+    # the confirmed state, apart from the cache
+    conf_box(s, 30, 628, 940, 96)
+    ss = Sheet(150, 708, slot=46, dx=38, dy=-24)
+    ss.draw(s, CONF, CONF_T, S7 if step >= 5 else S0, size=12)
+    s.text(132, ss.y - 6, "Δ^{*}", size=18, weight=600, fill=CONF, anchor="end")
+    if step == 5:
+        for k in ("a", "d"):
+            s.poly(ss.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
+    if "S" not in USED[ex][step]:
+        fade(s, 60, ss.y - 30, 420, 40, WHITE)
+
+    # step 1: the writes land in ω10; step 2: the reads go ω10, then Ω*, then Δ*
     if step == 1:
-        s.arrow([(120, 338), (120, 358)], stroke=LIVE, sw=1.8)
-        s.text(128, 352, "writes", size=10.5, fill=LIVE)
-        cx, cy = cs.centre(KEYS.index("c"))
-        ray(s, [(416, 240), (430, 240), (430, 410), (cx, 410), (cx, cy - 11)])
-        ex_, ey = cs.centre(KEYS.index("e"))
-        sx_, sy = ss.centre(KEYS.index("e"))
-        ray(s, [(416, 264), (438, 264), (438, 402), (ex_, 402), (ex_, sy - 11)], [(ex_, ey)])
-        s.text(446, 394, "o1, o2 read the values they overwrite: c from Ω^{*}, e from Δ^{*}", size=10.5, fill=MUTED)
+        for k in ("c", "e"):
+            kx, ky = ws.centre(KEYS.index(k))
+            s.arrow([(kx, 332), (kx, ky - 10)], stroke=LIVE, sw=1.8)
+        s.text(ws.centre(4)[0] + 10, 372, "o1, o2 write into ω_{10}", size=10.5, weight=600, fill=LIVE)
     if step == 2:
-        ox = 46 + 12 + 4 * 24 + 10
-        ray(s, [(ox, 338), (ox, 400)])
-        s.text(ox + 8, 352, "o3: e = 8", size=10.5, weight=600, fill=CONF)
+        kx, ky = ws.centre(KEYS.index("e"))
+        ray(s, [(kx, 332), (kx, ky - 10)])
+        s.text(kx + 10, 372, "o3: e = 8 from ω_{10}", size=10.5, weight=600, fill=CONF)
         bx, by = cs.centre(KEYS.index("b"))
-        ray(s, [(416, 312), (430, 312), (430, 410), (bx, 410), (bx, by - 11)])
-        s.text(446, 402, "o4: b is ⊥ in Ω^{*}, so none", size=10.5, fill=MUTED)
+        ray(s, [(bx, 332), (bx, by - 10)], [ws.centre(KEYS.index("b"))])
+        s.text(bx + 8, 356, "o4: b is ⊥ in Ω^{*}", size=10.5, fill=MUTED)
     if step in (0, 3):
-        s.arrow([(198, 412), (430, 412), (430, 225), (594, 225)], stroke=SPEC, sw=1.6)
-        s.arrow([(xs[2] + 36, 256), (xs[2] + 36, 300), (cs.x + cs.w + 26, cs.y - 30)] if step == 0 else
-                [(xs[0] + 36, 256), (xs[0] + 36, 300), (956, 300), (956, 424), (cs.x + cs.w + 26, cs.y - 30)],
-                stroke=SPEC, sw=1.6)
+        s.arrow([(426, 468), (602, 468)], stroke=SPEC, sw=1.6)
+        s.label(514, 458, "append", size=10.5, fill=SPEC, bg=WHITE)
+        fx = xs[2] + 36 if step == 0 else xs[0] + 50
+        s.arrow([(fx, 492), (fx, 556), (432, 556)], stroke=SPEC, sw=1.6)
+        s.label(560, 552, "fold", size=10.5, fill=SPEC, bg=WHITE)
 
     if step in PANELS[ex]:
         t, rows = PANELS[ex][step]
-        panel(s, 446, 310, 500, 96, step, t, rows)
+        panel(s, 422, 188, 528, 96, step, t, rows)
     if step == 4:
-        s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 190)], stroke=CONS, sw=1.8)
-        s.label(xs[3] + 36, 146, "confirm 7", size=11, fill=CONS, bg=WHITE, weight=600)
-    if step == 5:
-        s.arrow([(xs[3] + 72, 230), (958, 230), (958, ss.y - 12), (ss.x + ss.w + 24, ss.y - 12)], stroke=CONF, sw=2.2)
-        s.text(950, 540, "Δ_{7} into Δ^{*}", size=11.5, fill=CONF, weight=600, anchor="end")
+        s.arrow([(962, 130), (962, 461), (930, 461)], stroke=CONS, sw=1.8)
+        s.label(962, 146, "confirm 7", size=11, fill=CONS, bg=WHITE, weight=600, anchor="end")
+    if step in (0, 5):
+        s.arrow([(928, 476), (946, 476), (946, ss.y - 12), (ss.x + ss.w + 26, ss.y - 12)], stroke=CONF,
+                sw=2.2 if step == 5 else 2)
+        if step == 5:
+            s.text(938, 620, "Δ_{7} into Δ^{*}", size=11.5, fill=CONF, weight=600, anchor="end")
     if step == 6:
-        s.arrow([(946, 360), (958, 360), (958, 676)], stroke=INK, sw=1.8)
+        s.arrow([(950, 236), (962, 236), (962, 734)], stroke=INK, sw=1.8)
     if step == 0:
-        s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 190)], stroke=CONS)
+        s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 430)], stroke=CONS)
         s.label(xs[3] + 36, 146, "confirm 7", size=11, fill=CONS, bg=WHITE)
-        s.arrow([(xs[3] + 72, 230), (958, 230), (958, ss.y - 12), (ss.x + ss.w + 24, ss.y - 12)], stroke=CONF, sw=2)
-        s.arrow([(958, ss.y - 12), (958, 676)], stroke=INK)
-        for n, (bx, by) in enumerate([(30 + 386, 214), (30 + 386, 262), (582, 210), (xs[3] + 54, 160),
-                                      (944, 450), (944, 650)], start=1):
-            badge_n(s, bx, by, n)
+        s.arrow([(946, ss.y - 12), (946, 734)], stroke=INK)
+        for n, (bx_, by_) in enumerate([(424, 214), (424, 262), (514, 488), (xs[3] + 56, 162), (930, 600),
+                                        (930, 728)], start=1):
+            badge_n(s, bx_, by_, n)
     if step in (0, 1):
-        s.arrow([(300, 130), (300, 194)], stroke=CONS)
+        s.arrow([(300, 130), (300, 186)], stroke=CONS)
         s.label(350, 146, "batch 10", size=11, fill=CONS, bg=WHITE)
 
-    s.rect(30, 678, 940, 40, r=20, fill="#eef0f3")
-    clients(s, 420, 700)
+    s.rect(30, 736, 940, 40, r=20, fill="#eef0f3")
+    clients(s, 420, 758)
     if step == 6:
-        reply_chips(s, 480, 700)
+        reply_chips(s, 480, 758)
     s.save(os.path.join(out, f"{PFX[ex]}-x1-step{step}"))
 
 
@@ -345,80 +358,84 @@ def crud_x1(out, step):
 # CRUD cache — X2 lanes and the X12 mix
 # ---------------------------------------------------------------------------
 def crud_x2(out, step, mix=False):
-    ex, H = "crud", 590
+    ex, H = "crud", 690
     style = "x12" if mix else "x2"
     s = Svg(1000, H)
     head(s, ex, style, step, H, 812)
     s.rect(30, 230, 108, 58, r=12, fill=CONS_T, stroke=CONS, sw=1.4)
     s.text(84, 257, "consensus", size=13.5, weight=600, fill=CONS, anchor="middle")
     s.text(84, 274, "orders batches", size=10.5, fill=MUTED, anchor="middle")
-    s.rect(156, 96, 744, 416, r=18, fill=PANEL)
-    s.rect(172, 112, 712, 384, r=14, fill=WORK_T)
+    s.rect(156, 96, 744, 528, r=18, fill=PANEL)
+    s.rect(172, 112, 712, 396, r=14, fill=WORK_T)
     thread_badge(s, 184, 130, "worker", WORK)
-    s.text(250, 134, "the only thread" + (": owns ω, the log, Ω^{*} and Δ^{*}" if mix else ""), size=11, fill=MUTED)
+    s.text(250, 134, "the only thread" + (" · holds the speculative cache: ω, the log and Ω^{*}" if mix else ""),
+           size=11, fill=MUTED)
 
     ops_box(s, ex, 184, 150, 688, step, horizontal=True, cell_w=170)
-    omega_box(s, 184, 260, step)
+    spec_group(s, 180, 244, 696, 148, tx=192, ty=386)
+    omega_box(s, 192, 262, step)
     xs = [356, 436, 516, 596]
-    log_row(s, ex, xs, 260, step)
-    log_labels(s, xs, 340, step)
+    log_row(s, ex, xs, 262, step)
+    log_labels(s, xs, 344, step)
     if "log" not in USED[ex][step]:
-        fade(s, (xs[0] if step >= 4 else xs[1]) - 4, 254, 252 + (80 if step >= 4 else 0), 94)
-    c_vals = C1 if step >= 3 else C0
+        fade(s, (xs[0] if step >= 4 else xs[1]) - 4, 256, 252 + (80 if step >= 4 else 0), 96)
     c_sub = {3: "Ω^{*} ⊕ Ω_{10}", 4: "Ω_{7} ⊕ … ⊕ Ω_{10}", 5: "Ω_{7} ⊕ … ⊕ Ω_{10}",
              6: "Ω_{7} ⊕ … ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
-    kv_box(s, 702, 250, 168, 76, "Ω^{*}", c_vals, SPEC, SPEC_T, c_sub, rings={"c", "e"} if step == 3 else ())
-    kv_box(s, 702, 340, 168, 76, "Δ^{*}", S7 if step >= 5 else S0, CONF, CONF_T, "confirmed",
-           rings={"a", "d"} if step == 5 else ())
+    kv_box(s, 702, 258, 168, 76, "Ω^{*}", C1 if step >= 3 else C0, SPEC, SPEC_T, c_sub,
+           rings={"c", "e"} if step == 3 else ())
     if "C" not in USED[ex][step]:
-        fade(s, 696, 244, 180, 88)
+        fade(s, 696, 252, 180, 88)
+
+    conf_box(s, 172, 520, 712, 92)
+    kv_box(s, 702, 528, 168, 76, "Δ^{*}", S7 if step >= 5 else S0, CONF, CONF_T, "confirmed",
+           rings={"a", "d"} if step == 5 else ())
     if "S" not in USED[ex][step]:
-        fade(s, 696, 334, 180, 88)
+        fade(s, 696, 522, 180, 88, WHITE)
 
     if step in PANELS[ex]:
         t, rows = PANELS[ex][step]
-        panel(s, 184, 380, 500, 100, step, t, rows)
+        panel(s, 184, 404, 460, 96, step, t, rows)
     if step == 1:
-        s.arrow([(260, 232), (260, 258)], stroke=LIVE, sw=1.8)
+        s.arrow([(260, 232), (260, 260)], stroke=LIVE, sw=1.8)
     if step in (0, 3):
-        s.arrow([(334, 289), (354, 289)], stroke=SPEC, sw=1.6)
-        s.arrow([(668, 274), (700, 274)], stroke=SPEC, sw=1.6)
+        s.arrow([(342, 291), (354, 291)], stroke=SPEC, sw=1.6)
+        s.arrow([(668, 291), (700, 291)], stroke=SPEC, sw=1.6)
     if step in (1, 2):
         if mix:
             if step == 1:
                 cx = 714 + 2 * 30 + 12
-                ray(s, [(270, 232), (270, 238), (cx, 238), (cx, 288)])
+                ray(s, [(270, 232), (270, 238), (cx, 238), (cx, 296)])
                 ex_ = 714 + 4 * 30 + 12
-                ray(s, [(440, 232), (440, 244), (ex_, 244), (ex_, 378)], [(ex_, 302)])
+                ray(s, [(440, 232), (440, 241), (ex_, 241), (ex_, 566)], [(ex_, 310)])
             else:
-                ox = 196 + 4 * 24 + 10
-                ray(s, [(610, 232), (610, 240), (ox, 240), (ox, 300)])
+                ox = 204 + 4 * 24 + 10
+                ray(s, [(610, 232), (610, 240), (ox, 240), (ox, 302)])
                 bx = 714 + 30 + 12
-                ray(s, [(780, 232), (780, 246), (bx, 246), (bx, 288)])
+                ray(s, [(780, 232), (780, 246), (bx, 246), (bx, 296)])
         else:
-            s.arrow([(786, 232), (786, 248)], stroke=MUTED, dash="4 3")
-            s.label(780, 242, "each op reads ω, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
+            s.arrow([(786, 232), (786, 256)], stroke=MUTED, dash="4 3")
+            s.label(780, 246, "each op reads ω, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
     if step == 4:
-        s.arrow([(138, 274), (148, 274), (148, 246), (xs[3] + 36, 246), (xs[3] + 36, 256)], stroke=CONS, sw=1.8)
-        s.label(300, 250, "confirm 7", size=10.5, fill=CONS, bg=WORK_T, weight=600)
-    if step == 5:
-        s.arrow([(xs[3] + 60, 320), (xs[3] + 60, 352), (700, 352)], stroke=CONF, sw=2.2)
-        s.text(xs[3] + 54, 372, "Δ_{7} into Δ^{*}", size=10.5, fill=CONF, anchor="end", weight=600)
+        s.arrow([(138, 274), (148, 274), (148, 252), (xs[3] + 36, 252), (xs[3] + 36, 260)], stroke=CONS, sw=1.8)
+        s.label(300, 252, "confirm 7", size=10.5, fill=CONS, bg=WHITE, weight=600)
+    if step in (0, 5):
+        s.arrow([(658, 322), (658, 548), (700, 548)], stroke=CONF, sw=2.2 if step == 5 else 2)
+        s.text(664, 470, "Δ_{7} into Δ^{*}" if step == 5 else "on confirm 7: commit Ω_{7} → Δ_{7}", size=10.5,
+               fill=CONF, weight=600 if step == 5 else 400)
     if step == 6:
-        s.arrow([(684, 430), (930, 430), (930, 352)], stroke=INK, sw=1.8)
+        s.arrow([(644, 452), (930, 452), (930, 352)], stroke=INK, sw=1.8)
     if step == 0:
-        s.arrow([(xs[3] + 60, 320), (xs[3] + 60, 352), (700, 352)], stroke=CONF, sw=2)
-        s.arrow([(870, 378), (930, 378), (930, 352)], stroke=INK)
-        for n, (bx, by) in enumerate([(250, 160), (420, 160), (342, 276), (xs[3] + 60, 248), (690, 368),
-                                      (900, 390)], start=1):
-            badge_n(s, bx, by, n)
+        s.arrow([(870, 566), (930, 566), (930, 352)], stroke=INK)
+        for n, (bx_, by_) in enumerate([(184, 150), (524, 150), (348, 278), (xs[3] + 60, 250), (648, 466),
+                                        (944, 470)], start=1):
+            badge_n(s, bx_, by_, n)
     if step in (0, 1):
         s.arrow([(138, 244), (148, 244), (148, 190), (182, 190)], stroke=CONS)
     clients(s, 916, 326)
     if step == 6:
         for i, (op, r) in enumerate(REPLIES7):
-            chip(s, 890, 446 + i * 22, f"{op} → {r}", CONF, CONF_T)
+            chip(s, 890, 466 + i * 22, f"{op} → {r}", CONF, CONF_T)
     s.save(os.path.join(out, f"{PFX[ex]}-{style}-step{step}"))
 
 

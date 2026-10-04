@@ -12,11 +12,16 @@ from svgkit import (EXECUTORS, CONF, CONF_T, CONS, CONS_T, DROP, INK, LINE, LIVE
 PFX = "arch"
 
 
-def layered(s, x, y, w=104, h=96):
-    """Ω* over Δ*: the small speculated cache drawn in front of the confirmed state."""
-    block(s, x + 18, y + 18, w, h, CONF, CONF_T, "Δ^{*}", size=17)
-    block(s, x, y, 46, 40, SPEC, SPEC_T, "Ω^{*}", size=15)
-    return (x, y, w + 18, h + 18)
+def cache_group(s, x, y, w, h, title="speculative cache"):
+    """The speculative cache (ω, the log and Ω*), drawn apart from the confirmed state Δ*."""
+    s.rect(x, y, w, h, r=10, fill=WHITE, stroke=SPEC, sw=1.3, dash="5 4", opacity=0.6)
+    s.rect(x, y, w, h, r=10, fill="none", stroke=SPEC, sw=1.3, dash="5 4")
+    s.text(x + 8, y + 14, title, size=10.5, weight=600, fill=SPEC)
+
+
+def conf_group(s, x, y, w, h, title="confirmed state"):
+    s.rect(x, y, w, h, r=12, fill=WHITE, stroke=CONF, sw=1.5)
+    s.text(x + 10, y + 16, title, size=10.5, weight=600, fill=CONF)
 
 
 def lane(s, x, y, w, h, name, colour=WORK, tint=WORK_T):
@@ -51,26 +56,30 @@ def a1_blocks(out, ex):
         y = 100
         panel(s, y, "CRUD cache", "one worker thread")
         consensus(s, 30, y + 66)
-        lane(s, 190, y + 40, 520, 136, "worker")
-        capsule(s, 210, y + 116, 104, 36, "batch k")
-        s.text(262, y + 168, "runs in a container", size=10.5, fill=MUTED, anchor="middle")
-        stack(s, 348, y + 120, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=36, gap=5)
-        s.text(402, y + 110, "log", size=10.5, fill=MUTED, anchor="middle")
-        layered(s, 548, y + 50, w=110, h=96)
-        s.arrow([(314, y + 134), (346, y + 134)], stroke=LIVE)
-        s.arrow([(458, y + 126), (540, y + 82)], stroke=SPEC, curve=-0.25)
-        s.label(497, y + 90, "fold", size=10.5, bg=WORK_T)
-        s.arrow([(548, y + 82), (262, y + 82), (262, y + 114)], stroke=MUTED, dash="4 3")
-        s.label(420, y + 86, "reads Ω^{*}, then Δ^{*}", size=10.5, bg=WORK_T)
-        s.arrow([(138, y + 98), (208, y + 134)], stroke=CONS)
-        s.label(176, y + 104, "batch k", size=10.5, bg=PANEL)
-        # commit: the oldest Ω goes into S; its replies go to the clients
-        s.arrow([(84, y + 124), (84, y + 182), (366, y + 182), (366, y + 150)], stroke=CONS)
-        s.label(130, y + 186, "confirm k", size=10.5, bg=PANEL)
-        s.arrow([(366, y + 182), (640, y + 182), (640, y + 166)], stroke=CONF, sw=2)
+        lane(s, 190, y + 40, 456, 136, "worker")
+        capsule(s, 206, y + 116, 104, 36, "batch k")
+        s.text(258, y + 168, "runs in a container", size=10.5, fill=MUTED, anchor="middle")
+        cache_group(s, 330, y + 62, 304, 106)
+        card(s, 342, y + 112, "ω", LIVE, LIVE_T, w=32)
+        stack(s, 384, y + 112, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=36, gap=5)
+        s.text(443, y + 156, "log", size=10.5, fill=MUTED, anchor="middle")
+        block(s, 556, y + 98, 66, 56, SPEC, SPEC_T, "Ω^{*}", size=16, shadow=False)
+        s.arrow([(310, y + 134), (340, y + 126)], stroke=LIVE)
+        s.arrow([(374, y + 126), (382, y + 126)], stroke=LIVE)
+        s.arrow([(502, y + 126), (554, y + 126)], stroke=SPEC)
+        s.label(528, y + 116, "fold", size=10, fill=SPEC, bg=WHITE)
+        conf_group(s, 662, y + 48, 120, 120)
+        block(s, 678, y + 74, 88, 82, CONF, CONF_T, "Δ^{*}", size=17, shadow=False)
+        s.text(258, y + 82, "reads ω, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, anchor="middle")
+        s.arrow([(138, y + 98), (204, y + 134)], stroke=CONS)
+        s.label(170, y + 104, "batch k", size=10.5, bg=PANEL)
+        # commit: the oldest Ω (Ω7) goes into Δ*; its replies go to the clients
+        s.arrow([(84, y + 124), (84, y + 182), (402, y + 182), (402, y + 142)], stroke=CONS)
+        s.label(130, y + 186, "confirm 7", size=10.5, bg=PANEL)
+        s.arrow([(402, y + 182), (722, y + 182), (722, y + 158)], stroke=CONF, sw=2)
         s.label(560, y + 186, "commit: Ω → Δ", size=10.5, fill=CONF, bg=PANEL)
-        s.arrow([(640, y + 182), (900, y + 182), (918, y + 142)], stroke=INK)
-        s.label(800, y + 186, "replies", size=10.5, bg=PANEL)
+        s.arrow([(722, y + 182), (900, y + 182), (918, y + 142)], stroke=INK)
+        s.label(830, y + 186, "replies", size=10.5, bg=PANEL)
         clients(s, 922, y + 120)
 
     if ex == "dual":
@@ -107,25 +116,28 @@ def a1_blocks(out, ex):
         thread_badge(s, 200, y + 56, "exec pool ×4", POOL)
         for i in range(4):
             capsule(s, 212, y + 72 + i * 25, 92, 20, f"op {i + 1}", size=10.5)
-        lane(s, 340, y + 40, 370, 136, "worker")
-        card(s, 356, y + 116, "ω", "#7a5cc2", LIVE_T, w=36)
-        s.text(374, y + 108, "merge", size=10.5, fill=MUTED, anchor="middle")
-        stack(s, 410, y + 116, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=36, gap=5)
-        layered(s, 562, y + 50, w=100, h=96)
+        lane(s, 340, y + 40, 306, 136, "worker")
+        cache_group(s, 350, y + 62, 286, 106)
+        card(s, 362, y + 112, "ω", LIVE, LIVE_T, w=32)
+        s.text(378, y + 104, "merge", size=10.5, fill=MUTED, anchor="middle")
+        stack(s, 402, y + 112, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=36, gap=5)
+        s.text(461, y + 156, "log", size=10.5, fill=MUTED, anchor="middle")
+        block(s, 560, y + 98, 66, 56, SPEC, SPEC_T, "Ω^{*}", size=16, shadow=False)
+        s.arrow([(520, y + 126), (558, y + 126)], stroke=SPEC)
+        conf_group(s, 662, y + 48, 120, 120)
+        block(s, 678, y + 74, 88, 82, CONF, CONF_T, "Δ^{*}", size=17, shadow=False)
         s.arrow([(138, y + 95), (188, y + 95)], stroke=CONS)
         s.label(162, y + 86, "fork", size=10.5, bg=PANEL)
-        s.arrow([(326, y + 130), (354, y + 130)], stroke=LIVE)
-        s.label(340, y + 152, "join", size=10.5, bg=PANEL)
-        s.arrow([(392, y + 130), (408, y + 130)], stroke=LIVE)
-        s.arrow([(520, y + 122), (556, y + 84)], stroke=SPEC, curve=-0.25)
-        s.arrow([(562, y + 82), (330, y + 82)], stroke=MUTED, dash="4 3")
-        s.label(452, y + 86, "every op reads Ω^{*}, then Δ^{*}", size=10.5, bg=WORK_T)
-        s.arrow([(84, y + 124), (84, y + 182), (428, y + 182), (428, y + 146)], stroke=CONS)
-        s.label(130, y + 186, "confirm k", size=10.5, bg=PANEL)
-        s.arrow([(428, y + 182), (650, y + 182), (650, y + 166)], stroke=CONF, sw=2)
-        s.label(560, y + 186, "commit: Ω → Δ", size=10.5, fill=CONF, bg=PANEL)
-        s.arrow([(650, y + 182), (900, y + 182), (918, y + 142)], stroke=INK)
-        s.label(800, y + 186, "replies", size=10.5, bg=PANEL)
+        s.arrow([(326, y + 130), (360, y + 126)], stroke=LIVE)
+        s.label(342, y + 152, "join", size=10.5, bg=PANEL)
+        s.arrow([(394, y + 126), (400, y + 126)], stroke=LIVE)
+        s.text(560, y + 30, "every op reads Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED)
+        s.arrow([(84, y + 124), (84, y + 182), (420, y + 182), (420, y + 142)], stroke=CONS)
+        s.label(130, y + 186, "confirm 7", size=10.5, bg=PANEL)
+        s.arrow([(420, y + 182), (722, y + 182), (722, y + 158)], stroke=CONF, sw=2)
+        s.label(570, y + 186, "commit: Ω → Δ", size=10.5, fill=CONF, bg=PANEL)
+        s.arrow([(722, y + 182), (900, y + 182), (918, y + 142)], stroke=INK)
+        s.label(830, y + 186, "replies", size=10.5, bg=PANEL)
         clients(s, 922, y + 120)
 
     items = [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated")]
@@ -157,14 +169,20 @@ def a2_rooms(out, ex):
     s.text(x0 + 150, 172, sub, size=12, fill=MUTED, anchor="middle")
 
     if ex == "crud":
-        # CRUD cache: everything lives in the worker
+        # CRUD cache: the worker holds the speculative cache; Δ* is drawn apart
         x = 30
-        room(s, x + 10, 198, 280, 320, "worker")
+        room(s, x + 10, 198, 280, 250, "worker")
         capsule(s, x + 34, 232, 116, 34, "batch k")
-        stack(s, x + 34, 300, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=34, gap=5)
-        s.text(x + 90, 346, "log", size=10.5, fill=MUTED, anchor="middle")
-        layered(s, x + 160, 380, w=96, h=90)
-        s.arrow([(x + 92, 266), (x + 92, 298)], stroke=LIVE)
+        cache_group(s, x + 22, 284, 256, 150)
+        card(s, x + 34, 318, "ω", LIVE, LIVE_T, w=34)
+        stack(s, x + 80, 318, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=34, gap=5)
+        s.text(x + 136, 364, "log", size=10.5, fill=MUTED, anchor="middle")
+        block(s, x + 196, 380, 64, 46, SPEC, SPEC_T, "Ω^{*}", size=15, shadow=False)
+        s.arrow([(x + 92, 266), (x + 51, 316)], stroke=LIVE)
+        s.arrow([(x + 136, 368), (x + 136, 403), (x + 194, 403)], stroke=SPEC)
+        conf_group(s, x + 10, 462, 280, 120)
+        block(s, x + 100, 488, 100, 80, CONF, CONF_T, "Δ^{*}", size=17, shadow=False)
+        s.arrow([(x + 97, 346), (x + 97, 450), (x + 150, 450), (x + 150, 486)], stroke=CONF, sw=2)
         s.arrow([(x + 40, 132), (x + 40, 196)], stroke=CONS)
         s.arrow([(x + 280, 330), (x + 300, 330), (x + 300, 598)], stroke=INK)
         s.label(x + 300, 574, "replies", size=10.5, bg=WHITE)
@@ -190,24 +208,31 @@ def a2_rooms(out, ex):
         s.label(x + 304, 574, "replies", size=10.5, bg=WHITE)
 
     if ex == "scal":
-        # scalable: the worker owns the state; the pool borrows it
+        # scalable: the worker holds the speculative cache; Δ* is drawn apart; the pool borrows both
         x = 670
-        room(s, x + 10, 198, 280, 250, "worker")
-        card(s, x + 28, 244, "ω", LIVE, LIVE_T, w=34)
-        s.text(x + 45, 236, "merge", size=10.5, fill=MUTED, anchor="middle")
-        stack(s, x + 76, 244, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=34, gap=5)
-        layered(s, x + 160, 300, w=96, h=90)
-        s.arrow([(x + 62, 258), (x + 74, 258)], stroke=LIVE)
-        room(s, x + 10, 466, 280, 104, "exec pool ×4", POOL, POOL_T)
+        room(s, x + 10, 198, 280, 206, "worker")
+        cache_group(s, x + 20, 228, 260, 164)
+        card(s, x + 32, 270, "ω", LIVE, LIVE_T, w=34)
+        s.text(x + 49, 262, "merge", size=10.5, fill=MUTED, anchor="middle")
+        stack(s, x + 80, 270, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=34, gap=5)
+        s.text(x + 136, 316, "log", size=10.5, fill=MUTED, anchor="middle")
+        block(s, x + 196, 330, 64, 46, SPEC, SPEC_T, "Ω^{*}", size=15, shadow=False)
+        s.arrow([(x + 66, 284), (x + 78, 284)], stroke=LIVE)
+        s.arrow([(x + 160, 314), (x + 160, 353), (x + 194, 353)], stroke=SPEC)
+        conf_group(s, x + 124, 412, 166, 68)
+        block(s, x + 222, 422, 60, 50, CONF, CONF_T, "Δ^{*}", size=15, shadow=False)
+        room(s, x + 10, 490, 280, 100, "exec pool ×4", POOL, POOL_T)
         for i in range(4):
-            capsule(s, x + 24 + i * 66, 506, 56, 26, f"op {i + 1}", size=10.5)
-        s.text(x + 150, 556, "one container per op", size=10.5, fill=MUTED, anchor="middle")
-        s.arrow([(x + 40, 278), (x + 40, 504)], stroke=POOL)
-        s.label(x + 40, 330, "fork", size=10.5, fill=POOL, bg=WORK_T)
-        s.arrow([(x + 90, 504), (x + 90, 282)], stroke=LIVE)
-        s.label(x + 90, 330, "join", size=10.5, fill=LIVE, bg=WORK_T)
-        s.arrow([(x + 200, 504), (x + 200, 422)], stroke=MUTED, dash="4 3")
-        s.label(x + 200, 470, "&Ω^{*}, &Δ^{*}", size=11, fill=MUTED, bg=WHITE)
+            capsule(s, x + 24 + i * 66, 528, 56, 26, f"op {i + 1}", size=10.5)
+        s.text(x + 150, 576, "one container per op", size=10.5, fill=MUTED, anchor="middle")
+        s.arrow([(x + 40, 298), (x + 40, 526)], stroke=POOL)
+        s.label(x + 40, 440, "fork", size=10.5, fill=POOL, bg=WHITE)
+        s.arrow([(x + 90, 526), (x + 90, 300)], stroke=LIVE)
+        s.label(x + 90, 440, "join", size=10.5, fill=LIVE, bg=WHITE)
+        s.arrow([(x + 252, 526), (x + 252, 482)], stroke=MUTED, dash="4 3")
+        s.arrow([(x + 112, 526), (x + 112, 396)], stroke=MUTED, dash="4 3")
+        s.label(x + 112, 466, "&Ω^{*}", size=11, fill=MUTED, bg=WHITE)
+        s.label(x + 252, 504, "&Δ^{*}", size=11, fill=MUTED, bg=WHITE)
         s.arrow([(x + 40, 132), (x + 40, 196)], stroke=CONS)
         s.arrow([(x + 290, 280), (x + 300, 280), (x + 300, 598)], stroke=INK)
         s.label(x + 300, 574, "replies", size=10.5, bg=WHITE)
@@ -218,8 +243,9 @@ def a2_rooms(out, ex):
 
 
 def mini_layered(s, x, y, k=1.0):
-    block(s, x + 10 * k, y + 10 * k, 58 * k, 52 * k, CONF, CONF_T, "Δ^{*}", size=13 * k, shadow=False)
-    block(s, x, y, 26 * k, 24 * k, SPEC, SPEC_T, "Ω^{*}", size=11 * k, shadow=False)
+    """Ω* (the speculative cache) and Δ* (the confirmed state), side by side: separate entities."""
+    block(s, x - 8 * k, y + 22 * k, 30 * k, 26 * k, SPEC, SPEC_T, "Ω^{*}", size=11 * k, shadow=False)
+    block(s, x + 30 * k, y + 10 * k, 52 * k, 50 * k, CONF, CONF_T, "Δ^{*}", size=13 * k, shadow=False)
 
 
 def gear(s, cx, cy, r, colour):

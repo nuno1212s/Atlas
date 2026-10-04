@@ -147,18 +147,22 @@ def d2_sequence(out, ex):
 
     if ex == "crud":
         # CRUD cache
-        a, b, c = 70, 170, 270
-        for x, n, col, t in ((a, "consensus", CONS, CONS_T), (b, "worker", WORK, WORK_T), (c, "Ω^{*} · Δ^{*}", SPEC, SPEC_T)):
+        # the speculative cache Ω* and the confirmed state Δ* are separate lifelines
+        a, b, c, d = 70, 160, 228, 296
+        for x, n, col, t in ((a, "consensus", CONS, CONS_T), (b, "worker", WORK, WORK_T), (c, "Ω^{*}", SPEC, SPEC_T),
+                             (d, "Δ^{*}", CONF, CONF_T)):
             head(s, x, 166, n, col, t)
             lifeline(s, x, 180, bot)
         msg(s, a, b - 8, 220, "batch k", CONS)
         act(s, b, 230, 330, LIVE, LIVE_T, dash="4 3", w=20)
-        s.text(b - 16, 284, "container", size=11, fill=LIVE, anchor="end")
-        msg(s, c, b + 10, 262, "reads", MUTED, dash="4 3")
-        msg(s, b + 10, c, 312, "append Ω_{k}", SPEC)
-        msg(s, a, b - 8, 400, "confirm k", CONS)
+        s.text(b - 14, 284, "container", size=11, fill=LIVE, anchor="end")
+        msg(s, c, b + 10, 256, "reads", MUTED, dash="4 3")
+        msg(s, d, b + 10, 286, "on a miss", MUTED, dash="4 3")
+        msg(s, b + 10, c, 316, "append Ω_{k}", SPEC)
+        msg(s, a, b - 8, 400, "confirm 7", CONS)
         act(s, b, 410, 450, CONF, CONF_T)
-        msg(s, b + 8, c, 432, "Δ^{*} ← Δ^{*} ⊕ Δ_{k}", CONF)
+        msg(s, b + 8, d, 432, "Δ^{*} ← Δ^{*} ⊕ Δ_{7}", CONF)
+        s.text(c, 460, "Ω^{*} unchanged", size=10, fill=MUTED, anchor="middle")
         s.arrow([(b, 470), (b, 500), (a - 20, 500)], stroke=INK)
         s.text(a + 30, 494, "replies", size=11, fill=INK, anchor="middle")
 
@@ -209,16 +213,17 @@ def view_plane(s, x, y, w, dual=False):
         s.rect(x, y, w, 56, r=12, fill=SPEC_T, stroke=SPEC, sw=1.6, shadow=True)
         s.text(x + w / 2, y + 34, "Ω^{*}  · a full copy", size=14, weight=600, fill=SPEC, anchor="middle")
         return
-    s.rect(x, y + 14, w, 46, r=12, fill=CONF_T, stroke=CONF, sw=1.6, shadow=True)
-    s.rect(x + 16, y, w - 32, 28, r=10, fill=SPEC_T, stroke=SPEC, sw=1.6, shadow=True)
-    s.text(x + w / 2, y + 19, "Ω^{*}", size=14, weight=600, fill=SPEC, anchor="middle")
-    s.text(x + w / 2, y + 50, "Δ^{*}", size=14, weight=600, fill=CONF, anchor="middle")
+    # two separate entities: the speculative cache, then (read on a miss) the confirmed state
+    s.rect(x, y, w, 26, r=10, fill=SPEC_T, stroke=SPEC, sw=1.6, shadow=True)
+    s.text(x + w / 2, y + 18, "Ω^{*} · speculative cache", size=13, weight=600, fill=SPEC, anchor="middle")
+    s.rect(x, y + 34, w, 26, r=10, fill=CONF_T, stroke=CONF, sw=1.6, shadow=True)
+    s.text(x + w / 2, y + 52, "Δ^{*} · confirmed state", size=13, weight=600, fill=CONF, anchor="middle")
 
 
 def d3_planes(out, ex):
     s = Svg(470, 660)
     s.title(EXECUTORS[ex], "Request flow · D3 · containers between what is read\nand what is written")
-    rows = [(150, "speculated view", "read and written" if ex == "dual" else "read only"),
+    rows = [(150, "speculated view" if ex == "dual" else "what is read", "read and written" if ex == "dual" else "Ω^{*}, then Δ^{*}"),
             (300, "containers", "the middleware"), (470, "decision", "being built")]
     for y, t, sub in rows:
         s.text(32, y + 24, t, size=14, weight=600)

@@ -73,6 +73,11 @@ confirm and commit arrows go to Ω10 in its own slot.
 These replace C and S, which read alike, and the dual-state's S_p. The scripts' internal
 variables (S0, C0, …) keep their old names.
 
+**Speculative cache and confirmed state are separate entities (from iteration 16).** In the CRUD
+cache and scalable figures, the worker holds the **speculative cache**: a dashed amber group with ω
+(the open batch's writes, its newest layer), the write log and Ω\*. The **confirmed state** Δ\* sits
+in its own box, outside that group, and is reached only by reads that miss the cache and by commits.
+
 `svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). It also
 holds `Svg(..., ox, oy)`, a canvas whose viewBox origin can be moved, so that a layout drawn once can
 be cropped to one executor without moving any coordinates. The caching sheets take their values
