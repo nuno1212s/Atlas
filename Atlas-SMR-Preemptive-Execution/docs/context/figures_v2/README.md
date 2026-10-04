@@ -40,6 +40,11 @@ From iteration 09, a step figure shows batch 10's own state only once it exists:
 The read pool is no longer drawn (iteration 08). If ImageMagick (`magick`) is installed, the
 script also writes `arch-scal-{x1,x2,x12}-steps.gif`, which cycles through steps 1–5 at 3 s each.
 
+From iteration 10 the story continues past speculation. Steps 6–8 confirm decision 10:
+confirm 10 arrives (Ω10 is the head of the log), commit Ω10 → Δ10 into S (C is refolded), and
+send the replies (o3's client gets 8). The step tracker groups the steps as speculate 1–5 and
+confirm 6–8, and the GIFs cycle through all eight.
+
 `svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). It also
 holds `Svg(..., ox, oy)`, a canvas whose viewBox origin can be moved, so that a layout drawn once can
 be cropped to one executor without moving any coordinates. The caching sheets take their values
