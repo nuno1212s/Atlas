@@ -25,6 +25,10 @@ executors, so there are 36 figures in all.
 | `lifecycle.py` | Decision lifecycle | C1 state machine · C2 conveyor belt · C3 branch graph |
 | `requests.py` | Request flow and threads | D1 subway map · D2 sequence diagrams · D3 containers between planes |
 
+`scalable_arch.py` (iteration 06) holds three figures for the scalable executor that merge
+architecture and caching structure into one: X1 rooms with layers, X2 lanes with a ledger and
+X3 layers with threads. They are written as `arch-scal-x{1,2,3}-*`.
+
 `svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). It also
 holds `Svg(..., ox, oy)`, a canvas whose viewBox origin can be moved, so that a layout drawn once can
 be cropped to one executor without moving any coordinates. The caching sheets take their values
@@ -35,7 +39,7 @@ from `../figures/executor_model.py`.
 You need Python 3 (standard library only) and `rsvg-convert` (`brew install librsvg`).
 
 ```bash
-for f in arch caching lifecycle requests; do python3 $f.py <output-dir>; done
+for f in arch caching lifecycle requests scalable_arch; do python3 $f.py <output-dir>; done
 ```
 
 Each figure is written as `.svg`, as `.png` at 2×, and as `.pdf` with its fonts embedded.
