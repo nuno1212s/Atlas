@@ -11,19 +11,19 @@ Batch 10 is the running example (executor_model.py): o1 c ← 5, o2 e ← 8, o3 
 Both executors run it in order, so o3 reads o2's 8 and there is no collision to resolve.
 
 CRUD cache, one worker thread:
-  1 o1, o2 write into ω10   one container over C and S; writes land only in ω10
-  2 o3, o4 read             o3 finds 8 in ω10, o4 finds b deleted in C
-  3 append Ω10              ω10 becomes Ω10 and is folded into C; the replies are held
+  1 o1, o2 write into ω10   one container over Ω* and Δ*; writes land only in ω10
+  2 o3, o4 read             o3 finds 8 in ω10, o4 finds b deleted in Ω*
+  3 append Ω10              ω10 becomes Ω10 and is folded into Ω*; the replies are held
   4 confirm 10 arrives      Ω7–Ω9 went first; Ω10 is the head of the log, nothing re-runs
-  5 commit Ω10 → Δ10        Δ10's writes go into S; Ω10 leaves the log; C is refolded
+  5 commit Ω10 → Δ10        Δ10's writes go into Δ*; Ω10 leaves the log; Ω* is refolded
   6 send the replies        o3's client gets 8
 Dual-state, main + preemptive + confirmed workers:
-  1 o1, o2 write S_p        no container: the batch changes the full copy S_p in place
-  2 o3, o4 read S_p         o3 finds 8, o4 finds no b
+  1 o1, o2 write Ω*        no container: the batch changes the full copy Ω* in place
+  2 o3, o4 read Ω*         o3 finds 8, o4 finds no b
   3 log batch 10            the batch and its replies join the log
   4 confirm 10 arrives      batch 10 is the head of the log
   5 send replies, forward   the preemptive worker sends the replies and forwards batch 10
-  6 run batch 10 again      the confirmed worker re-executes it on S and drops its replies
+  6 run batch 10 again      the confirmed worker re-executes it on Δ* and drops its replies
 State is drawn only while it is used: batch 10's own state appears when it exists, and persistent
 state that a step does not touch is faded. The read pool is not drawn.
 """
@@ -58,32 +58,32 @@ for _ in range(3):
 assert _d.S == S6 and dual_commit(_d).S == S7       # both executors confirm to the same state
 
 # where each op's read lands, in order: o1 and o2 read the old value they overwrite
-SOURCE = {"crud": ["C", "S", "ω_{10}", "C"], "dual": ["S_{p}", "S_{p}", "S_{p}", "S_{p}"]}
+SOURCE = {"crud": ["Ω^{*}", "Δ^{*}", "ω_{10}", "Ω^{*}"], "dual": ["Ω^{*}", "Ω^{*}", "Ω^{*}", "Ω^{*}"]}
 ACTIVE = {1: {0, 1}, 2: {2, 3}}
 
 STEPS = {
     "crud": {
         0: ("overview", "Steps 1–3 speculate batch 10 and steps 4–6 confirm it."),
         1: ("o1, o2 write into ω10",
-            "One container runs the ops in order. o1 and o2 write c = 5 and e = 8 into ω10; C and S are only read."),
+            "One container runs the ops in order. o1 and o2 write c = 5 and e = 8 into ω10; Ω^{*} and Δ^{*} are only read."),
         2: ("o3, o4 read",
-            "o3 finds e = 8 in ω10: running in order, it sees o2's write, so nothing collides. o4 finds b deleted in C."),
-        3: ("append Ω10", "ω10 becomes Ω10 and is folded into C. The replies held are 4, 7, 8 and none."),
+            "o3 finds e = 8 in ω10: running in order, it sees o2's write, so nothing collides. o4 finds b deleted in Ω^{*}."),
+        3: ("append Ω10", "ω10 becomes Ω10 and is folded into Ω^{*}. The replies held are 4, 7, 8 and none."),
         4: ("confirm 10 arrives", "Ω7, Ω8 and Ω9 were confirmed first. Ω10 is now the head of the log: nothing runs again."),
-        5: ("commit Ω10 → Δ10", "Δ10's stored writes go into S: c 4 → 5, e 7 → 8. Ω10 leaves the log and C is refolded."),
+        5: ("commit Ω10 → Δ10", "Δ10's stored writes go into Δ^{*}: c 4 → 5, e 7 → 8. Ω10 leaves the log and Ω^{*} is refolded."),
         6: ("send the replies", "The replies of Δ10 reach their clients: o3's client gets 8."),
     },
     "dual": {
         0: ("overview", "Steps 1–3 speculate batch 10 and steps 4–6 confirm it."),
-        1: ("o1, o2 write S_{p}",
-            "There is no container: batch 10 changes the full copy S_{p} in place, c 4 → 5 and e 7 → 8."),
-        2: ("o3, o4 read S_{p}", "o3 reads e = 8 straight from S_{p}, after o2's write; o4 finds no b."),
-        3: ("log batch 10", "The batch and its replies join the log: S_{p} already holds its effect."),
+        1: ("o1, o2 write Ω^{*}",
+            "There is no container: batch 10 changes the full copy Ω^{*} in place, c 4 → 5 and e 7 → 8."),
+        2: ("o3, o4 read Ω^{*}", "o3 reads e = 8 straight from Ω^{*}, after o2's write; o4 finds no b."),
+        3: ("log batch 10", "The batch and its replies join the log: Ω^{*} already holds its effect."),
         4: ("confirm 10 arrives", "Batches 7, 8 and 9 were confirmed first. Batch 10 is now the head of the log."),
         5: ("send replies, forward",
             "The preemptive worker sends the replies of Δ10 (o3's client gets 8) and forwards batch 10."),
         6: ("run batch 10 again",
-            "The confirmed worker runs batch 10 again on S: c 4 → 5, e 7 → 8. The replies it computes are dropped."),
+            "The confirmed worker runs batch 10 again on Δ^{*}: c 4 → 5, e 7 → 8. The replies it computes are dropped."),
     },
 }
 # Persistent state each step uses; everything else that exists is faded.
@@ -127,16 +127,16 @@ def panel(s, x, y, w, h, n, title, rows, thread="W"):
 
 PANELS = {
     "crud": {
-        3: ("append, and fold into C", [[("ω_{10} → Ω_{10}, the newest log entry", SPEC, 600)],
-                                        [("C ← C ⊕ Ω_{10}:  c 4 → 5,  e + 8", SPEC, 400)],
+        3: ("append, and fold into Ω^{*}", [[("ω_{10} → Ω_{10}, the newest log entry", SPEC, 600)],
+                                        [("Ω^{*} ← Ω^{*} ⊕ Ω_{10}:  c 4 → 5,  e + 8", SPEC, 400)],
                                         [("replies held:  o1 4 · o2 7 ·", MUTED, 400), ("o3 8", CONF, 600),
                                          ("· o4 none", MUTED, 400)]]),
         4: ("confirmation of 10 arrives", [[("the head of the log is Ω_{10}: it was speculated", CONF, 600)],
                                            [("its writes and replies are already computed", MUTED, 400)],
                                            [("nothing runs again; Ω_{7}, Ω_{8}, Ω_{9} went the same way", MUTED, 400)]]),
-        5: ("commit Ω_{10} → Δ_{10}", [[("S ← S ⊕ Δ_{10}:  c 4 → 5,  e 7 → 8", CONF, 600)],
+        5: ("commit Ω_{10} → Δ_{10}", [[("Δ^{*} ← Δ^{*} ⊕ Δ_{10}:  c 4 → 5,  e 7 → 8", CONF, 600)],
                                        [("Ω_{10} leaves the log", MUTED, 400)],
-                                       [("C is refolded from what is left: nothing, so C is empty", MUTED, 400)]]),
+                                       [("Ω^{*} is refolded from what is left: nothing, so Ω^{*} is empty", MUTED, 400)]]),
         6: ("send the replies of Δ_{10}", [[("o1 → 4", INK, 400), ("o2 → 7", INK, 400), ("o3 → 8", CONF, 600),
                                             ("o4 → none", INK, 400)],
                                            [("o3's client gets 8: it read o2's write, in order", CONF, 400)]]),
@@ -145,28 +145,28 @@ PANELS = {
         3: ("log batch 10 and its replies", [[("batch 10 joins the log, with its replies", SPEC, 600)],
                                              [("replies held:  o1 4 · o2 7 ·", MUTED, 400), ("o3 8", CONF, 600),
                                               ("· o4 none", MUTED, 400)],
-                                             [("S_{p} already holds batch 10's effect", MUTED, 400)]]),
+                                             [("Ω^{*} already holds batch 10's effect", MUTED, 400)]]),
         4: ("confirmation of 10 arrives", [[("the head of the log is batch 10", CONF, 600)],
-                                           [("its replies were computed on S_{p}", MUTED, 400)],
+                                           [("its replies were computed on Ω^{*}", MUTED, 400)],
                                            [("batches 7, 8 and 9 went the same way before", MUTED, 400)]]),
         5: ("send the replies, forward batch 10", [[("o1 → 4", INK, 400), ("o2 → 7", INK, 400),
                                                     ("o3 → 8", CONF, 600), ("o4 → none", INK, 400)],
                                                    [("batch 10 leaves the log and goes to the confirmed worker",
                                                      MUTED, 400)]]),
-        6: ("run batch 10 again on S", [[("S:  c 4 → 5,  e 7 → 8", CONF, 600)],
+        6: ("run batch 10 again on Δ^{*}", [[("Δ^{*}:  c 4 → 5,  e 7 → 8", CONF, 600)],
                                         [("the replies it computes are dropped", MUTED, 400)],
-                                        [("S and S_{p} agree again on batch 10", MUTED, 400)]]),
+                                        [("Δ^{*} and Ω^{*} agree again on batch 10", MUTED, 400)]]),
     },
 }
 
 
 def ops_box(s, ex, x, y, w, step, horizontal=False, cell_w=None):
-    """Batch 10's ops: in a container (CRUD) or applied straight to S_p (dual)."""
+    """Batch 10's ops: in a container (CRUD) or applied straight to Ω* (dual)."""
     done = step >= 3 and step != 0
     if ex == "crud":
-        edge, fill, dash, title = LIVE, LIVE_T, "5 4", "container · reads ω, then C, then S"
+        edge, fill, dash, title = LIVE, LIVE_T, "5 4", "container · reads ω, then Ω^{*}, then Δ^{*}"
     else:
-        edge, fill, dash, title = SPEC, SPEC_T, None, "batch 10 · runs in place on S_{p}"
+        edge, fill, dash, title = SPEC, SPEC_T, None, "batch 10 · runs in place on Ω^{*}"
     h = 82 if horizontal else 142
     s.rect(x, y, w, h, r=14, fill=fill, stroke=edge, sw=1.6, dash=dash, opacity=0.5 if done else None)
     s.text(x + 14, y + 22, title, size=12, weight=600, fill=edge, opacity=0.5 if done else None)
@@ -214,7 +214,7 @@ def bcard(s, x, y, q, w=64, h=58, dashed=False):
 
 
 def log_row(s, ex, xs, y, step, w=72):
-    """The write log: Ω7–Ω9 (+ Ω10 once appended); during confirmation, ghosts of what is already in S."""
+    """The write log: Ω7–Ω9 (+ Ω10 once appended); during confirmation, ghosts of what is already in Δ*."""
     card = (lambda x, q, d: wcard(s, x, y, q, d, w=w)) if ex == "crud" else (lambda x, q, d: bcard(s, x, y, q, w=w))
     olds = [(q, d) for q, d, _ in reversed(LOG0)]
     if step <= 3:
@@ -283,8 +283,8 @@ def crud_x1(out, step):
     cs, ss = Sheet(500, 470, slot=50, dx=40, dy=-26), Sheet(500, 600, slot=50, dx=40, dy=-26)
     ss.draw(s, CONF, CONF_T, S0 if step <= 3 else (S6 if step == 4 else S7), size=13)
     cs.draw(s, SPEC, SPEC_T, {3: C1, 4: C6, 5: {}, 6: {}}.get(step, C0), size=13)
-    s.text(474, cs.y - 2, "C", size=20, weight=600, fill=SPEC, anchor="end")
-    s.text(474, ss.y - 2, "S", size=20, weight=600, fill=CONF, anchor="end")
+    s.text(474, cs.y - 2, "Ω^{*}", size=20, weight=600, fill=SPEC, anchor="end")
+    s.text(474, ss.y - 2, "Δ^{*}", size=20, weight=600, fill=CONF, anchor="end")
     if "C" not in USED[ex][step]:
         fade(s, 452, cs.y - 32, 370, 40)
     if "S" not in USED[ex][step]:
@@ -304,14 +304,14 @@ def crud_x1(out, step):
         ex_, ey = cs.centre(KEYS.index("e"))
         sx_, sy = ss.centre(KEYS.index("e"))
         ray(s, [(416, 264), (438, 264), (438, 402), (ex_, 402), (ex_, sy - 11)], [(ex_, ey)])
-        s.text(446, 394, "o1, o2 read the values they overwrite: c from C, e from S", size=10.5, fill=MUTED)
+        s.text(446, 394, "o1, o2 read the values they overwrite: c from Ω^{*}, e from Δ^{*}", size=10.5, fill=MUTED)
     if step == 2:
         ox = 46 + 12 + 4 * 24 + 10
         ray(s, [(ox, 338), (ox, 400)])
         s.text(ox + 8, 352, "o3: e = 8", size=10.5, weight=600, fill=CONF)
         bx, by = cs.centre(KEYS.index("b"))
         ray(s, [(416, 312), (430, 312), (430, 410), (bx, 410), (bx, by - 11)])
-        s.text(446, 402, "o4: b is ⊥ in C, so none", size=10.5, fill=MUTED)
+        s.text(446, 402, "o4: b is ⊥ in Ω^{*}, so none", size=10.5, fill=MUTED)
     if step in (0, 3):
         s.arrow([(198, 412), (430, 412), (430, 225), (594, 225)], stroke=SPEC, sw=1.6)
         s.arrow([(xs[2] + 36, 256), (xs[2] + 36, 300), (cs.x + cs.w + 26, cs.y - 30)] if step == 0 else
@@ -325,8 +325,9 @@ def crud_x1(out, step):
         s.arrow([(xs[0] + 36, 130), (xs[0] + 36, 190)], stroke=CONS, sw=1.8)
         s.label(xs[0] + 36, 146, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
     if step == 5:
-        s.arrow([(594, 225), (436, 225), (436, ss.y - 12), (ss.x + 16, ss.y - 12)], stroke=CONF, sw=2.2)
-        s.text(444, 534, "Δ_{10} into S", size=11.5, fill=CONF, weight=600)
+        s.arrow([(594, 225), (436, 225), (436, ss.y + 18), (ss.x + 40, ss.y + 18), (ss.x + 40, ss.y + 2)],
+                stroke=CONF, sw=2.2)
+        s.text(444, 534, "Δ_{10} into Δ^{*}", size=11.5, fill=CONF, weight=600)
     if step == 6:
         s.arrow([(946, 360), (958, 360), (958, 676)], stroke=INK, sw=1.8)
     if step == 0:
@@ -362,7 +363,7 @@ def crud_x2(out, step, mix=False):
     s.rect(156, 96, 744, 416, r=18, fill=PANEL)
     s.rect(172, 112, 712, 384, r=14, fill=WORK_T)
     thread_badge(s, 184, 130, "worker", WORK)
-    s.text(250, 134, "the only thread" + (": owns ω, the log, C and S" if mix else ""), size=11, fill=MUTED)
+    s.text(250, 134, "the only thread" + (": owns ω, the log, Ω^{*} and Δ^{*}" if mix else ""), size=11, fill=MUTED)
 
     ops_box(s, ex, 184, 150, 688, step, horizontal=True, cell_w=170)
     omega_box(s, 184, 260, step)
@@ -372,9 +373,9 @@ def crud_x2(out, step, mix=False):
     if "log" not in USED[ex][step]:
         fade(s, (xs[0] if step >= 4 else xs[1]) - 4, 254, 252 + (80 if step >= 4 else 0), 94)
     c_vals = {3: C1, 4: C6, 5: {}, 6: {}}.get(step, C0)
-    c_sub = {3: "C ⊕ Ω_{10}", 4: "fold of Ω_{10}", 5: "empty", 6: "empty"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
-    kv_box(s, 702, 250, 168, 76, "C", c_vals, SPEC, SPEC_T, c_sub, rings={"c", "e"} if step == 3 else ())
-    kv_box(s, 702, 340, 168, 76, "S", S0 if step <= 3 else (S6 if step == 4 else S7), CONF, CONF_T, "confirmed",
+    c_sub = {3: "Ω^{*} ⊕ Ω_{10}", 4: "fold of Ω_{10}", 5: "empty", 6: "empty"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
+    kv_box(s, 702, 250, 168, 76, "Ω^{*}", c_vals, SPEC, SPEC_T, c_sub, rings={"c", "e"} if step == 3 else ())
+    kv_box(s, 702, 340, 168, 76, "Δ^{*}", S0 if step <= 3 else (S6 if step == 4 else S7), CONF, CONF_T, "confirmed",
            rings={"c", "e"} if step == 5 else ())
     if "C" not in USED[ex][step]:
         fade(s, 696, 244, 180, 88)
@@ -403,14 +404,14 @@ def crud_x2(out, step, mix=False):
                 ray(s, [(780, 232), (780, 246), (bx, 246), (bx, 288)])
         else:
             s.arrow([(786, 232), (786, 248)], stroke=MUTED, dash="4 3")
-            s.label(780, 242, "each op reads ω, then C, then S", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
+            s.label(780, 242, "each op reads ω, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
     if step == 4:
         s.arrow([(138, 274), (148, 274), (148, 289), (xs[0] - 2, 289)], stroke=CONS, sw=1.8)
         s.label(252, 282, "confirm 10", size=10.5, fill=CONS, bg=WORK_T, weight=600)
     if step == 5:
         s.arrow([(xs[0] + 36, 258), (xs[0] + 36, 244), (690, 244), (690, 378), (700, 378)], stroke=CONF, sw=2.2)
-        s.text(620, 240, "Δ_{10} into S", size=10.5, fill=CONF, anchor="middle", weight=600)
+        s.text(620, 240, "Δ_{10} into Δ^{*}", size=10.5, fill=CONF, anchor="middle", weight=600)
     if step == 6:
         s.arrow([(684, 430), (930, 430), (930, 352)], stroke=INK, sw=1.8)
     if step == 0:
@@ -439,8 +440,8 @@ def dual_x1(out, step):
     s.rect(30, 96, 940, 34, r=17, fill=CONS_T, stroke=CONS, sw=1.3)
     s.text(500, 118, "consensus", size=13, weight=600, fill=CONS, anchor="middle")
     room(s, 30, 156, 600, 58, "main", WORK, WORK_T, "routes each request to a worker")
-    room(s, 30, 230, 600, 400, "preemptive worker", WORK, WORK_T, "owns S_{p} and the log")
-    room(s, 650, 156, 320, 474, "confirmed worker", WORK, WORK_T, "owns S")
+    room(s, 30, 230, 600, 400, "preemptive worker", WORK, WORK_T, "owns Ω^{*} and the log")
+    room(s, 650, 156, 320, 474, "confirmed worker", WORK, WORK_T, "owns Δ^{*}")
 
     ops_box(s, ex, 46, 268, 310, step)
     xs = [372, 436, 500, 564]
@@ -452,7 +453,7 @@ def dual_x1(out, step):
 
     sp = Sheet(110, 600, slot=46, dx=38, dy=-24)
     sp.draw(s, SPEC, SPEC_T, P1, size=12, opacity=0.95)      # in place from step 1 on
-    s.text(96, sp.y - 2, "S_{p}", size=20, weight=600, fill=SPEC, anchor="end")
+    s.text(96, sp.y - 2, "Ω^{*}", size=20, weight=600, fill=SPEC, anchor="end")
     if step == 1:
         for k in ("c", "e"):
             s.poly(sp.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
@@ -460,7 +461,7 @@ def dual_x1(out, step):
         fade(s, 46, sp.y - 30, 400, 38)
     ss = Sheet(690, 600, slot=40, dx=36, dy=-24)
     ss.draw(s, CONF, CONF_T, S0 if step <= 3 else (S6 if step in (4, 5) else S7), size=12)
-    s.text(676, ss.y - 2, "S", size=20, weight=600, fill=CONF, anchor="end")
+    s.text(676, ss.y - 2, "Δ^{*}", size=20, weight=600, fill=CONF, anchor="end")
     if step == 6:
         for k in ("c", "e"):
             s.poly(ss.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
@@ -479,7 +480,7 @@ def dual_x1(out, step):
                 s.arrow(pts, stroke=SPEC, sw=1.8, round_=0)
             else:
                 ray(s, pts)
-        s.text(390, 520, "writes change S_{p} in place" if step == 1 else "o3 reads e = 8 from S_{p}",
+        s.text(390, 520, "writes change Ω^{*} in place" if step == 1 else "o3 reads e = 8 from Ω^{*}",
                size=10.5, weight=600, fill=SPEC if step == 1 else CONF)
 
     if step in PANELS[ex] and step != 6:
@@ -488,7 +489,7 @@ def dual_x1(out, step):
     if step == 6:
         t, rows = PANELS[ex][step]
         panel(s, 662, 300, 296, 96, step, t, [[(rows[0][0][0], CONF, 600)], [("its replies are dropped", MUTED, 400)],
-                                             [("S agrees with S_{p} again", MUTED, 400)]])
+                                             [("Δ^{*} agrees with Ω^{*} again", MUTED, 400)]])
     if step in (0, 1):
         s.arrow([(330, 130), (330, 156)], stroke=CONS)
         s.label(384, 143, "batch 10", size=11, fill=CONS, bg=WHITE)
@@ -534,21 +535,21 @@ def dual_x2(out, step, mix=False):
 
     s.rect(172, 168, 712, 300, r=14, fill=WORK_T)
     thread_badge(s, 184, 186, "preemptive worker", WORK)
-    s.text(470, 190, "owns S_{p} and the log" if mix else "", size=11, fill=MUTED)
+    s.text(470, 190, "owns Ω^{*} and the log" if mix else "", size=11, fill=MUTED)
     ops_box(s, ex, 184, 204, 250, step)
     xs = [452, 516, 580, 644]
     log_row(s, ex, xs, 204, step, w=58)
     log_labels(s, xs, 280, step, w=58)
     if "log" not in USED[ex][step]:
         fade(s, (xs[0] if step >= 4 else xs[1]) - 4, 198, 196 + (64 if step >= 4 else 0), 92)
-    kv_box(s, 702, 300, 168, 76, "S_{p}", P1, SPEC, SPEC_T, "full copy", rings={"c", "e"} if step == 1 else ())
+    kv_box(s, 702, 300, 168, 76, "Ω^{*}", P1, SPEC, SPEC_T, "full copy", rings={"c", "e"} if step == 1 else ())
     if "Sp" not in USED[ex][step]:
         fade(s, 696, 294, 180, 88)
 
     s.rect(172, 480, 712, 110, r=14, fill=WORK_T)
     thread_badge(s, 184, 498, "confirmed worker", WORK)
-    s.text(320, 502, "owns S" if mix else "", size=11, fill=MUTED)
-    kv_box(s, 702, 500, 168, 76, "S", S0 if step <= 3 else (S6 if step in (4, 5) else S7), CONF, CONF_T,
+    s.text(320, 502, "owns Δ^{*}" if mix else "", size=11, fill=MUTED)
+    kv_box(s, 702, 500, 168, 76, "Δ^{*}", S0 if step <= 3 else (S6 if step in (4, 5) else S7), CONF, CONF_T,
            "confirmed", rings={"c", "e"} if step == 6 else ())
     if "S" not in USED[ex][step]:
         fade(s, 696, 494, 180, 88)
@@ -574,7 +575,7 @@ def dual_x2(out, step, mix=False):
                     ray(s, pts)
         else:
             s.arrow([(434, 300), (700, 330)], stroke=SPEC, sw=1.8)
-            s.label(560, 300, "in place" if step == 1 else "reads S_{p}", size=10.5, fill=SPEC, bg=WORK_T)
+            s.label(560, 300, "in place" if step == 1 else "reads Ω^{*}", size=10.5, fill=SPEC, bg=WORK_T)
     if step in (0, 1):
         s.arrow([(410, 156), (410, 202)], stroke=WORK)
         s.label(410, 176, "batch 10", size=10.5, fill=CONS, bg=PANEL)

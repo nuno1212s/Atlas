@@ -31,12 +31,12 @@ def chip(s, x, y, who, what, colour):
 # C1 — a state machine for one decision
 # ---------------------------------------------------------------------------
 HOW = {
-    "crud": dict(spec="in a container over C, S", commit="apply Ω_{k} to S, refold C",
-                 back="drop Ω_{k} onwards, refold C"),
-    "dual": dict(spec="in place, on the copy S_{p}", commit="run batch k again on S",
-                 back="copy all of S into S_{p}, replay the rest"),
-    "scal": dict(spec="a container per op, in parallel", commit="apply Ω_{k} to S, refold C",
-                 back="drop Ω_{k} onwards, refold C"),
+    "crud": dict(spec="in a container over Ω^{*}, Δ^{*}", commit="apply Ω_{k} to Δ^{*}, refold Ω^{*}",
+                 back="drop Ω_{k} onwards, refold Ω^{*}"),
+    "dual": dict(spec="in place, on the copy Ω^{*}", commit="run batch k again on Δ^{*}",
+                 back="copy all of Δ^{*} into Ω^{*}, replay the rest"),
+    "scal": dict(spec="a container per op, in parallel", commit="apply Ω_{k} to Δ^{*}, refold Ω^{*}",
+                 back="drop Ω_{k} onwards, refold Ω^{*}"),
 }
 
 
@@ -92,19 +92,19 @@ def omega(s, x, y, q, colour=SPEC, tint=SPEC_T, letter="Ω", dash=None, opacity=
 
 def c2_belt(out, ex):
     s = Svg(1000, 700)
-    sub = {"crud": "decisions ride towards S and are written in when confirmed",
-           "dual": "batches ride towards S; S_{p} already holds their effect",
-           "scal": "decisions ride towards S; each is built from parallel ops"}[ex]
+    sub = {"crud": "decisions ride towards Δ^{*} and are written in when confirmed",
+           "dual": "batches ride towards Δ^{*}; Ω^{*} already holds their effect",
+           "scal": "decisions ride towards Δ^{*}; each is built from parallel ops"}[ex]
     s.title(EXECUTORS[ex], f"Decision lifecycle · C2 · a conveyor: {sub}")
     frames = [(130, "1", "speculate Ω_{10}"), (310, "2", "commit Ω_{7}"), (490, "3", "backtrack to Ω_{9}")]
     for y, n, t in frames:
         s.circle(46, y + 14, 14, fill=INK)
         s.text(46, y + 19, n, size=13, weight=600, fill=WHITE, anchor="middle")
         s.text(70, y + 19, t, size=15, weight=600)
-        block(s, 190, y - 4, 112, 92, CONF, CONF_T, "S", size=22)
+        block(s, 190, y - 4, 112, 92, CONF, CONF_T, "Δ^{*}", size=22)
         belt(s, y + 10)
         if ex == "dual":
-            block(s, 850, y - 4, 110, 92, SPEC, SPEC_T, "S_{p}", size=22, sub="full copy")
+            block(s, 850, y - 4, 110, 92, SPEC, SPEC_T, "Ω^{*}", size=22, sub="full copy")
         if y < 490:
             s.line(30, y + 152, 970, y + 152, stroke=LINE, sw=1)
     xs = [340 + i * 74 for i in range(6)]
@@ -121,7 +121,7 @@ def c2_belt(out, ex):
         s.text(905, y + 67, "become Ω_{10}", size=11.5, fill=MUTED, anchor="middle")
     elif ex == "dual":
         s.arrow([(xs[3] + 64, y + 10), (846, y + 30)], stroke=SPEC, sw=2, curve=-0.15)
-        s.text(xs[3] + 120, y - 16, "batch 10 runs in place on S_{p};", size=11.5, fill=MUTED)
+        s.text(xs[3] + 120, y - 16, "batch 10 runs in place on Ω^{*};", size=11.5, fill=MUTED)
         s.text(xs[3] + 120, y - 2, "the belt keeps it with its replies", size=11.5, fill=MUTED)
     else:
         s.rect(844, y - 14, 122, 66, r=10, fill=POOL_T)
@@ -136,11 +136,11 @@ def c2_belt(out, ex):
     if ex == "dual":
         card(s, 250, y + 50, "k = 7", CONF, WHITE, w=56, h=36, size=13)
         s.arrow([(xs[0] - 6, y + 22), (306, y + 52)], stroke=CONF, sw=2.2, curve=0.2)
-        s.text(xs[0] + 30, y + 92, "batch 7 runs again on S", size=11.5, fill=CONF, anchor="middle")
+        s.text(xs[0] + 30, y + 92, "batch 7 runs again on Δ^{*}", size=11.5, fill=CONF, anchor="middle")
     else:
         card(s, 250, y + 50, "Δ_{7}", CONF, WHITE, w=56, h=36, size=15)
         s.arrow([(xs[0] - 6, y + 22), (306, y + 52)], stroke=CONF, sw=2.2, curve=0.2)
-        s.text(xs[0] + 30, y + 92, "Ω_{7} → Δ_{7}, written into S", size=11.5, fill=CONF, anchor="middle")
+        s.text(xs[0] + 30, y + 92, "Ω_{7} → Δ_{7}, written into Δ^{*}", size=11.5, fill=CONF, anchor="middle")
     for i, q in enumerate((8, 9, 10)):
         omega(s, xs[i + 1], y + 18, q)
     omega(s, xs[0], y + 18, 7, opacity=0.25, dash="4 3")
@@ -158,7 +158,7 @@ def c2_belt(out, ex):
     s.rect(xs[2] - 6, y - 10, 140, 62, r=10, fill="none", stroke=DROP, sw=1.4, dash="5 4")
     if ex == "dual":
         s.arrow([(246, y + 88), (246, y + 172), (905, y + 172), (905, y + 88)], stroke=DROP, sw=2, dash="5 4")
-        s.label(330, y + 176, "copy all of S into S_{p}, then replay Ω_{8}", size=11.5, fill=DROP, bg=WHITE,
+        s.label(330, y + 176, "copy all of Δ^{*} into Ω^{*}, then replay Ω_{8}", size=11.5, fill=DROP, bg=WHITE,
                 anchor="start")
         s.text(xs[2] + 162, y + 132, "dropped; batch 9 runs again", size=11.5, fill=DROP)
     else:
@@ -166,7 +166,7 @@ def c2_belt(out, ex):
         s.text(905, y + 52, "decided again,", size=11.5, fill=MUTED, anchor="middle")
         s.text(905, y + 67, "runs from here", size=11.5, fill=MUTED, anchor="middle")
         s.arrow([(850, y + 15), (xs[2] + 4, y + 2)], stroke=LIVE, dash="4 3", curve=0.12)
-        s.text(xs[2] + 162, y + 132, "dropped; C is rebuilt from Ω_{8}", size=11.5, fill=DROP)
+        s.text(xs[2] + 162, y + 132, "dropped; Ω^{*} is rebuilt from Ω_{8}", size=11.5, fill=DROP)
     s.save(os.path.join(out, f"{PFX}-c2-belt-{ex}"))
 
 
@@ -188,7 +188,7 @@ def dot(s, x, y, q, kind, ring=False, cross=False):
 
 
 def flag(s, x, y, name, colour, below=False):
-    """A position marker above (or below) a node: where S or S_p currently is."""
+    """A position marker above (or below) a node: where Δ* or Ω* currently is."""
     if below:
         s.path(f"M{x - 6},{y + 28} L{x + 6},{y + 28} L{x},{y + 21} Z", fill=colour, stroke="none")
         s.text(x, y + 62, name, size=13, weight=600, fill=colour, anchor="middle")
@@ -216,7 +216,7 @@ def c3_branch(out, ex):
             s.line(xs[last_conf], y, xs[max(spec)], y, stroke=SPEC, sw=3, dash="7 5")
         for q in conf:
             dot(s, xs[q], y, q, "D")
-        flag(s, xs[last_conf], y, "S", CONF)
+        flag(s, xs[last_conf], y, "Δ^{*}", CONF)
         return xs
 
     y = 160
@@ -226,7 +226,7 @@ def c3_branch(out, ex):
     dot(s, xs[10], y, 10, "O", ring=True)
     s.text(xs[10] + 34, y + 5, "new", size=12, fill=SPEC)
     if ex == "dual":
-        flag(s, xs[10], y, "S_{p}", SPEC)
+        flag(s, xs[10], y, "Ω^{*}", SPEC)
     if ex == "scal":
         for i in range(4):
             px = xs[10] - 36 + i * 24
@@ -240,10 +240,10 @@ def c3_branch(out, ex):
         dot(s, xs[q], y, q, "O")
     s.circle(xs[7], y, 23, fill="none", stroke=CONF, sw=1.5, dash="3 3")
     if ex == "dual":
-        flag(s, xs[10], y, "S_{p}", SPEC)
-        s.text(xs[7], y + 62, "batch 7 runs again on S: S moves up", size=12, fill=CONF, anchor="middle")
+        flag(s, xs[10], y, "Ω^{*}", SPEC)
+        s.text(xs[7], y + 62, "batch 7 runs again on Δ^{*}: Δ^{*} moves up", size=12, fill=CONF, anchor="middle")
     else:
-        s.text(xs[7], y + 62, "Ω_{7} → Δ_{7}: S moves up", size=12, fill=CONF, anchor="middle")
+        s.text(xs[7], y + 62, "Ω_{7} → Δ_{7}: Δ^{*} moves up", size=12, fill=CONF, anchor="middle")
 
     y = 500
     xs = lineup(y, (5, 6, 7), (8,))
@@ -259,8 +259,8 @@ def c3_branch(out, ex):
     if ex == "dual":
         s.path(f"M{xs[10]},{y - 24} C{xs[10]},{y - 70} {xs[7]},{y - 70} {xs[7] + 10},{y - 46}", stroke=DROP,
                sw=2, dash="5 4", arrow=DROP)
-        s.label((xs[7] + xs[10]) / 2, y - 66, "S_{p} ← a copy of S, then replay Ω_{8}", size=11.5, fill=DROP, bg=WHITE)
-        flag(s, xs[8], y, "S_{p}", SPEC)
+        s.label((xs[7] + xs[10]) / 2, y - 66, "Ω^{*} ← a copy of Δ^{*}, then replay Ω_{8}", size=11.5, fill=DROP, bg=WHITE)
+        flag(s, xs[8], y, "Ω^{*}", SPEC)
     s.save(os.path.join(out, f"{PFX}-c3-branch-{ex}"))
 
 

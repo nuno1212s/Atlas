@@ -3,7 +3,7 @@
     python3 requests.py <output-dir>
 
 A container is the proxy an operation executes against (it implements CRUDState): it reads the
-speculated view (C over S) and writes only into the decision being built.
+speculated view (Ω* over Δ*) and writes only into the decision being built.
 """
 import os
 import sys
@@ -61,7 +61,7 @@ def d1_subway(out, ex):
         thread_badge(s, 32, y - 38, "worker", WORK)
         s.line(X["start"], y, X["append"], y, stroke=WORK, sw=6)
         consensus_dot(s, X["start"], y, "batch k")
-        cstation(s, 300, y, 220, "run batch k, op by op", "a container over C, S")
+        cstation(s, 300, y, 220, "run batch k, op by op", "a container over Ω^{*}, Δ^{*}")
         station(s, X["append"], y, "append Ω_{k}", SPEC)
         tail(y)
 
@@ -76,7 +76,7 @@ def d1_subway(out, ex):
         thread_badge(s, 214, yp - 22, "preemptive", WORK)
         s.line(220, yp, X["append"], yp, stroke=WORK, sw=6)
         s.rect(300 - 92, yp - 14, 184, 28, r=6, fill=SPEC_T, stroke=SPEC, sw=1.6)
-        s.text(300, yp + 5, "run batch k on S_{p}", size=11.5, weight=600, fill=SPEC, anchor="middle")
+        s.text(300, yp + 5, "run batch k on Ω^{*}", size=11.5, weight=600, fill=SPEC, anchor="middle")
         s.text(300, yp + 32, "no container: in place", size=11, fill=MUTED, anchor="middle")
         station(s, X["append"], yp, "log batch k\n+ replies", SPEC)
         tail(yp, commit_label="send\nreplies")
@@ -85,7 +85,7 @@ def d1_subway(out, ex):
         s.path(f"M{X['confirm']},{yp + 8} L{X['confirm']},{yc - 16} Q{X['confirm']},{yc} {X['confirm'] + 16},{yc} "
                f"L{X['confirm'] + 30},{yc}", stroke=CONF, sw=6)
         thread_badge(s, X["confirm"] + 34, yc - 24, "confirmed", WORK)
-        station(s, X["commit"] + 20, yc, "run k again on S", CONF)
+        station(s, X["commit"] + 20, yc, "run k again on Δ^{*}", CONF)
 
     if ex == "scal":
         # --- scalable --------------------------------------------------------------
@@ -148,7 +148,7 @@ def d2_sequence(out, ex):
     if ex == "crud":
         # CRUD cache
         a, b, c = 70, 170, 270
-        for x, n, col, t in ((a, "consensus", CONS, CONS_T), (b, "worker", WORK, WORK_T), (c, "C · S", SPEC, SPEC_T)):
+        for x, n, col, t in ((a, "consensus", CONS, CONS_T), (b, "worker", WORK, WORK_T), (c, "Ω^{*} · Δ^{*}", SPEC, SPEC_T)):
             head(s, x, 166, n, col, t)
             lifeline(s, x, 180, bot)
         msg(s, a, b - 8, 220, "batch k", CONS)
@@ -158,7 +158,7 @@ def d2_sequence(out, ex):
         msg(s, b + 10, c, 312, "append Ω_{k}", SPEC)
         msg(s, a, b - 8, 400, "confirm k", CONS)
         act(s, b, 410, 450, CONF, CONF_T)
-        msg(s, b + 8, c, 432, "S ← S ⊕ Δ_{k}", CONF)
+        msg(s, b + 8, c, 432, "Δ^{*} ← Δ^{*} ⊕ Δ_{k}", CONF)
         s.arrow([(b, 470), (b, 500), (a - 20, 500)], stroke=INK)
         s.text(a + 30, 494, "replies", size=11, fill=INK, anchor="middle")
 
@@ -170,13 +170,13 @@ def d2_sequence(out, ex):
             head(s, x, 166, n, col, t)
             lifeline(s, x, 180, bot)
         msg(s, a, b - 8, 220, "batch k", CONS)
-        act(s, b, 230, 330, SPEC, SPEC_T, "run on S_{p}\nin place")
+        act(s, b, 230, 330, SPEC, SPEC_T, "run on Ω^{*}\nin place")
         msg(s, a, b - 8, 400, "confirm k", CONS)
         act(s, b, 410, 440, SPEC, SPEC_T)
         s.arrow([(b, 450), (b, 500), (a - 20, 500)], stroke=INK)
         s.text(a + 30, 494, "replies", size=11, fill=INK, anchor="middle")
         msg(s, b + 8, c - 8, 432, "batch k", CONF)
-        act(s, c, 442, 540, CONF, CONF_T, "run again\non S", side="left")
+        act(s, c, 442, 540, CONF, CONF_T, "run again\non Δ^{*}", side="left")
         s.text(c - 14, 580, "(replies dropped)", size=11, fill=MUTED, anchor="end")
 
     if ex == "scal":
@@ -195,7 +195,7 @@ def d2_sequence(out, ex):
         s.text(b - 16, 345, "re-run", size=11, fill=LIVE, anchor="end")
         s.text(b + 14, 376, "append Ω_{k}", size=11, fill=SPEC)
         msg(s, a, b - 8, 400, "confirm k", CONS)
-        act(s, b, 410, 450, CONF, CONF_T, "S ← S ⊕ Δ_{k}")
+        act(s, b, 410, 450, CONF, CONF_T, "Δ^{*} ← Δ^{*} ⊕ Δ_{k}")
         s.arrow([(b, 470), (b, 500), (a - 20, 500)], stroke=INK)
         s.text(a + 30, 494, "replies", size=11, fill=INK, anchor="middle")
     s.save(os.path.join(out, f"{PFX}-d2-sequence-{ex}"))
@@ -207,12 +207,12 @@ def d2_sequence(out, ex):
 def view_plane(s, x, y, w, dual=False):
     if dual:
         s.rect(x, y, w, 56, r=12, fill=SPEC_T, stroke=SPEC, sw=1.6, shadow=True)
-        s.text(x + w / 2, y + 34, "S_{p}  · a full copy", size=14, weight=600, fill=SPEC, anchor="middle")
+        s.text(x + w / 2, y + 34, "Ω^{*}  · a full copy", size=14, weight=600, fill=SPEC, anchor="middle")
         return
     s.rect(x, y + 14, w, 46, r=12, fill=CONF_T, stroke=CONF, sw=1.6, shadow=True)
     s.rect(x + 16, y, w - 32, 28, r=10, fill=SPEC_T, stroke=SPEC, sw=1.6, shadow=True)
-    s.text(x + w / 2, y + 19, "C", size=14, weight=600, fill=SPEC, anchor="middle")
-    s.text(x + w / 2, y + 50, "S", size=14, weight=600, fill=CONF, anchor="middle")
+    s.text(x + w / 2, y + 19, "Ω^{*}", size=14, weight=600, fill=SPEC, anchor="middle")
+    s.text(x + w / 2, y + 50, "Δ^{*}", size=14, weight=600, fill=CONF, anchor="middle")
 
 
 def d3_planes(out, ex):
@@ -246,10 +246,10 @@ def d3_planes(out, ex):
         s.rect(x + 50, 316, W - 100, 40, r=8, fill=WHITE, stroke=FAINT, sw=1.4, dash="5 4")
         s.text(x + W / 2, 341, "no container", size=12, fill=MUTED, anchor="middle")
         s.arrow([(x + 120, 300), (x + 120, 210)], stroke=SPEC, sw=2, both=True)
-        s.text(x + 128, 262, "reads and writes S_{p} directly", size=11, fill=SPEC)
+        s.text(x + 128, 262, "reads and writes Ω^{*} directly", size=11, fill=SPEC)
         s.rect(x + 40, 470, W - 80, 34, r=8, fill=SPEC_T, stroke=SPEC, sw=1.4)
         s.text(x + W / 2, 492, "log: batch k + replies", size=12, weight=600, fill=SPEC, anchor="middle")
-        s.text(x + W / 2, 540, "undo = copy all of S", size=11.5, fill=DROP, anchor="middle")
+        s.text(x + W / 2, 540, "undo = copy all of Δ^{*}", size=11.5, fill=DROP, anchor="middle")
 
     if ex == "scal":
         # scalable: a container per op on the pool, then re-runs on the worker
@@ -273,11 +273,11 @@ def d3_planes(out, ex):
         s.text(160 + W / 2, 540, "ω becomes the log entry Ω_{k}", size=11.5, fill=MUTED, anchor="middle")
     s.line(30, 588, 440, 588, stroke=LINE, sw=1)
     if ex == "dual":
-        s.text(32, 614, "Without a container the batch changes S_{p} itself,", size=12, fill=MUTED)
-        s.text(32, 632, "so undoing it means copying S again.", size=12, fill=MUTED)
+        s.text(32, 614, "Without a container the batch changes Ω^{*} itself,", size=12, fill=MUTED)
+        s.text(32, 632, "so undoing it means copying Δ^{*} again.", size=12, fill=MUTED)
     else:
         s.text(32, 614, "A container implements the state interface: the", size=12, fill=MUTED)
-        s.text(32, 632, "application never touches S or C directly.", size=12, fill=MUTED)
+        s.text(32, 632, "application never touches Δ^{*} or Ω^{*} directly.", size=12, fill=MUTED)
     s.save(os.path.join(out, f"{PFX}-d3-planes-{ex}"))
 
 

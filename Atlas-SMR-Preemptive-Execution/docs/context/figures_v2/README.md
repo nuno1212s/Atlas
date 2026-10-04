@@ -6,8 +6,8 @@ shapes are flat and rounded.
 
 | Colour | Meaning |
 |---|---|
-| blue | confirmed: S, Δ |
-| amber | speculated: C, Ω, S_p |
+| blue | confirmed: Δ* (the confirmed state), Δk |
+| amber | speculated: Ω* (the speculative state), Ωk |
 | violet | the decision being built (ω) and containers, drawn as dashed capsules |
 | slate badge | a thread (worker, main, preemptive, confirmed) |
 | teal | the exec pool, which runs in parallel |
@@ -36,12 +36,12 @@ check, merge non-colliders, re-run colliders, append Ω10. The files are
 `arch-scal-{x1,x2,x12}-step{0..5}`.
 
 From iteration 09, a step figure shows batch 10's own state only once it exists: ω10 from step 3,
-Ω10 at step 5. The persistent state (the log, C and S) is faded in any step that does not use it.
+Ω10 at step 5. The persistent state (the log, Ω\* and Δ\*) is faded in any step that does not use it.
 The read pool is no longer drawn (iteration 08). If ImageMagick (`magick`) is installed, the
 script also writes `arch-scal-{x1,x2,x12}-steps.gif`, which cycles through steps 1–5 at 3 s each.
 
 From iteration 10 the story continues past speculation. Steps 6–8 confirm decision 10:
-confirm 10 arrives (Ω10 is the head of the log), commit Ω10 → Δ10 into S (C is refolded), and
+confirm 10 arrives (Ω10 is the head of the log), commit Ω10 → Δ10 into Δ\* (Ω\* is refolded), and
 send the replies (o3's client gets 8). The step tracker groups the steps as speculate 1–5 and
 confirm 6–8, and the GIFs cycle through all eight.
 
@@ -50,8 +50,8 @@ treatment, one figure per executor, in the X1, X2 and X12 styles. Each has an ov
 steps of batch 10, speculate 1–3 then confirm 4–6:
 - CRUD cache: o1 and o2 write into ω10, o3 and o4 read, append Ω10; then confirm, commit
   Ω10 → Δ10, send the replies.
-- Dual-state: o1 and o2 write S_p in place, o3 and o4 read S_p, log batch 10; then confirm, send
-  the replies and forward the batch, and the confirmed worker re-runs it on S.
+- Dual-state: o1 and o2 write Ω\* in place, o3 and o4 read Ω\*, log batch 10; then confirm, send
+  the replies and forward the batch, and the confirmed worker re-runs it on Δ\*.
 
 The files are `arch-{crud,dual}-{x1,x2,x12}-step{0..6}`, plus `-steps.gif`.
 
@@ -59,6 +59,16 @@ Across a step sequence every element keeps its place (iteration 12). The log is 
 the left (Ω10) and oldest on the right (Ω7), and each decision keeps that slot through
 confirmation. Decisions already confirmed turn into "in S" ghosts where they stood, and the
 confirm and commit arrows go to Ω10 in its own slot.
+
+**State names (from iteration 13).**
+- **Δ\*** is the confirmed state: every confirmed decision Δk, applied.
+- **Ω\*** is the speculative state the executor reads through while speculating:
+  - in the CRUD cache and scalable executors, the cache folded from the pending decisions,
+    Ω\* = Ω7 ⊕ Ω8 ⊕ Ω9;
+  - in the dual-state executor, the full speculative copy.
+
+These replace C and S, which read alike, and the dual-state's S_p. The scripts' internal
+variables (S0, C0, …) keep their old names.
 
 `svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). It also
 holds `Svg(..., ox, oy)`, a canvas whose viewBox origin can be moved, so that a layout drawn once can

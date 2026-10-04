@@ -3,7 +3,7 @@
     python3 scalable_steps.py <output-dir>
 
 Three styles (iteration 07), each drawn as an overview (step 0) and as steps 1–5 of batch 10:
-  X1   rooms: each thread's room holds the state it owns; C over S as see-through sheets
+  X1   rooms: each thread's room holds the state it owns; Ω* over Δ* as see-through sheets
   X2   lanes: exec pool and worker as lanes; the worker's state as a ledger and key strips
   X12  a mix: X2's lanes and key strips, with X1's exact read paths and ownership notes
 
@@ -12,11 +12,11 @@ writes it and o3 reads it in parallel, so o3 sees the stale 7. Every step shows 
   1 run in parallel       each op in its own container on T1–T4, writing only its ℓ
   2 collision check       the worker compares accesses: e is W by o2 and R by o3, so they collide
   3 merge non-colliders   ℓ1 and ℓ4 go into ω10 in batch order; o2 and o3 wait
-  4 re-run colliders      o2 then o3 run again on the worker over C ⊕ ω10; o3 now reads 8
-  5 append Ω10            ω10 becomes Ω10, C folds it in, and o3's held reply is 8
+  4 re-run colliders      o2 then o3 run again on the worker over Ω* ⊕ ω10; o3 now reads 8
+  5 append Ω10            ω10 becomes Ω10, Ω* folds it in, and o3's held reply is 8
 Then the confirmation of decision 10 (iteration 10):
   6 confirm 10 arrives    Ω7–Ω9 were confirmed first; Ω10 is now the head of the log, so nothing re-runs
-  7 commit Ω10 → Δ10      Δ10's stored writes go into S; Ω10 leaves the log and C is refolded (empty)
+  7 commit Ω10 → Δ10      Δ10's stored writes go into Δ*; Ω10 leaves the log and Ω* is refolded (empty)
   8 send the replies      the replies held with Ω10 reach their clients: o3's client gets 8
 
 The read pool (unordered reads) is left out from iteration 08 on, so as to keep the figures on speculation.
@@ -52,19 +52,19 @@ NEW_IN_OMEGA = {3: {"c"}, 4: {"e"}}
 STEPS = {
     0: ("overview", "Steps 1–5 speculate batch 10 and steps 6–8 confirm it; each shows where the collision on e stands."),
     1: ("run in parallel",
-        "o2 writes e = 8 into its own ℓ2 while o3 reads e: o3 cannot see ℓ2, so it finds the stale 7 in S."),
+        "o2 writes e = 8 into its own ℓ2 while o3 reads e: o3 cannot see ℓ2, so it finds the stale 7 in Δ^{*}."),
     2: ("collision check",
         "The worker compares every op's accesses: e is written by o2 and read by o3, so o2 and o3 collide."),
     3: ("merge non-colliders",
         "ℓ1 and ℓ4 go into ω10 in batch order. o2 and o3 are set aside: their ℓ and replies are dropped."),
     4: ("re-run colliders",
-        "o2, then o3, run again on the worker over C ⊕ ω10. o3 now reads e = 8: the collision is resolved."),
+        "o2, then o3, run again on the worker over Ω^{*} ⊕ ω10. o3 now reads e = 8: the collision is resolved."),
     5: ("append Ω10",
-        "ω10 becomes Ω10 and is folded into C. The reply held for o3 is 8, never the stale 7."),
+        "ω10 becomes Ω10 and is folded into Ω^{*}. The reply held for o3 is 8, never the stale 7."),
     6: ("confirm 10 arrives",
         "Ω7, Ω8 and Ω9 were confirmed first, the same way. Ω10 is now the head of the log: nothing runs again."),
     7: ("commit Ω10 → Δ10",
-        "Δ10's stored writes go into S: c 4 → 5, e 7 → 8. Ω10 leaves the log and C is refolded from what is left."),
+        "Δ10's stored writes go into Δ^{*}: c 4 → 5, e 7 → 8. Ω10 leaves the log and Ω^{*} is refolded from what is left."),
     8: ("send the replies",
         "The replies of Δ10 reach their clients: o3's client gets 8. The collision never reaches a client."),
 }
@@ -195,7 +195,7 @@ def omega_box(s, x, y, step, w=124, h=74):
 
 
 def dcard(s, x, y, q, d, w=72, h=58):
-    """A confirmed decision: Δq with the writes it carries into S."""
+    """A confirmed decision: Δq with the writes it carries into Δ*."""
     s.rect(x, y, w, h, r=8, fill=CONF_T, stroke=CONF, sw=1.6, shadow=True)
     s.text(x + 9, y + 18, f"Δ_{{{q}}}", size=13, weight=600, fill=CONF)
     for r, (k, v) in enumerate(sorted(d.items())):
@@ -206,7 +206,7 @@ def ghost(s, x, y, q, w=72, h=58):
     """A decision that has already been confirmed and left the log."""
     s.rect(x, y, w, h, r=8, fill="none", stroke=CONF, sw=1.1, dash="3 3", opacity=0.5)
     s.text(x + w / 2, y + 26, f"Δ_{{{q}}}", size=13, fill=CONF, anchor="middle", opacity=0.6)
-    s.text(x + w / 2, y + 42, "in S", size=10, fill=CONF, anchor="middle", opacity=0.6)
+    s.text(x + w / 2, y + 42, "in Δ^{*}", size=10, fill=CONF, anchor="middle", opacity=0.6)
 
 
 def log_row(s, xs, y, step, w=72):
@@ -232,12 +232,12 @@ def log_row(s, xs, y, step, w=72):
 
 
 def confirm_labels(s, xs, y, step, last, w=72):
-    """Under the log while confirming: the head (Ω10, in its own slot) and what is already in S."""
+    """Under the log while confirming: the head (Ω10, in its own slot) and what is already in Δ*."""
     if step < last:
         s.text(xs[0] + w / 2, y, "head", size=10.5, fill=MUTED, anchor="middle")
-        s.text((xs[1] + xs[3] + w) / 2, y, "already confirmed, in S", size=10.5, fill=MUTED, anchor="middle")
+        s.text((xs[1] + xs[3] + w) / 2, y, "already confirmed, in Δ^{*}", size=10.5, fill=MUTED, anchor="middle")
     else:
-        s.text((xs[0] + xs[3] + w) / 2, y, "all confirmed, in S", size=10.5, fill=MUTED, anchor="middle")
+        s.text((xs[0] + xs[3] + w) / 2, y, "all confirmed, in Δ^{*}", size=10.5, fill=MUTED, anchor="middle")
 
 
 def step_panel(s, x, y, w, h, step):
@@ -247,8 +247,8 @@ def step_panel(s, x, y, w, h, step):
     s.rect(x, y, w, h, r=12, fill=WHITE, stroke=WORK, sw=1.2, shadow=True)
     badge_n(s, x + 16, y + 18, step)
     s.text(x + 32, y + 22, {2: "collision check", 3: "merge the non-colliders, in batch order",
-                            4: "re-run the colliders, in batch order, over C ⊕ ω_{10}",
-                            5: "append, and fold into C",
+                            4: "re-run the colliders, in batch order, over Ω^{*} ⊕ ω_{10}",
+                            5: "append, and fold into Ω^{*}",
                             6: "confirmation of 10 arrives", 7: "commit Ω_{10} → Δ_{10}",
                             8: "send the replies of Δ_{10}"}[step], size=12.5, weight=600)
     thread_badge(s, x + w - 26, y + 18, "W", WORK)
@@ -277,9 +277,9 @@ def step_panel(s, x, y, w, h, step):
         s.text(x + 16, r3 + 2, "nothing runs again; Ω_{7}, Ω_{8}, Ω_{9} went the same way before", size=11,
                fill=MUTED)
     elif step == 7:
-        s.text(x + 16, r1, "S ← S ⊕ Δ_{10}:  c 4 → 5,  e 7 → 8", size=11.5, fill=CONF, weight=600)
+        s.text(x + 16, r1, "Δ^{*} ← Δ^{*} ⊕ Δ_{10}:  c 4 → 5,  e 7 → 8", size=11.5, fill=CONF, weight=600)
         s.text(x + 16, r2, "Ω_{10} leaves the log", size=11.5, fill=MUTED)
-        s.text(x + 16, r3 + 2, "C is refolded from what is left: nothing, so C is empty", size=11, fill=MUTED)
+        s.text(x + 16, r3 + 2, "Ω^{*} is refolded from what is left: nothing, so Ω^{*} is empty", size=11, fill=MUTED)
     elif step == 8:
         xx = x + 16
         for i, r in enumerate(REPLIES10):
@@ -291,7 +291,7 @@ def step_panel(s, x, y, w, h, step):
         s.text(x + 16, r3 + 4, "the stale 7 from step 1 never left the worker", size=11, fill=MUTED)
     else:
         s.text(x + 16, r1, "ω_{10} → Ω_{10}, the newest log entry", size=11.5, fill=SPEC, weight=600)
-        s.text(x + 16, r2, "C ← C ⊕ Ω_{10}:  c 4 → 5,  e + 8", size=11.5, fill=SPEC)
+        s.text(x + 16, r2, "Ω^{*} ← Ω^{*} ⊕ Ω_{10}:  c 4 → 5,  e + 8", size=11.5, fill=SPEC)
         s.text(x + 16, r3 + 2, "replies held:  o1 4 · o2 7 ·", size=11.5, fill=MUTED)
         s.text(x + 16 + text_width("replies held:  o1 4 · o2 7 · ", 11.5), r3 + 2, "o3 8", size=11.5, weight=600,
                fill=CONF)
@@ -333,7 +333,7 @@ def x1(out, step):
         s.arrow([(150, 130), (150, 156)], stroke=CONS)
         s.label(214, 146, "batch k: one op per thread", size=11, fill=CONS, bg=WHITE)
 
-    room(s, 430, 158, 540, 446, "worker", WORK, WORK_T, "owns ω, the log, C and S")
+    room(s, 430, 158, 540, 446, "worker", WORK, WORK_T, "owns ω, the log, Ω^{*} and Δ^{*}")
     omega_box(s, 446, 196, step)
     xs = [596, 680, 764, 848]
     log_row(s, xs, 196, step)
@@ -350,8 +350,8 @@ def x1(out, step):
     cs, ss = Sheet(500, 436, slot=50, dx=40, dy=-26), Sheet(500, 560, slot=50, dx=40, dy=-26)
     ss.draw(s, CONF, CONF_T, S_AT.get(step, S0), size=13)
     cs.draw(s, SPEC, SPEC_T, C_AT.get(step, C0), size=13)
-    s.text(474, cs.y - 2, "C", size=20, weight=600, fill=SPEC, anchor="end")
-    s.text(474, ss.y - 2, "S", size=20, weight=600, fill=CONF, anchor="end")
+    s.text(474, cs.y - 2, "Ω^{*}", size=20, weight=600, fill=SPEC, anchor="end")
+    s.text(474, ss.y - 2, "Δ^{*}", size=20, weight=600, fill=CONF, anchor="end")
     if "C" not in USED[step]:
         fade(s, 452, cs.y - 32, 370, 40)
     if "S" not in USED[step]:
@@ -377,7 +377,7 @@ def x1(out, step):
                 [(xs[0] + 36, 256), (xs[0] + 36, 296), (938, 296), (938, 404), (cs.x + cs.w + 26, cs.y - 30)],
                 stroke=SPEC, sw=1.6)
     if step == 0:
-        s.label(xs[2] + 26, 314, "fold: C = Ω_{7} ⊕ … ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WORK_T, anchor="end")
+        s.label(xs[2] + 26, 314, "fold: Ω^{*} = Ω_{7} ⊕ … ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WORK_T, anchor="end")
         # the steps, numbered where they happen
         badge_n(s, 396, 176, 1)
         badge_n(s, 456, 286, 2)
@@ -396,7 +396,7 @@ def x1(out, step):
         i = KEYS.index("b")
         bx, by = cs.centre(i)
         ray(s, [(394, 468), (420, 468), (420, 386), (bx, 386), (bx, by - 11)])
-        s.text(446, 362, "&C, &S: read-only, shared by all four threads", size=10.5, fill=MUTED)
+        s.text(446, 362, "&Ω^{*}, &Δ^{*}: read-only, shared by all four threads", size=10.5, fill=MUTED)
 
     # commit and replies belong to the overview only
     if step == 0:
@@ -414,8 +414,9 @@ def x1(out, step):
         s.arrow([(xs[0] + 36, 130), (xs[0] + 36, 190)], stroke=CONS, sw=1.8)
         s.label(xs[0] + 36, 146, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
     if step == 7:
-        s.arrow([(594, 225), (438, 225), (438, ss.y - 12), (ss.x + 16, ss.y - 12)], stroke=CONF, sw=2.2)
-        s.text(446, 484, "Δ_{10} into S", size=11.5, fill=CONF, weight=600)
+        s.arrow([(594, 225), (438, 225), (438, ss.y + 18), (ss.x + 40, ss.y + 18), (ss.x + 40, ss.y + 2)],
+                stroke=CONF, sw=2.2)
+        s.text(446, 484, "Δ_{10} into Δ^{*}", size=11.5, fill=CONF, weight=600)
     if step == 8:
         s.arrow([(930, 350), (950, 350), (950, 622)], stroke=INK, sw=1.8)
         s.text(944, 612, "replies of Δ_{10}", size=11, fill=INK, anchor="end")
@@ -441,7 +442,7 @@ def kv_box(s, x, y, w, h, name, values, colour, tint, sub=None, rings=()):
     s.rect(x, y, w, h, r=12, fill=tint, stroke=colour, sw=1.6, shadow=True)
     s.text(x + 12, y + 22, name, size=16, weight=600, fill=colour)
     if sub:
-        s.text(x + 34, y + 21, sub, size=10.5, fill=MUTED)
+        s.text(x + 44, y + 21, sub, size=10.5, fill=MUTED)
     strip(s, x + 12, y + 40, values, colour, cell=24, gap=6, size=12, rings=rings, ring_colour=INK)
 
 
@@ -471,7 +472,7 @@ def x2(out, step, mix=False):
     s.rect(172, 254, 712, 244, r=14, fill=WORK_T)
     thread_badge(s, 184, 272, "worker", WORK)
     if mix:
-        s.text(360, 278, "owns ω, the log, C and S", size=11, fill=MUTED)
+        s.text(360, 278, "owns ω, the log, Ω^{*} and Δ^{*}", size=11, fill=MUTED)
     omega_box(s, 184, 296, step)
     xs = [338, 420, 502, 584]
     log_row(s, xs, 296, step)
@@ -482,10 +483,10 @@ def x2(out, step, mix=False):
         s.text(xs[3] + 4, 388, "oldest", size=10.5, fill=MUTED, anchor="end")
     else:
         confirm_labels(s, xs, 378, step, 8)
-    c_sub = {5: "C ⊕ Ω_{10}", 6: "fold of Ω_{10}", 7: "empty", 8: "empty"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
-    kv_box(s, 702, 286, 168, 76, "C", C_AT.get(step, C0), SPEC, SPEC_T, c_sub,
+    c_sub = {5: "Ω^{*} ⊕ Ω_{10}", 6: "fold of Ω_{10}", 7: "empty", 8: "empty"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
+    kv_box(s, 702, 286, 168, 76, "Ω^{*}", C_AT.get(step, C0), SPEC, SPEC_T, c_sub,
            rings={"c", "e"} if step == 5 else ())
-    kv_box(s, 702, 376, 168, 76, "S", S_AT.get(step, S0), CONF, CONF_T, "confirmed",
+    kv_box(s, 702, 376, 168, 76, "Δ^{*}", S_AT.get(step, S0), CONF, CONF_T, "confirmed",
            rings={"c", "e"} if step == 7 else ())
     if "log" not in USED[step]:
         fade(s, (xs[0] if step >= 6 else xs[1]) - 4, 290, 252 + (82 if step >= 6 else 0), 104)
@@ -521,17 +522,17 @@ def x2(out, step, mix=False):
             cx = 714 + i * 30 + 12
             ray(s, [(640, 226), (640, 262), (cx, 262), (cx, 418)], [(cx, 338)])
             s.text(870, 472, "o3 finds e = 7, stale", size=11, weight=600, fill=DROP, anchor="end")
-            s.text(652, 254, "o3 reads e: ℓ_{3} → C → S", size=10.5, fill=MUTED)
+            s.text(652, 254, "o3 reads e: ℓ_{3} → Ω^{*} → Δ^{*}", size=10.5, fill=MUTED)
         else:
             s.arrow([(786, 238), (786, 284)], stroke=MUTED, dash="4 3")
-            s.label(786, 262, "each op reads ℓ, then C, then S", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
+            s.label(786, 262, "each op reads ℓ, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
     if step == 6:
         s.arrow([(138, 274), (150, 274), (150, 325), (xs[0] - 2, 325)], stroke=CONS, sw=1.8)
         s.label(244, 318, "confirm 10", size=10.5, fill=CONS, bg=WORK_T, weight=600)
     if step == 7:
         s.arrow([(xs[0] + 36, 294), (xs[0] + 36, 288), (690, 288), (690, 414), (700, 414)], stroke=CONF, sw=2.2)
-        s.text(600, 283, "Δ_{10} into S", size=10.5, fill=CONF, anchor="middle", weight=600)
+        s.text(600, 283, "Δ_{10} into Δ^{*}", size=10.5, fill=CONF, anchor="middle", weight=600)
     if step == 8:
         s.arrow([(686, 444), (692, 444), (692, 470), (930, 470), (930, 396)], stroke=INK, sw=1.8)
         s.text(924, 486, "replies of Δ_{10}", size=11, fill=INK, anchor="end")

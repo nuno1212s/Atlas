@@ -13,9 +13,9 @@ PFX = "arch"
 
 
 def layered(s, x, y, w=104, h=96):
-    """C over S: the small speculated cache drawn in front of the confirmed state."""
-    block(s, x + 18, y + 18, w, h, CONF, CONF_T, "S", size=17)
-    block(s, x, y, 46, 40, SPEC, SPEC_T, "C", size=15)
+    """Ω* over Δ*: the small speculated cache drawn in front of the confirmed state."""
+    block(s, x + 18, y + 18, w, h, CONF, CONF_T, "Δ^{*}", size=17)
+    block(s, x, y, 46, 40, SPEC, SPEC_T, "Ω^{*}", size=15)
     return (x, y, w + 18, h + 18)
 
 
@@ -61,7 +61,7 @@ def a1_blocks(out, ex):
         s.arrow([(458, y + 126), (540, y + 82)], stroke=SPEC, curve=-0.25)
         s.label(497, y + 90, "fold", size=10.5, bg=WORK_T)
         s.arrow([(548, y + 82), (262, y + 82), (262, y + 114)], stroke=MUTED, dash="4 3")
-        s.label(420, y + 86, "reads C, then S", size=10.5, bg=WORK_T)
+        s.label(420, y + 86, "reads Ω^{*}, then Δ^{*}", size=10.5, bg=WORK_T)
         s.arrow([(138, y + 98), (208, y + 134)], stroke=CONS)
         s.label(176, y + 104, "batch k", size=10.5, bg=PANEL)
         # commit: the oldest Ω goes into S; its replies go to the clients
@@ -87,16 +87,16 @@ def a1_blocks(out, ex):
         lane(s, 300, y + 40, 260, 136, "preemptive")
         stack(s, 316, y + 66, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=36, gap=5)
         s.text(370, y + 108, "log of batches", size=10.5, fill=MUTED, anchor="middle")
-        block(s, 450, y + 58, 96, 104, SPEC, SPEC_T, "S_{p}", size=17, sub="full copy")
+        block(s, 450, y + 58, 96, 104, SPEC, SPEC_T, "Ω^{*}", size=17, sub="full copy")
         lane(s, 574, y + 40, 196, 136, "confirmed")
-        block(s, 640, y + 58, 104, 104, CONF, CONF_T, "S", size=17, sub="full copy")
+        block(s, 640, y + 58, 104, 104, CONF, CONF_T, "Δ^{*}", size=17, sub="full copy")
         s.arrow([(138, y + 95), (188, y + 95)], stroke=CONS)
         s.arrow([(286, y + 132), (448, y + 132)], stroke=SPEC)
         s.label(368, y + 136, "run batch k in place", size=10.5, bg=WORK_T)
         s.arrow([(416, y + 66), (416, y + 33), (720, y + 33), (720, y + 56)], stroke=CONF, sw=2)
         s.label(600, y + 37, "on confirm: run k again", size=10.5, fill=CONF, bg=PANEL)
         s.arrow([(640, y + 150), (548, y + 150)], stroke=DROP, dash="4 3")
-        s.label(594, y + 166, "copy S back", size=10.5, fill=DROP, bg=PANEL)
+        s.label(594, y + 166, "copy Δ^{*} back", size=10.5, fill=DROP, bg=PANEL)
         s.arrow([(430, y + 176), (430, y + 184), (900, y + 184), (918, y + 142)], stroke=INK)
         s.label(800, y + 188, "replies", size=10.5, bg=PANEL)
         s.rect(784, y + 54, 104, 40, r=20, fill=READP_T, stroke=READP, sw=1.2)
@@ -125,7 +125,7 @@ def a1_blocks(out, ex):
         s.arrow([(392, y + 130), (408, y + 130)], stroke=LIVE)
         s.arrow([(520, y + 122), (556, y + 84)], stroke=SPEC, curve=-0.25)
         s.arrow([(562, y + 82), (330, y + 82)], stroke=MUTED, dash="4 3")
-        s.label(452, y + 86, "every op reads C, then S", size=10.5, bg=WORK_T)
+        s.label(452, y + 86, "every op reads Ω^{*}, then Δ^{*}", size=10.5, bg=WORK_T)
         s.arrow([(84, y + 124), (84, y + 182), (428, y + 182), (428, y + 146)], stroke=CONS)
         s.label(130, y + 186, "confirm k", size=10.5, bg=PANEL)
         s.arrow([(428, y + 182), (650, y + 182), (650, y + 166)], stroke=CONF, sw=2)
@@ -178,7 +178,7 @@ def a2_rooms(out, ex):
         for i in range(4):
             s.circle(x + 50 + i * 26, 600, 8, fill=READP, opacity=0.75)
         s.arrow([(x + 220, 560), (x + 220, 500)], stroke=READP, dash="4 3")
-        s.label(x + 240, 532, "&S", size=11, fill=READP, bg=WHITE)
+        s.label(x + 240, 532, "&Δ^{*}", size=11, fill=READP, bg=WHITE)
         s.arrow([(x + 40, 132), (x + 40, 196)], stroke=CONS)
         s.arrow([(x + 280, 330), (x + 300, 330), (x + 300, 688)], stroke=INK)
         s.label(x + 300, 664, "replies", size=10.5, bg=WHITE)
@@ -191,9 +191,9 @@ def a2_rooms(out, ex):
         room(s, x + 10, 272, 280, 150, "preemptive")
         stack(s, x + 26, 318, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=34, gap=5)
         s.text(x + 82, 364, "log of batches", size=10.5, fill=MUTED, anchor="middle")
-        block(s, x + 176, 300, 96, 108, SPEC, SPEC_T, "S_{p}", size=17)
+        block(s, x + 176, 300, 96, 108, SPEC, SPEC_T, "Ω^{*}", size=17)
         room(s, x + 10, 440, 280, 128, "confirmed")
-        block(s, x + 176, 452, 96, 108, CONF, CONF_T, "S", size=17)
+        block(s, x + 176, 452, 96, 108, CONF, CONF_T, "Δ^{*}", size=17)
         room(s, x + 10, 586, 280, 70, "read pool", READP, READP_T)
         for i in range(4):
             s.circle(x + 40 + i * 22, 632, 7, fill=READP, opacity=0.75)
@@ -202,9 +202,9 @@ def a2_rooms(out, ex):
         s.arrow([(x + 122, 350), (x + 122, 506), (x + 174, 506)], stroke=CONF, sw=2)
         s.text(x + 114, 530, "run k again", size=10.5, fill=CONF, anchor="end")
         s.arrow([(x + 210, 452), (x + 210, 410)], stroke=DROP, dash="4 3")
-        s.label(x + 150, 433, "copy of S", size=10.5, fill=DROP, bg=WHITE)
+        s.label(x + 150, 433, "copy of Δ^{*}", size=10.5, fill=DROP, bg=WHITE)
         s.arrow([(x + 250, 610), (x + 250, 562)], stroke=READP, dash="4 3")
-        s.label(x + 270, 600, "&S", size=11, fill=READP, bg=READP_T)
+        s.label(x + 270, 600, "&Δ^{*}", size=11, fill=READP, bg=READP_T)
         s.arrow([(x + 290, 346), (x + 304, 346), (x + 304, 688)], stroke=INK)
         s.label(x + 304, 664, "replies", size=10.5, bg=WHITE)
 
@@ -229,18 +229,18 @@ def a2_rooms(out, ex):
         s.arrow([(x + 90, 504), (x + 90, 282)], stroke=LIVE)
         s.label(x + 90, 330, "join", size=10.5, fill=LIVE, bg=WORK_T)
         s.arrow([(x + 200, 504), (x + 200, 422)], stroke=MUTED, dash="4 3")
-        s.label(x + 200, 470, "&C, &S", size=11, fill=MUTED, bg=WHITE)
+        s.label(x + 200, 470, "&Ω^{*}, &Δ^{*}", size=11, fill=MUTED, bg=WHITE)
         s.arrow([(x + 40, 132), (x + 40, 196)], stroke=CONS)
         s.arrow([(x + 290, 280), (x + 300, 280), (x + 300, 688)], stroke=INK)
         s.label(x + 300, 664, "replies", size=10.5, bg=WHITE)
-    s.text(x0 + 150, 760, "&S = read-only access to another", size=11.5, fill=MUTED, anchor="middle")
+    s.text(x0 + 150, 760, "&Δ^{*} = read-only access to another", size=11.5, fill=MUTED, anchor="middle")
     s.text(x0 + 150, 775, "thread's state", size=11.5, fill=MUTED, anchor="middle")
     s.save(os.path.join(out, f"{PFX}-a2-rooms-{ex}"))
 
 
 def mini_layered(s, x, y, k=1.0):
-    block(s, x + 10 * k, y + 10 * k, 58 * k, 52 * k, CONF, CONF_T, "S", size=13 * k, shadow=False)
-    block(s, x, y, 26 * k, 24 * k, SPEC, SPEC_T, "C", size=11 * k, shadow=False)
+    block(s, x + 10 * k, y + 10 * k, 58 * k, 52 * k, CONF, CONF_T, "Δ^{*}", size=13 * k, shadow=False)
+    block(s, x, y, 26 * k, 24 * k, SPEC, SPEC_T, "Ω^{*}", size=11 * k, shadow=False)
 
 
 def gear(s, cx, cy, r, colour):
@@ -278,18 +278,18 @@ def a3_matrix(out, ex):
     # memory, drawn to a rough scale: S is the big square
     y = 228
     if ex == "dual":
-        block(s, X - 70, y, 64, 64, CONF, CONF_T, "S", size=14, shadow=False)
-        block(s, X + 6, y, 64, 64, SPEC, SPEC_T, "S_{p}", size=14, shadow=False)
+        block(s, X - 70, y, 64, 64, CONF, CONF_T, "Δ^{*}", size=14, shadow=False)
+        block(s, X + 6, y, 64, 64, SPEC, SPEC_T, "Ω^{*}", size=14, shadow=False)
         cap(y + 86, "two full copies")
     else:
-        block(s, X - 50, y, 64, 64, CONF, CONF_T, "S", size=14, shadow=False)
-        block(s, X + 22, y + 34, 24, 24, SPEC, SPEC_T, "C", size=11, shadow=False)
+        block(s, X - 50, y, 64, 64, CONF, CONF_T, "Δ^{*}", size=14, shadow=False)
+        block(s, X + 22, y + 34, 24, 24, SPEC, SPEC_T, "Ω^{*}", size=11, shadow=False)
         for i in range(3):
             s.rect(X + 52 + i * 9, y + 44, 7, 14, r=2, fill=SPEC_T, stroke=SPEC, sw=1)
         if ex == "scal":
             for i in range(4):
                 s.circle(X + 24 + i * 9, y + 20, 3.2, fill=LIVE)
-        cap(y + 86, "S + a small cache + log" + (", + a tiny cache per op" if ex == "scal" else ""))
+        cap(y + 86, "Δ^{*} + a small cache + log" + (", + a tiny cache per op" if ex == "scal" else ""))
 
     # speculate
     y = 352
@@ -297,11 +297,11 @@ def a3_matrix(out, ex):
         capsule(s, X - 46, y, 92, 26, "batch", size=11)
         s.arrow([(X, y + 26), (X, y + 40)], stroke=MUTED, dash="3 3")
         mini_layered(s, X - 34, y + 42, 0.8)
-        cap(y + 118, "in a container that reads C, then S")
+        cap(y + 118, "in a container that reads Ω^{*}, then Δ^{*}")
     elif ex == "dual":
         card(s, X - 80, y + 28, "k", SPEC, SPEC_T, w=30, h=26, shadow=False)
         s.arrow([(X - 46, y + 41), (X - 10, y + 41)], stroke=SPEC)
-        block(s, X - 6, y + 8, 58, 64, SPEC, SPEC_T, "S_{p}", size=13, shadow=False)
+        block(s, X - 6, y + 8, 58, 64, SPEC, SPEC_T, "Ω^{*}", size=13, shadow=False)
         cap(y + 118, "directly on the copy, in place")
     else:
         for i in range(4):
@@ -317,27 +317,27 @@ def a3_matrix(out, ex):
     if ex == "dual":
         card(s, X - 76, y + 18, "k", SPEC, SPEC_T, w=30, h=26, shadow=False)
         gear(s, X - 24, y + 31, 11, CONF)
-        block(s, X + 4, y, 60, 60, CONF, CONF_T, "S", size=14, shadow=False)
-        cap(y + 86, "run the batch again on S")
+        block(s, X + 4, y, 60, 60, CONF, CONF_T, "Δ^{*}", size=14, shadow=False)
+        cap(y + 86, "run the batch again on Δ^{*}")
     else:
         card(s, X - 66, y + 18, "Ω", SPEC, SPEC_T, w=30, h=26, shadow=False)
         s.arrow([(X - 32, y + 31), (X - 4, y + 31)], stroke=CONF, sw=2)
-        block(s, X, y, 60, 60, CONF, CONF_T, "S", size=14, shadow=False)
+        block(s, X, y, 60, 60, CONF, CONF_T, "Δ^{*}", size=14, shadow=False)
         cap(y + 86, "apply the stored writes")
 
     # backtrack
     y = 630
     if ex == "dual":
-        block(s, X - 76, y, 50, 46, CONF, CONF_T, "S", size=13, shadow=False)
+        block(s, X - 76, y, 50, 46, CONF, CONF_T, "Δ^{*}", size=13, shadow=False)
         s.arrow([(X - 22, y + 23), (X + 18, y + 23)], stroke=DROP, dash="4 3")
-        block(s, X + 22, y, 50, 46, SPEC, SPEC_T, "S_{p}", size=13, shadow=False)
-        cap(y + 66, "copy S, then replay the rest")
+        block(s, X + 22, y, 50, 46, SPEC, SPEC_T, "Ω^{*}", size=13, shadow=False)
+        cap(y + 66, "copy Δ^{*}, then replay the rest")
     else:
         x0 = X - 66
         for i, op in enumerate((1, 1, 0.35, 0.35)):
             card(s, x0 + i * 34, y + 8, "Ω", SPEC, SPEC_T, w=30, h=26, shadow=False, opacity=op)
         s.line(x0 + 66, y + 4, x0 + 134, y + 38, stroke=DROP, sw=2)
-        cap(y + 66, "drop the tail, refold C")
+        cap(y + 66, "drop the tail, refold Ω^{*}")
     s.save(os.path.join(out, f"{PFX}-a3-matrix-{ex}"))
 
 

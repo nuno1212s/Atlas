@@ -4,12 +4,12 @@
 
 Three ways of joining the two (iteration 06):
   X1  threads as rooms, with the caching layers drawn inside the room that owns them
-  X2  thread lanes, with the worker's state drawn as the ledger tape feeding C over S
+  X2  thread lanes, with the worker's state drawn as the ledger tape feeding Ω* over Δ*
   X3  see-through layers, with the threads that own and read them drawn around them
 
 Batch 10 is the running example (executor_model.py): o1 c ← 5, o2 e ← 8, o3 read e, o4 read b.
-Each op runs in its own container on the exec pool, with a private cache ℓ over the shared C and S;
-o3 reads the stale e = 7 from S, so the worker re-runs o2 and o3 and builds ω10, which becomes Ω10.
+Each op runs in its own container on the exec pool, with a private cache ℓ over the shared Ω* and Δ*;
+o3 reads the stale e = 7 from Δ*, so the worker re-runs o2 and o3 and builds ω10, which becomes Ω10.
 """
 import os
 import sys
@@ -105,7 +105,7 @@ def x1_rooms_layers(out):
     s.label(214, 146, "batch k: one op per thread", size=11, fill=CONS, bg=WHITE)
 
     # worker: ω, the log and C over S
-    room(s, 430, 158, 540, 446, "worker", WORK, WORK_T, "owns the log, C and S")
+    room(s, 430, 158, 540, 446, "worker", WORK, WORK_T, "owns the log, Ω^{*} and Δ^{*}")
     omega_box(s, 446, 196)
     s.text(508, 290, "merge ℓ_{1}, ℓ_{4}", size=10.5, fill=MUTED, anchor="middle")
     s.text(508, 304, "re-run o2, o3", size=10.5, fill=MUTED, anchor="middle")
@@ -124,10 +124,10 @@ def x1_rooms_layers(out):
     cs, ss = Sheet(500, 436, slot=50, dx=40, dy=-26), Sheet(500, 560, slot=50, dx=40, dy=-26)
     ss.draw(s, CONF, CONF_T, S0, size=13)
     cs.draw(s, SPEC, SPEC_T, C0, size=13)
-    s.text(474, cs.y - 2, "C", size=20, weight=600, fill=SPEC, anchor="end")
-    s.text(474, ss.y - 2, "S", size=20, weight=600, fill=CONF, anchor="end")
+    s.text(474, cs.y - 2, "Ω^{*}", size=20, weight=600, fill=SPEC, anchor="end")
+    s.text(474, ss.y - 2, "Δ^{*}", size=20, weight=600, fill=CONF, anchor="end")
     s.arrow([(xs[2] + 36, 256), (xs[2] + 36, 300), (cs.x + cs.w + 26, cs.y - 30)], stroke=SPEC, sw=1.6)
-    s.label(xs[2] + 26, 314, "fold: C = Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WORK_T, anchor="end")
+    s.label(xs[2] + 26, 314, "fold: Ω^{*} = Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WORK_T, anchor="end")
 
     # commit: confirm k reaches the oldest, Ω7, which becomes Δ7 and is written into S
     s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 194)], stroke=CONS)
@@ -145,14 +145,14 @@ def x1_rooms_layers(out):
     i = KEYS.index("b")
     bx, by = cs.centre(i)
     ray(s, [(394, 468), (420, 468), (420, 386), (bx, 386), (bx, by - 11)])
-    s.text(446, 362, "&C, &S: read-only, shared by all four threads", size=10.5, fill=MUTED)
+    s.text(446, 362, "&Ω^{*}, &Δ^{*}: read-only, shared by all four threads", size=10.5, fill=MUTED)
 
     # read pool and clients
     room(s, 30, 540, 380, 64, "read pool", READP, READP_T, "4 threads, unordered reads")
     for k in range(4):
         s.circle(330 + k * 18, 586, 6, fill=READP, opacity=0.75)
     s.arrow([(410, 572), (ss.x + 4, 572), (ss.x + 14, ss.y - 4)], stroke=READP, dash="4 3")
-    s.label(452, 586, "&S", size=11, fill=READP, bg=WORK_T)
+    s.label(452, 586, "&Δ^{*}", size=11, fill=READP, bg=WORK_T)
     s.rect(30, 624, 940, 40, r=20, fill="#eef0f3")
     clients(s, 480, 646)
     s.arrow([(950, ss.y - 12), (950, 622)], stroke=INK)
@@ -206,8 +206,8 @@ def x2_lanes_ledger(out):
     s.text(xs[0], 378, "newest", size=10.5, fill=MUTED)
     s.arrow([(xs[0] + 50, 374), (xs[3] + 6, 374)], stroke="#b9bfca", sw=1)
     s.text(xs[3] + 4, 392, "oldest", size=10.5, fill=MUTED, anchor="end")
-    kv_box(s, 702, 290, 168, 76, "C", C0, SPEC, SPEC_T, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
-    kv_box(s, 702, 380, 168, 76, "S", S0, CONF, CONF_T, "confirmed")
+    kv_box(s, 702, 290, 168, 76, "Ω^{*}", C0, SPEC, SPEC_T, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
+    kv_box(s, 702, 380, 168, 76, "Δ^{*}", S0, CONF, CONF_T, "confirmed")
     s.arrow([(658, 314), (700, 314)], stroke=SPEC, sw=1.6)
     s.label(679, 304, "fold", size=10.5, fill=SPEC, bg=WORK_T)
     s.arrow([(xs[3] + 46, 360), (xs[3] + 46, 440), (700, 440)], stroke=CONF, sw=2)
@@ -217,16 +217,16 @@ def x2_lanes_ledger(out):
 
     # every op reads the worker's C, then S
     s.arrow([(786, 238), (786, 288)], stroke=MUTED, dash="4 3")
-    s.label(786, 262, "each op reads ℓ, then C, then S", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
+    s.label(786, 262, "each op reads ℓ, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
     # read pool lane
     s.rect(172, 500, 712, 60, r=14, fill=READP_T)
     thread_badge(s, 184, 518, "read pool · 4 threads", READP)
     for k in range(4):
         s.circle(212 + k * 24, 544, 7, fill=READP, opacity=0.75)
-    s.text(360, 534, "unordered reads, on S only", size=11, fill=MUTED)
+    s.text(360, 534, "unordered reads, on Δ^{*} only", size=11, fill=MUTED)
     s.arrow([(786, 500), (786, 458)], stroke=READP, dash="4 3")
-    s.label(806, 486, "&S", size=11, fill=READP, bg=READP_T)
+    s.label(806, 486, "&Δ^{*}", size=11, fill=READP, bg=READP_T)
 
     # replies
     s.arrow([(870, 418), (930, 418), (930, 398)], stroke=INK)
@@ -250,13 +250,13 @@ def x3_layers_threads(out):
     thread_badge(s, 132, top - 74, "exec pool · 4 threads in parallel", POOL)
     # worker band behind C, S and the log
     s.rect(120, top + 58, 850, 268, r=16, fill=WORK_T)
-    thread_badge(s, 132, top + 76, "worker · owns the log, C and S", WORK)
+    thread_badge(s, 132, top + 76, "worker · owns the log, Ω^{*} and Δ^{*}", WORK)
 
     cs, ss = Sheet(190, top + 160), Sheet(190, top + 272)
     ss.draw(s, CONF, CONF_T, S0)
-    sheet_label(s, ss, "S", "confirmed", CONF)
+    sheet_label(s, ss, "Δ^{*}", "confirmed", CONF)
     cs.draw(s, SPEC, SPEC_T, C0)
-    sheet_label(s, cs, "C", "pending", SPEC)
+    sheet_label(s, cs, "Ω^{*}", "pending", SPEC)
     minis = []
     for pos in range(4):
         local = TRACE10.lanes[pos][0]
@@ -294,7 +294,7 @@ def x3_layers_threads(out):
     s.arrow([(xs[0] + 36, top + 10), (xs[0] + 36, ly - 2)], stroke=SPEC, sw=1.6)
     s.arrow([(xs[2] + 20, ly + 60), (xs[2] + 20, ly + 80), (cs.x + cs.w + 24, ly + 80),
              (cs.x + cs.w + 12, cs.y - 8)], stroke=SPEC, sw=1.6)
-    s.label(cs.x + cs.w + 120, ly + 84, "fold: C = Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WORK_T)
+    s.label(cs.x + cs.w + 120, ly + 84, "fold: Ω^{*} = Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WORK_T)
     s.arrow([(xs[3] + 36, ly + 60), (xs[3] + 36, ss.y - 14), (ss.x + ss.w + 30, ss.y - 14)], stroke=CONF, sw=2)
     s.text(xs[3] + 30, ss.y - 22, "commit Ω_{7} → Δ_{7}", size=11, fill=CONF, anchor="end")
 
