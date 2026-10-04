@@ -605,6 +605,24 @@ is drawn as fact in the figures.
    - The CRUD cache evicts staged batches at or above the backtrack point (`pending_state.rs:437-438`).
    - The dual-state figures therefore say nothing about batch 12 on a backtrack.
 
+9. **A confirm rebuilds the cache, but only a backtrack needs to.** (The intended design, drawn from
+   figure iteration 15 on.)
+   - The code rebuilds the cache from the remaining log on every confirm:
+     `single_threaded_crud/pending_state.rs:316` and `scalable_crud/pending_state.rs:390` call
+     `rebuild_accumulated_cache(self.pending…)` after `apply_delta_to_state`.
+   - **Why the rebuild is unnecessary.** After Δk is applied, Ω\* still holds Ωk's writes, but each
+     of them is either equal to Δ\*'s value or overridden by a newer pending write. Reads (ω, then
+     Ω\*, then Δ\*) therefore return the same values without it. Only a backtrack, which drops
+     entries, needs a refold.
+   - **The hazard to handle if the rebuild is removed.** Ω\* can then hold confirmed entries while
+     the log is empty. A path that writes Δ\* without going through the log would be shadowed by
+     those stale entries. Two paths do that:
+     - `handle_confirmed_update`, which only requires an empty log;
+     - the `ConfirmRoute::Staged` fallback.
+
+     Both must clear Ω\* first. Clearing Ω\* whenever the log drains also keeps it from growing
+     without bound.
+
 ## 6. Could not be determined from the code
 
 - Typical sizes of `C` and of Δ in the recorded runs. The size metrics exist as `CACHE_DELTA_SIZE` and `CACHE_PENDING_QUEUE_SIZE` (`pending_state.rs:306-309`). There is no metric for the size of `C`, so V8 cannot be drawn to scale from the code alone.

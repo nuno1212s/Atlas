@@ -17,7 +17,8 @@ writes it and o3 reads it in parallel, so o3 sees the stale 7. Every step shows 
 Then the confirmation of the oldest pending decision, 7 (iteration 14): decisions are confirmed in
 order, so 10 cannot be confirmed before 7, 8 and 9.
   6 confirm 7 arrives     Ω7 is the head of the log; Ω8, Ω9 and Ω10 stay speculated, waiting their turn
-  7 commit Ω7 → Δ7        Δ7's stored writes go into Δ*; Ω7 leaves the log; Ω* = Ω8 ⊕ Ω9 ⊕ Ω10
+  7 commit Ω7 → Δ7        Δ7's stored writes go into Δ*; Ω7 leaves the log; Ω* is left as it is
+                          (iteration 15: Ω* is refolded only on a backtrack, never on a confirm)
   8 send the replies      batch 7's replies reach their clients; batch 10's wait with Ω10
 
 The read pool (unordered reads) is left out from iteration 08 on, so as to keep the figures on speculation.
@@ -37,9 +38,9 @@ from svgkit import (CONF, CONF_T, CONS, CONS_T, DROP, DROP_T, INK, LIVE, LIVE_T,
 PFX = "arch-scal"
 S0, C0, LOG0 = CRUD[0].S, CRUD[0].C, CRUD[0].log
 C1 = SCALABLE[1].C
-S7, C7 = SCALABLE[2].S, SCALABLE[2].C        # after Δ7: the oldest decision, confirmed first
+S7 = SCALABLE[2].S                           # after Δ7: the oldest decision, confirmed first
 S_AT = {7: S7, 8: S7}
-C_AT = {5: C1, 6: C1, 7: C7, 8: C7}          # C7 = Ω8 ⊕ Ω9 ⊕ Ω10
+C_AT = {5: C1, 6: C1, 7: C1, 8: C1}          # a confirm does not touch Ω*: only a backtrack refolds it
 DELTA7 = dict(LOG0[0][1])                    # {a: 5, d: 9}
 REPLIES7 = [(op_text(op), r) for op, r in zip(BATCH[7], LOG0[0][2])]   # batch 7's ops and their replies
 OPS = TRACE10.ops
@@ -62,14 +63,14 @@ STEPS = {
     6: ("confirm 7 arrives",
         "Consensus confirms the oldest pending decision, 7: it is the head of the log. Ω8, Ω9 and Ω10 stay speculated."),
     7: ("commit Ω7 → Δ7",
-        "Δ7's stored writes go into Δ^{*}: a 1 → 5, d + 9. Ω7 leaves the log; Ω^{*} is refolded from Ω8, Ω9 and Ω10."),
+        "Δ7's stored writes go into Δ^{*}: a 1 → 5, d + 9. Ω7 leaves the log; Ω^{*} is not refolded, only a backtrack does that."),
     8: ("send the replies of Δ7",
         "Batch 7's replies reach their clients. Batch 10's (o3 → 8) wait with Ω10 until 8 and 9 are confirmed first."),
 }
 # What the worker's persistent state is used for in each step; anything else is drawn faded.
 # ω10 and Ω10 belong to batch 10 and are not drawn at all before they exist (ω10 from step 3, Ω10 at step 5).
 USED = {0: {"log", "C", "S"}, 1: {"C", "S"}, 2: set(), 3: set(), 4: {"C", "S"}, 5: {"log", "C"},
-        6: {"log"}, 7: {"log", "C", "S"}, 8: {"log"}}
+        6: {"log"}, 7: {"log", "S"}, 8: {"log"}}
 LEGEND = [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated"),
           ("capsule", LIVE, LIVE_T, "container / being built"), ("badge", WORK, None, "thread"),
           ("badge", POOL, None, "parallel thread"), ("badge", DROP, None, "collision")]
@@ -285,8 +286,7 @@ def step_panel(s, x, y, w, h, step):
     elif step == 7:
         s.text(x + 16, r1, "Δ^{*} ← Δ^{*} ⊕ Δ_{7}:  a 1 → 5,  d + 9", size=11.5, fill=CONF, weight=600)
         s.text(x + 16, r2, "Ω_{7} leaves the log", size=11.5, fill=MUTED)
-        s.text(x + 16, r3 + 2, "Ω^{*} is refolded from Ω_{8}, Ω_{9}, Ω_{10}: d now comes from Δ^{*}", size=11,
-               fill=MUTED)
+        s.text(x + 16, r3 + 2, "Ω^{*} is not refolded: Ω_{7}'s writes stay in it, and now match Δ^{*}", size=11, fill=MUTED)
     elif step == 8:
         xx = x + 16
         s.text(xx, r1, "batch 7:", size=11.5, fill=MUTED)
@@ -490,8 +490,8 @@ def x2(out, step, mix=False):
         s.text(xs[3] + 4, 388, "oldest", size=10.5, fill=MUTED, anchor="end")
     else:
         confirm_labels(s, xs, 378, step, 8)
-    c_sub = {5: "Ω^{*} ⊕ Ω_{10}", 6: "Ω_{7} ⊕ … ⊕ Ω_{10}", 7: "Ω_{8} ⊕ Ω_{9} ⊕ Ω_{10}",
-             8: "Ω_{8} ⊕ Ω_{9} ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
+    c_sub = {5: "Ω^{*} ⊕ Ω_{10}", 6: "Ω_{7} ⊕ … ⊕ Ω_{10}", 7: "Ω_{7} ⊕ … ⊕ Ω_{10}",
+             8: "Ω_{7} ⊕ … ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
     kv_box(s, 702, 286, 168, 76, "Ω^{*}", C_AT.get(step, C0), SPEC, SPEC_T, c_sub,
            rings={"c", "e"} if step == 5 else ())
     kv_box(s, 702, 376, 168, 76, "Δ^{*}", S_AT.get(step, S0), CONF, CONF_T, "confirmed",

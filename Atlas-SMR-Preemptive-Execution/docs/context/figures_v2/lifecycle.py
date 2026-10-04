@@ -31,11 +31,11 @@ def chip(s, x, y, who, what, colour):
 # C1 — a state machine for one decision
 # ---------------------------------------------------------------------------
 HOW = {
-    "crud": dict(spec="in a container over Ω^{*}, Δ^{*}", commit="apply Ω_{k} to Δ^{*}, refold Ω^{*}",
+    "crud": dict(spec="in a container over Ω^{*}, Δ^{*}", commit="apply Ω_{k} to Δ^{*}; Ω^{*} is left as it is",
                  back="drop Ω_{k} onwards, refold Ω^{*}"),
     "dual": dict(spec="in place, on the copy Ω^{*}", commit="run batch k again on Δ^{*}",
                  back="copy all of Δ^{*} into Ω^{*}, replay the rest"),
-    "scal": dict(spec="a container per op, in parallel", commit="apply Ω_{k} to Δ^{*}, refold Ω^{*}",
+    "scal": dict(spec="a container per op, in parallel", commit="apply Ω_{k} to Δ^{*}; Ω^{*} is left as it is",
                  back="drop Ω_{k} onwards, refold Ω^{*}"),
 }
 

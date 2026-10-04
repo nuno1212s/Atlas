@@ -15,7 +15,7 @@ CRUD cache, one worker thread:
   2 o3, o4 read             o3 finds 8 in ω10, o4 finds b deleted in Ω*
   3 append Ω10              ω10 becomes Ω10 and is folded into Ω*; the replies are held
   4 confirm 7 arrives       the oldest decision, Ω7, is the head of the log; Ω8–Ω10 stay speculated
-  5 commit Ω7 → Δ7          Δ7's writes go into Δ*; Ω7 leaves the log; Ω* = Ω8 ⊕ Ω9 ⊕ Ω10
+  5 commit Ω7 → Δ7          Δ7's writes go into Δ*; Ω7 leaves the log; Ω* is left as it is
   6 send the replies        batch 7's replies go out; batch 10's wait with Ω10
 Dual-state, main + preemptive + confirmed workers:
   1 o1, o2 write Ω*        no container: the batch changes the full copy Ω* in place
@@ -48,7 +48,7 @@ REPLIES = list(CRUD[1].log[-1][2])                 # ['4', '7', '8', 'none'], th
 OMEGA10 = CRUD[1].log[-1][1]                       # {c: 5, e: 8}
 S0, C0, LOG0 = CRUD[0].S, CRUD[0].C, CRUD[0].log
 C1 = CRUD[1].C
-S7, C7 = CRUD[2].S, CRUD[2].C                      # after Δ7, the oldest decision: C7 = Ω8 ⊕ Ω9 ⊕ Ω10
+S7 = CRUD[2].S                                     # after Δ7, the oldest decision (Ω* is not refolded)
 P0, P1 = DUAL[0].P, DUAL[1].P
 assert DUAL[2].S == S7 and DUAL[2].P == P1          # both executors confirm 7 to the same Δ*
 DELTA7 = dict(LOG0[0][1])                          # {a: 5, d: 9}
@@ -67,7 +67,7 @@ STEPS = {
             "o3 finds e = 8 in ω10: running in order, it sees o2's write, so nothing collides. o4 finds b deleted in Ω^{*}."),
         3: ("append Ω10", "ω10 becomes Ω10 and is folded into Ω^{*}. The replies held are 4, 7, 8 and none."),
         4: ("confirm 7 arrives", "Consensus confirms the oldest pending decision, 7: it is the head of the log. Ω8, Ω9, Ω10 stay speculated."),
-        5: ("commit Ω7 → Δ7", "Δ7's stored writes go into Δ^{*}: a 1 → 5, d + 9. Ω7 leaves the log; Ω^{*} is refolded from Ω8, Ω9, Ω10."),
+        5: ("commit Ω7 → Δ7", "Δ7's stored writes go into Δ^{*}: a 1 → 5, d + 9. Ω7 leaves the log; Ω^{*} is not refolded, only a backtrack does that."),
         6: ("send the replies of Δ7", "Batch 7's replies reach their clients. Batch 10's (o3 → 8) wait with Ω10 until 8 and 9 are confirmed."),
     },
     "dual": {
@@ -85,7 +85,7 @@ STEPS = {
 }
 # Persistent state each step uses; everything else that exists is faded.
 USED = {
-    "crud": {0: {"log", "C", "S"}, 1: {"C", "S"}, 2: {"C"}, 3: {"log", "C"}, 4: {"log"}, 5: {"log", "C", "S"},
+    "crud": {0: {"log", "C", "S"}, 1: {"C", "S"}, 2: {"C"}, 3: {"log", "C"}, 4: {"log"}, 5: {"log", "S"},
              6: {"log"}},
     "dual": {0: {"log", "Sp", "S"}, 1: {"Sp"}, 2: {"Sp"}, 3: {"log"}, 4: {"log"}, 5: {"log"}, 6: {"S"}},
 }
@@ -133,7 +133,7 @@ PANELS = {
                                           [("Ω_{8}, Ω_{9}, Ω_{10} stay speculated: each is confirmed in turn", MUTED, 400)]]),
         5: ("commit Ω_{7} → Δ_{7}", [[("Δ^{*} ← Δ^{*} ⊕ Δ_{7}:  a 1 → 5,  d + 9", CONF, 600)],
                                      [("Ω_{7} leaves the log", MUTED, 400)],
-                                     [("Ω^{*} is refolded from Ω_{8}, Ω_{9}, Ω_{10}: d now comes from Δ^{*}", MUTED, 400)]]),
+                                     [("Ω^{*} is not refolded: Ω_{7}'s writes stay in it, and now match Δ^{*}", MUTED, 400)]]),
         6: ("send the replies of Δ_{7}", [[("batch 7:", MUTED, 400)] + [(f"{op} → {r}", INK, 400) for op, r in REPLIES7],
                                           [("batch 10's replies (o3 → 8) wait with Ω_{10}", CONF, 400)],
                                           [("until Δ_{8} and Δ_{9} are committed first", MUTED, 400)]]),
@@ -274,7 +274,7 @@ def crud_x1(out, step):
 
     cs, ss = Sheet(500, 470, slot=50, dx=40, dy=-26), Sheet(500, 600, slot=50, dx=40, dy=-26)
     ss.draw(s, CONF, CONF_T, S7 if step >= 5 else S0, size=13)
-    cs.draw(s, SPEC, SPEC_T, {3: C1, 4: C1, 5: C7, 6: C7}.get(step, C0), size=13)
+    cs.draw(s, SPEC, SPEC_T, C1 if step >= 3 else C0, size=13)
     s.text(474, cs.y - 2, "Ω^{*}", size=20, weight=600, fill=SPEC, anchor="end")
     s.text(474, ss.y - 2, "Δ^{*}", size=20, weight=600, fill=CONF, anchor="end")
     if "C" not in USED[ex][step]:
@@ -364,9 +364,9 @@ def crud_x2(out, step, mix=False):
     log_labels(s, xs, 340, step)
     if "log" not in USED[ex][step]:
         fade(s, (xs[0] if step >= 4 else xs[1]) - 4, 254, 252 + (80 if step >= 4 else 0), 94)
-    c_vals = {3: C1, 4: C1, 5: C7, 6: C7}.get(step, C0)
-    c_sub = {3: "Ω^{*} ⊕ Ω_{10}", 4: "Ω_{7} ⊕ … ⊕ Ω_{10}", 5: "Ω_{8} ⊕ Ω_{9} ⊕ Ω_{10}",
-             6: "Ω_{8} ⊕ Ω_{9} ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
+    c_vals = C1 if step >= 3 else C0
+    c_sub = {3: "Ω^{*} ⊕ Ω_{10}", 4: "Ω_{7} ⊕ … ⊕ Ω_{10}", 5: "Ω_{7} ⊕ … ⊕ Ω_{10}",
+             6: "Ω_{7} ⊕ … ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
     kv_box(s, 702, 250, 168, 76, "Ω^{*}", c_vals, SPEC, SPEC_T, c_sub, rings={"c", "e"} if step == 3 else ())
     kv_box(s, 702, 340, 168, 76, "Δ^{*}", S7 if step >= 5 else S0, CONF, CONF_T, "confirmed",
            rings={"a", "d"} if step == 5 else ())
