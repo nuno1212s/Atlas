@@ -29,6 +29,12 @@ executors, so there are 36 figures in all.
 architecture and caching structure into one: X1 rooms with layers, X2 lanes with a ledger and
 X3 layers with threads. They are written as `arch-scal-x{1,2,3}-*`.
 
+`scalable_steps.py` (iteration 07) builds on X1 and X2 and adds their mix, X12: X2's lanes and key
+strips, with X1's exact read paths. Each style is drawn as an overview (`step0`) and as steps 1–5
+of batch 10, and every step shows where the collision on e stands: run in parallel, collision
+check, merge non-colliders, re-run colliders, append Ω10. The files are
+`arch-scal-{x1,x2,x12}-step{0..5}`.
+
 `svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). It also
 holds `Svg(..., ox, oy)`, a canvas whose viewBox origin can be moved, so that a layout drawn once can
 be cropped to one executor without moving any coordinates. The caching sheets take their values
@@ -39,7 +45,7 @@ from `../figures/executor_model.py`.
 You need Python 3 (standard library only) and `rsvg-convert` (`brew install librsvg`).
 
 ```bash
-for f in arch caching lifecycle requests scalable_arch; do python3 $f.py <output-dir>; done
+for f in arch caching lifecycle requests scalable_arch scalable_steps; do python3 $f.py <output-dir>; done
 ```
 
 Each figure is written as `.svg`, as `.png` at 2×, and as `.pdf` with its fonts embedded.
