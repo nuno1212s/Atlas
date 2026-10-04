@@ -45,6 +45,16 @@ confirm 10 arrives (Ω10 is the head of the log), commit Ω10 → Δ10 into S (C
 send the replies (o3's client gets 8). The step tracker groups the steps as speculate 1–5 and
 confirm 6–8, and the GIFs cycle through all eight.
 
+`crud_dual_steps.py` (iteration 11) gives the CRUD cache and dual-state executors the same
+treatment, one figure per executor, in the X1, X2 and X12 styles. Each has an overview and six
+steps of batch 10, speculate 1–3 then confirm 4–6:
+- CRUD cache: o1 and o2 write into ω10, o3 and o4 read, append Ω10; then confirm, commit
+  Ω10 → Δ10, send the replies.
+- Dual-state: o1 and o2 write S_p in place, o3 and o4 read S_p, log batch 10; then confirm, send
+  the replies and forward the batch, and the confirmed worker re-runs it on S.
+
+The files are `arch-{crud,dual}-{x1,x2,x12}-step{0..6}`, plus `-steps.gif`.
+
 `svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). It also
 holds `Svg(..., ox, oy)`, a canvas whose viewBox origin can be moved, so that a layout drawn once can
 be cropped to one executor without moving any coordinates. The caching sheets take their values
@@ -55,7 +65,7 @@ from `../figures/executor_model.py`.
 You need Python 3 (standard library only) and `rsvg-convert` (`brew install librsvg`).
 
 ```bash
-for f in arch caching lifecycle requests scalable_arch scalable_steps; do python3 $f.py <output-dir>; done
+for f in arch caching lifecycle requests scalable_arch scalable_steps crud_dual_steps; do python3 $f.py <output-dir>; done
 ```
 
 Each figure is written as `.svg`, as `.png` at 2×, and as `.pdf` with its fonts embedded.
