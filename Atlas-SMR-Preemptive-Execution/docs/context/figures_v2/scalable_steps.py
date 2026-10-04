@@ -218,16 +218,26 @@ def log_row(s, xs, y, step, w=72):
         for x, (q, d, _) in zip(xs[1:], reversed(LOG0)):
             wcard(s, x, y, q, d, w=w)
         return
-    # confirmation: the decisions already confirmed are ghosts "in S"; the head sits at the right
-    done = (7, 8, 9) if step < 8 else (7, 8, 9, 10)
-    for x, q in zip(xs, done):
-        ghost(s, x, y, q, w=w)
+    # confirmation: every decision keeps the slot it had while speculated (Ω10 left … Ω7 right);
+    # the ones already confirmed become ghosts "in S" where they stood
+    slot = {10: xs[0], 9: xs[1], 8: xs[2], 7: xs[3]}
+    for q in ((7, 8, 9) if step < 8 else (7, 8, 9, 10)):
+        ghost(s, slot[q], y, q, w=w)
     if step == 6:
-        wcard(s, xs[3], y, 10, TRACE10.delta, w=w)
-        s.rect(xs[3] - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
+        wcard(s, slot[10], y, 10, TRACE10.delta, w=w)
+        s.rect(slot[10] - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
     elif step == 7:
-        dcard(s, xs[3], y, 10, TRACE10.delta, w=w)
-        s.rect(xs[3] - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
+        dcard(s, slot[10], y, 10, TRACE10.delta, w=w)
+        s.rect(slot[10] - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
+
+
+def confirm_labels(s, xs, y, step, last, w=72):
+    """Under the log while confirming: the head (Ω10, in its own slot) and what is already in S."""
+    if step < last:
+        s.text(xs[0] + w / 2, y, "head", size=10.5, fill=MUTED, anchor="middle")
+        s.text((xs[1] + xs[3] + w) / 2, y, "already confirmed, in S", size=10.5, fill=MUTED, anchor="middle")
+    else:
+        s.text((xs[0] + xs[3] + w) / 2, y, "all confirmed, in S", size=10.5, fill=MUTED, anchor="middle")
 
 
 def step_panel(s, x, y, w, h, step):
@@ -331,8 +341,8 @@ def x1(out, step):
         s.text(xs[0] if step in (0, 5) else xs[1], 272, "newest", size=10.5, fill=MUTED)
         s.text(xs[3] + 72, 272, "oldest", size=10.5, fill=MUTED, anchor="end")
         s.arrow([((xs[0] if step in (0, 5) else xs[1]) + 50, 268), (xs[3] + 20, 268)], stroke="#b9bfca", sw=1)
-    elif step in (6, 7):
-        s.text(xs[3] + 36, 272, "head", size=10.5, fill=MUTED, anchor="middle")
+    else:
+        confirm_labels(s, xs, 272, step, 8)
     s.text(xs[1] + 4, 290, "write log", size=12, weight=600)
     if "log" not in USED[step]:
         fade(s, (xs[0] if step >= 6 else xs[1]) - 6, 188, 254 + (84 if step >= 6 else 0), 110)
@@ -401,12 +411,11 @@ def x1(out, step):
 
     # confirmation of 10
     if step == 6:
-        s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 190)], stroke=CONS, sw=1.8)
-        s.label(xs[3] + 36, 146, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
+        s.arrow([(xs[0] + 36, 130), (xs[0] + 36, 190)], stroke=CONS, sw=1.8)
+        s.label(xs[0] + 36, 146, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
     if step == 7:
-        s.arrow([(xs[3] + 72, 230), (950, 230), (950, ss.y - 12), (ss.x + ss.w + 24, ss.y - 12)], stroke=CONF,
-                sw=2.2)
-        s.text(944, 470, "Δ_{10} into S", size=11.5, fill=CONF, weight=600, anchor="end")
+        s.arrow([(594, 225), (438, 225), (438, ss.y - 12), (ss.x + 16, ss.y - 12)], stroke=CONF, sw=2.2)
+        s.text(446, 484, "Δ_{10} into S", size=11.5, fill=CONF, weight=600)
     if step == 8:
         s.arrow([(930, 350), (950, 350), (950, 622)], stroke=INK, sw=1.8)
         s.text(944, 612, "replies of Δ_{10}", size=11, fill=INK, anchor="end")
@@ -471,8 +480,8 @@ def x2(out, step, mix=False):
         s.text(x_new, 374, "newest", size=10.5, fill=MUTED)
         s.arrow([(x_new + 50, 370), (xs[3] + 6, 370)], stroke="#b9bfca", sw=1)
         s.text(xs[3] + 4, 388, "oldest", size=10.5, fill=MUTED, anchor="end")
-    elif step in (6, 7):
-        s.text(xs[3] + 36, 374, "head", size=10.5, fill=MUTED, anchor="middle")
+    else:
+        confirm_labels(s, xs, 378, step, 8)
     c_sub = {5: "C ⊕ Ω_{10}", 6: "fold of Ω_{10}", 7: "empty", 8: "empty"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
     kv_box(s, 702, 286, 168, 76, "C", C_AT.get(step, C0), SPEC, SPEC_T, c_sub,
            rings={"c", "e"} if step == 5 else ())
@@ -518,11 +527,11 @@ def x2(out, step, mix=False):
             s.label(786, 262, "each op reads ℓ, then C, then S", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
     if step == 6:
-        s.arrow([(138, 274), (152, 274), (152, 287), (xs[3] + 36, 287), (xs[3] + 36, 292)], stroke=CONS, sw=1.8)
-        s.label(300, 291, "confirm 10", size=10.5, fill=CONS, bg=WORK_T, weight=600)
+        s.arrow([(138, 274), (150, 274), (150, 325), (xs[0] - 2, 325)], stroke=CONS, sw=1.8)
+        s.label(244, 318, "confirm 10", size=10.5, fill=CONS, bg=WORK_T, weight=600)
     if step == 7:
-        s.arrow([(xs[3] + 60, 356), (xs[3] + 60, 384), (700, 384)], stroke=CONF, sw=2.2)
-        s.text(694, 412, "Δ_{10} into S", size=10.5, fill=CONF, anchor="end", weight=600)
+        s.arrow([(xs[0] + 36, 294), (xs[0] + 36, 288), (690, 288), (690, 414), (700, 414)], stroke=CONF, sw=2.2)
+        s.text(600, 283, "Δ_{10} into S", size=10.5, fill=CONF, anchor="middle", weight=600)
     if step == 8:
         s.arrow([(686, 444), (692, 444), (692, 470), (930, 470), (930, 396)], stroke=INK, sw=1.8)
         s.text(924, 486, "replies of Δ_{10}", size=11, fill=INK, anchor="end")

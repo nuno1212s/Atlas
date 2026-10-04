@@ -35,8 +35,8 @@ from executor_model import BATCH, CRUD, DUAL, KEYS, crud_commit, dual_commit, op
 
 from caching import Sheet, ray  # noqa: E402
 from scalable_arch import clients, room, wcard  # noqa: E402
-from scalable_steps import (badge_n, chip, dcard, fade, ghost, kv_box, progress, shown,  # noqa: E402
-                            strip)
+from scalable_steps import (badge_n, chip, confirm_labels, dcard, fade, ghost, kv_box, progress,  # noqa: E402
+                            shown, strip)
 from svgkit import (CONF, CONF_T, CONS, CONS_T, INK, LIVE, LIVE_T, MUTED, PANEL, SPEC, SPEC_T,  # noqa: E402
                     WHITE, WORK, WORK_T, Svg, legend, text_width, thread_badge)
 
@@ -225,21 +225,23 @@ def log_row(s, ex, xs, y, step, w=72):
         for x, (q, d) in zip(xs[1:], olds):
             card(x, q, d)
         return
-    done = (7, 8, 9) if step in (4, 5) else (7, 8, 9, 10)
-    for x, q in zip(xs, done):
-        ghost(s, x, y, q, w=w)
+    # confirmation: every decision keeps its slot (Ω10 left … Ω7 right); confirmed ones become ghosts there
+    slot = {10: xs[0], 9: xs[1], 8: xs[2], 7: xs[3]}
+    for q in ((7, 8, 9) if step in (4, 5) else (7, 8, 9, 10)):
+        ghost(s, slot[q], y, q, w=w)
+    x10 = slot[10]
     if step == 4:
-        card(xs[3], 10, OMEGA10)
-        s.rect(xs[3] - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
+        card(x10, 10, OMEGA10)
+        s.rect(x10 - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
     elif step == 5:
         if ex == "crud":
-            dcard(s, xs[3], y, 10, OMEGA10, w=w)
+            dcard(s, x10, y, 10, OMEGA10, w=w)
         else:                                # confirmed, on its way to the confirmed worker
-            s.rect(xs[3], y, w, 58, r=8, fill=CONF_T, stroke=CONF, sw=1.6, shadow=True)
-            s.text(xs[3] + 8, y + 17, "Δ_{10}", size=12.5, weight=600, fill=CONF)
-            s.text(xs[3] + 8, y + 34, "batch 10", size=9.5, fill=INK)
-            s.text(xs[3] + 8, y + 46, "+ replies", size=9.5, fill=MUTED)
-        s.rect(xs[3] - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
+            s.rect(x10, y, w, 58, r=8, fill=CONF_T, stroke=CONF, sw=1.6, shadow=True)
+            s.text(x10 + 8, y + 17, "Δ_{10}", size=12.5, weight=600, fill=CONF)
+            s.text(x10 + 8, y + 34, "batch 10", size=9.5, fill=INK)
+            s.text(x10 + 8, y + 46, "+ replies", size=9.5, fill=MUTED)
+        s.rect(x10 - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
 
 
 def log_labels(s, xs, y, step, w=72):
@@ -248,8 +250,8 @@ def log_labels(s, xs, y, step, w=72):
         s.text(x_new, y, "newest", size=10.5, fill=MUTED)
         s.text(xs[3] + w, y, "oldest", size=10.5, fill=MUTED, anchor="end")
         s.arrow([(x_new + 50, y - 4), (xs[3] + w - 52, y - 4)], stroke="#b9bfca", sw=1)
-    elif step in (4, 5):
-        s.text(xs[3] + w / 2, y, "head", size=10.5, fill=MUTED, anchor="middle")
+    else:
+        confirm_labels(s, xs, y, step, 6, w=w)
 
 
 def reply_chips(s, x, y):
@@ -320,10 +322,11 @@ def crud_x1(out, step):
         t, rows = PANELS[ex][step]
         panel(s, 446, 310, 500, 96, step, t, rows)
     if step == 4:
-        s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 190)], stroke=CONS, sw=1.8)
-        s.label(xs[3] + 36, 146, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
+        s.arrow([(xs[0] + 36, 130), (xs[0] + 36, 190)], stroke=CONS, sw=1.8)
+        s.label(xs[0] + 36, 146, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
     if step == 5:
-        s.arrow([(xs[3] + 72, 230), (958, 230), (958, ss.y - 12), (ss.x + ss.w + 24, ss.y - 12)], stroke=CONF, sw=2.2)
+        s.arrow([(594, 225), (436, 225), (436, ss.y - 12), (ss.x + 16, ss.y - 12)], stroke=CONF, sw=2.2)
+        s.text(444, 534, "Δ_{10} into S", size=11.5, fill=CONF, weight=600)
     if step == 6:
         s.arrow([(946, 360), (958, 360), (958, 676)], stroke=INK, sw=1.8)
     if step == 0:
@@ -403,10 +406,11 @@ def crud_x2(out, step, mix=False):
             s.label(780, 242, "each op reads ω, then C, then S", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
     if step == 4:
-        s.arrow([(138, 274), (148, 274), (148, 246), (xs[3] + 36, 246), (xs[3] + 36, 256)], stroke=CONS, sw=1.8)
-        s.label(300, 250, "confirm 10", size=10.5, fill=CONS, bg=WORK_T, weight=600)
+        s.arrow([(138, 274), (148, 274), (148, 289), (xs[0] - 2, 289)], stroke=CONS, sw=1.8)
+        s.label(252, 282, "confirm 10", size=10.5, fill=CONS, bg=WORK_T, weight=600)
     if step == 5:
-        s.arrow([(xs[3] + 60, 320), (xs[3] + 60, 352), (700, 352)], stroke=CONF, sw=2.2)
+        s.arrow([(xs[0] + 36, 258), (xs[0] + 36, 244), (690, 244), (690, 378), (700, 378)], stroke=CONF, sw=2.2)
+        s.text(620, 240, "Δ_{10} into S", size=10.5, fill=CONF, anchor="middle", weight=600)
     if step == 6:
         s.arrow([(684, 430), (930, 430), (930, 352)], stroke=INK, sw=1.8)
     if step == 0:
@@ -490,9 +494,9 @@ def dual_x1(out, step):
         s.label(384, 143, "batch 10", size=11, fill=CONS, bg=WHITE)
         s.arrow([(330, 214), (330, 266)], stroke=WORK)
     if step == 4:
-        s.arrow([(xs[3] + 29, 130), (xs[3] + 29, 156)], stroke=CONS, sw=1.8)
-        s.label(xs[3] - 30, 143, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
-        s.arrow([(xs[3] + 29, 214), (xs[3] + 29, 262)], stroke=WORK, sw=1.8)
+        s.arrow([(xs[0] + 29, 130), (xs[0] + 29, 156)], stroke=CONS, sw=1.8)
+        s.label(xs[0] + 88, 143, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
+        s.arrow([(xs[0] + 29, 214), (xs[0] + 29, 262)], stroke=WORK, sw=1.8)
     if step == 5:
         s.arrow([(614, 478), (660, 478)], stroke=CONF, sw=2)
         s.text(664, 468, "batch 10", size=10.5, fill=CONF, weight=600)
@@ -530,7 +534,7 @@ def dual_x2(out, step, mix=False):
 
     s.rect(172, 168, 712, 300, r=14, fill=WORK_T)
     thread_badge(s, 184, 186, "preemptive worker", WORK)
-    s.text(320, 190, "owns S_{p} and the log" if mix else "", size=11, fill=MUTED)
+    s.text(470, 190, "owns S_{p} and the log" if mix else "", size=11, fill=MUTED)
     ops_box(s, ex, 184, 204, 250, step)
     xs = [452, 516, 580, 644]
     log_row(s, ex, xs, 204, step, w=58)
@@ -572,11 +576,11 @@ def dual_x2(out, step, mix=False):
             s.arrow([(434, 300), (700, 330)], stroke=SPEC, sw=1.8)
             s.label(560, 300, "in place" if step == 1 else "reads S_{p}", size=10.5, fill=SPEC, bg=WORK_T)
     if step in (0, 1):
-        s.arrow([(300, 156), (300, 202)], stroke=WORK)
-        s.label(300, 176, "batch 10", size=10.5, fill=CONS, bg=PANEL)
+        s.arrow([(410, 156), (410, 202)], stroke=WORK)
+        s.label(410, 176, "batch 10", size=10.5, fill=CONS, bg=PANEL)
     if step == 4:
-        s.arrow([(xs[3] + 29, 156), (xs[3] + 29, 200)], stroke=WORK, sw=1.8)
-        s.label(xs[3] + 29, 176, "confirm 10", size=10.5, fill=CONS, bg=PANEL, weight=600)
+        s.arrow([(xs[0] + 29, 156), (xs[0] + 29, 200)], stroke=WORK, sw=1.8)
+        s.label(xs[0] + 29, 176, "confirm 10", size=10.5, fill=CONS, bg=PANEL, weight=600)
     if step == 5:
         s.arrow([(560, 458), (560, 494)], stroke=CONF, sw=2)
         s.label(616, 476, "batch 10", size=10.5, fill=CONF, bg=PANEL, weight=600)

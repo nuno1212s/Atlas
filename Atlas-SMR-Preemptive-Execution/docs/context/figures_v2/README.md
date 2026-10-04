@@ -55,6 +55,11 @@ steps of batch 10, speculate 1–3 then confirm 4–6:
 
 The files are `arch-{crud,dual}-{x1,x2,x12}-step{0..6}`, plus `-steps.gif`.
 
+Across a step sequence every element keeps its place (iteration 12). The log is drawn newest on
+the left (Ω10) and oldest on the right (Ω7), and each decision keeps that slot through
+confirmation. Decisions already confirmed turn into "in S" ghosts where they stood, and the
+confirm and commit arrows go to Ω10 in its own slot.
+
 `svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). It also
 holds `Svg(..., ox, oy)`, a canvas whose viewBox origin can be moved, so that a layout drawn once can
 be cropped to one executor without moving any coordinates. The caching sheets take their values
