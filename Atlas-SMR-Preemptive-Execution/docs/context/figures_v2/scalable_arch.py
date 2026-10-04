@@ -9,7 +9,7 @@ Three ways of joining the two (iteration 06):
 
 Batch 10 is the running example (executor_model.py): o1 c ← 5, o2 e ← 8, o3 read e, o4 read b.
 Each op runs in its own container on the exec pool, with a private cache ℓ over the shared Ω* and Δ*;
-o3 reads the stale e = 7 from Δ*, so the worker re-runs o2 and o3 and builds ω10, which becomes Ω10.
+o3 reads the stale e = 7 from Δ*, so the worker re-runs o2 and o3 straight on Ω*; their recorded writes become Ω10.
 """
 import os
 import sys
@@ -24,7 +24,7 @@ from svgkit import (CONF, CONF_T, CONS, CONS_T, DROP, INK, LIVE, LIVE_T, MUTED, 
 PFX = "arch-scal"
 S0, C0, LOG0 = CRUD[0].S, CRUD[0].C, CRUD[0].log
 OPS = TRACE10.ops
-OMEGA10 = TRACE10.delta                    # {c: 5, e: 8}
+OMEGA10 = TRACE10.delta                    # {c: 5, e: 8}: batch 10's recorded writes, logged as Ω10
 
 
 def shown(v):
@@ -92,15 +92,12 @@ def x3_layers_threads(out):
     # exec pool band behind the per-op caches
     s.rect(120, top - 92, 474, 132, r=16, fill=POOL_T)
     thread_badge(s, 132, top - 74, "exec pool · 4 threads in parallel", POOL)
-    # the worker band holds the speculative cache: ω10, the log and Ω*
+    # the worker band holds the speculative cache: the log and Ω*
     s.rect(120, 290, 850, 206, r=16, fill=WORK_T)
     thread_badge(s, 132, 308, "worker · holds the speculative cache", WORK)
     spec_group(s, 130, 322, 830, 166, tx=140, ty=482)
-    # ω10, batch 10's open writes, is the newest layer of the cache, over Ω*
-    ws = Sheet(190, 408)
-    ws.draw(s, LIVE, LIVE_T, OMEGA10)
-    sheet_label(s, ws, "ω_{10}", "open", LIVE)
-    cs = Sheet(190, 466)
+    # Ω*, which batch 10's merge and re-runs write directly (there is no separate ω)
+    cs = Sheet(190, 440)
     cs.draw(s, SPEC, SPEC_T, C0)
     sheet_label(s, cs, "Ω^{*}", "", SPEC)
     # the confirmed state, apart from the cache
@@ -125,26 +122,25 @@ def x3_layers_threads(out):
     x0, y0 = minis[2].centre(i)
     cx, cy = cs.centre(i)
     hx, hy = ss.centre(i)
-    # (it runs in parallel, before ω10 exists, so it goes round that layer)
-    ray(s, [(x0, y0), (x0, 282), (108, 282), (108, 428), (cx - 26, 428), (cx, cy), (hx, hy - 12)],
-        [(x0, y0), (cx, cy)])
+    ray(s, [(x0, y0), (cx, cy), (hx, hy - 12)], [(x0, y0), (cx, cy)])
     s.text(hx + 14, hy - 30, "o3: e → 7, stale", size=11.5, weight=600, fill=DROP)
 
     # the log, inside the speculative cache
     xs = [620, 704, 788, 872]
     ly = 418
-    s.text(616, 350, "join: merge ℓ_{1}, ℓ_{4}, re-run o2, o3", size=10.5, fill=MUTED)
+    s.text(616, 350, "join: merge ℓ_{1}, ℓ_{4} and re-run o2, o3,", size=10.5, fill=MUTED)
+    s.text(616, 364, "straight on Ω^{*}; their writes are recorded", size=10.5, fill=MUTED)
     wcard(s, xs[0], ly, 10, OMEGA10, dashed=True)
     for x, (q, d, _) in zip(xs[1:], reversed(LOG0)):
         wcard(s, x, ly, q, d)
     s.text(xs[2], 412, "write log", size=12, weight=600)
     jx = minis[3].x + minis[3].w + 26
-    s.arrow([(jx, top - 30), (604, top - 30), (604, 334), (500, 334), (500, 374)], stroke=LIVE, sw=1.8)
+    s.arrow([(jx, top - 30), (604, top - 30), (604, 380), (520, 380), (520, 406)], stroke=LIVE, sw=1.8)
     s.label(jx + 20, top - 40, "join", size=10.5, fill=LIVE, bg=WHITE)
-    s.arrow([(514, 393), (xs[0] + 40, 393), (xs[0] + 40, 416)], stroke=SPEC, sw=1.6)
-    s.label(580, 393, "append", size=10.5, fill=SPEC, bg=WHITE)
-    s.arrow([(xs[0] - 2, 447), (cs.x + cs.w + 34, 447)], stroke=SPEC, sw=1.6)
-    s.label(596, 440, "fold", size=10.5, fill=SPEC, bg=WHITE)
+    s.arrow([(604, 392), (xs[0] + 40, 392), (xs[0] + 40, 416)], stroke=SPEC, sw=1.6)
+    s.label(640, 392, "Ω_{10}", size=10.5, fill=SPEC, bg=WHITE)
+    s.arrow([(xs[0] - 2, 428), (506, 428)], stroke=SPEC, sw=1.4, dash="5 4")
+    s.label(560, 428, "rebuild (backtrack)", size=10.5, fill=SPEC, bg=WHITE)
     s.arrow([(xs[3] + 36, ly + 60), (xs[3] + 36, ss.y - 15), (ss.x + ss.w + 30, ss.y - 15)], stroke=CONF, sw=2)
     s.text(xs[3] + 28, ss.y - 22, "commit Ω_{7} → Δ_{7}", size=11, fill=CONF, anchor="end")
 

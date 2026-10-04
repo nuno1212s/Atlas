@@ -13,21 +13,10 @@ PFX = "arch"
 
 
 def cache_group(s, x, y, w, h, title="speculative cache", bottom=False):
-    """The speculative cache (ω, the log and Ω*), drawn apart from the confirmed state Δ*."""
+    """The speculative cache (the log and Ω*), drawn apart from the confirmed state Δ*."""
     s.rect(x, y, w, h, r=10, fill=WHITE, stroke=SPEC, sw=1.3, dash="5 4", opacity=0.6)
     s.rect(x, y, w, h, r=10, fill="none", stroke=SPEC, sw=1.3, dash="5 4")
     s.text(x + 8, y + h - 8 if bottom else y + 14, title, size=10.5, weight=600, fill=SPEC)
-
-
-def cache_block(s, x, y, w, h, size=15, band="ω"):
-    """Ω* with ω, the open batch's writes, as its newest layer (a band on top), not a store of its own."""
-    s.rect(x, y, w, h, r=10, fill=SPEC_T, stroke=SPEC, sw=1.6)
-    bh = round(h * 0.36)
-    s.rect(x + 5, y + 5, w - 10, bh, r=6, fill=LIVE_T, stroke=LIVE, sw=1.2)
-    s.text(x + w / 2, y + 5 + bh / 2 + size * 0.3, band, size=size * 0.85, weight=600, fill=LIVE, anchor="middle")
-    s.text(x + w / 2, y + 5 + bh + (h - bh - 5) / 2 + size * 0.35, "Ω^{*}", size=size, weight=600, fill=SPEC,
-           anchor="middle")
-    return y + 5 + bh / 2, y + 5 + bh + (h - bh - 5) / 2        # the centres of the ω band and of Ω*
 
 
 def conf_group(s, x, y, w, h, title="confirmed state"):
@@ -71,17 +60,18 @@ def a1_blocks(out, ex):
         capsule(s, 206, y + 116, 104, 36, "batch k")
         s.text(258, y + 168, "runs in a container", size=10.5, fill=MUTED, anchor="middle")
         cache_group(s, 330, y + 62, 304, 106)
-        wy, cy = cache_block(s, 342, y + 86, 96, 74)
-        stack(s, 478, y + 96, ["Ω_{9}", "Ω_{8}", "Ω_{7}"], SPEC, SPEC_T, w=36, gap=5)   # newest next to ω
+        # the batch writes Ω* directly; the container records its writes, which join the log as Ω_k
+        block(s, 342, y + 86, 96, 64, SPEC, SPEC_T, "Ω^{*}", size=16, shadow=False)
+        stack(s, 478, y + 96, ["Ω_{9}", "Ω_{8}", "Ω_{7}"], SPEC, SPEC_T, w=36, gap=5)   # newest next to Ω*
         s.text(537, y + 140, "log", size=10.5, fill=MUTED, anchor="middle")
-        s.arrow([(310, y + 134), (326, y + 134), (326, wy), (340, wy)], stroke=LIVE)
-        s.arrow([(440, wy + 6), (476, wy + 6)], stroke=SPEC)
-        s.label(458, y + 98, "append", size=9.5, fill=SPEC, bg=WHITE)
-        s.arrow([(496, y + 126), (496, cy + 4), (440, cy + 4)], stroke=SPEC)
-        s.label(470, y + 154, "fold", size=9.5, fill=SPEC, bg=WHITE)
+        s.arrow([(310, y + 124), (340, y + 124)], stroke=LIVE)
+        s.arrow([(310, y + 144), (326, y + 144), (326, y + 160), (496, y + 160), (496, y + 126)], stroke=SPEC)
+        s.label(420, y + 160, "recorded writes", size=9.5, fill=SPEC, bg=WHITE)
+        s.arrow([(476, y + 104), (440, y + 104)], stroke=SPEC, dash="4 3")
+        s.label(458, y + 94, "rebuild", size=9.5, fill=SPEC, bg=WHITE)
         conf_group(s, 662, y + 48, 120, 120)
         block(s, 678, y + 74, 88, 82, CONF, CONF_T, "Δ^{*}", size=17, shadow=False)
-        s.text(258, y + 82, "reads ω, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, anchor="middle")
+        s.text(252, y + 82, "on Ω^{*} (a miss reads Δ^{*})", size=10.5, fill=MUTED, anchor="middle")
         s.arrow([(138, y + 98), (204, y + 134)], stroke=CONS)
         s.label(170, y + 104, "batch k", size=10.5, bg=PANEL)
         # commit: the oldest Ω (Ω7) goes into Δ*; its replies go to the clients
@@ -129,19 +119,20 @@ def a1_blocks(out, ex):
             capsule(s, 212, y + 72 + i * 25, 92, 20, f"op {i + 1}", size=10.5)
         lane(s, 340, y + 40, 306, 136, "worker")
         cache_group(s, 350, y + 62, 286, 106)
-        wy, cy = cache_block(s, 362, y + 86, 92, 74)
-        stack(s, 492, y + 96, ["Ω_{9}", "Ω_{8}", "Ω_{7}"], SPEC, SPEC_T, w=36, gap=5)   # newest next to ω
+        # the join merges and re-runs straight on Ω*; its recorded writes join the log as Ω_k
+        block(s, 362, y + 86, 92, 64, SPEC, SPEC_T, "Ω^{*}", size=16, shadow=False)
+        stack(s, 492, y + 96, ["Ω_{9}", "Ω_{8}", "Ω_{7}"], SPEC, SPEC_T, w=36, gap=5)   # newest next to Ω*
         s.text(551, y + 140, "log", size=10.5, fill=MUTED, anchor="middle")
-        s.arrow([(456, wy + 6), (490, wy + 6)], stroke=SPEC)
-        s.label(473, y + 98, "append", size=9.5, fill=SPEC, bg=WHITE)
-        s.arrow([(510, y + 126), (510, cy + 4), (456, cy + 4)], stroke=SPEC)
-        s.label(483, y + 154, "fold", size=9.5, fill=SPEC, bg=WHITE)
+        s.arrow([(490, y + 104), (456, y + 104)], stroke=SPEC, dash="4 3")
+        s.label(473, y + 94, "rebuild", size=9.5, fill=SPEC, bg=WHITE)
         conf_group(s, 662, y + 48, 120, 120)
         block(s, 678, y + 74, 88, 82, CONF, CONF_T, "Δ^{*}", size=17, shadow=False)
         s.arrow([(138, y + 95), (188, y + 95)], stroke=CONS)
         s.label(162, y + 86, "fork", size=10.5, bg=PANEL)
-        s.arrow([(326, y + 130), (342, y + 130), (342, wy), (360, wy)], stroke=LIVE)
-        s.label(338, y + 152, "join", size=10.5, bg=PANEL)
+        s.arrow([(326, y + 118), (360, y + 118)], stroke=LIVE)
+        s.label(338, y + 106, "join", size=10.5, bg=PANEL)
+        s.arrow([(326, y + 144), (344, y + 144), (344, y + 160), (510, y + 160), (510, y + 126)], stroke=SPEC)
+        s.label(430, y + 160, "recorded writes", size=9.5, fill=SPEC, bg=WHITE)
         s.text(560, y + 30, "every op reads Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED)
         s.arrow([(84, y + 124), (84, y + 182), (592, y + 182), (592, y + 126)], stroke=CONS)
         s.label(130, y + 186, "confirm 7", size=10.5, bg=PANEL)
@@ -185,13 +176,14 @@ def a2_rooms(out, ex):
         room(s, x + 10, 198, 280, 250, "worker")
         capsule(s, x + 34, 232, 116, 34, "batch k")
         cache_group(s, x + 22, 284, 256, 150, bottom=True)
-        wy, cy = cache_block(s, x + 34, 306, 96, 96)
-        stack(s, x + 148, 318, ["Ω_{9}", "Ω_{8}", "Ω_{7}"], SPEC, SPEC_T, w=34, gap=5)   # newest next to ω
-        s.text(x + 205, 364, "log", size=10.5, fill=MUTED, anchor="middle")
-        s.arrow([(x + 82, 266), (x + 82, 304)], stroke=LIVE)
-        s.arrow([(x + 132, wy + 8), (x + 146, wy + 8)], stroke=SPEC)
-        s.arrow([(x + 166, 348), (x + 166, cy + 6), (x + 132, cy + 6)], stroke=SPEC)
-        s.label(x + 166, 366, "fold", size=9.5, fill=SPEC, bg=WHITE)
+        block(s, x + 34, 306, 96, 80, SPEC, SPEC_T, "Ω^{*}", size=16, shadow=False)
+        stack(s, x + 148, 318, ["Ω_{9}", "Ω_{8}", "Ω_{7}"], SPEC, SPEC_T, w=34, gap=5)   # newest next to Ω*
+        s.text(x + 205, 306, "log", size=10.5, fill=MUTED, anchor="middle")
+        s.arrow([(x + 82, 266), (x + 82, 304)], stroke=LIVE)                 # the batch writes Ω* directly
+        s.arrow([(x + 150, 249), (x + 167, 249), (x + 167, 316)], stroke=SPEC)  # and its writes are logged
+        s.label(x + 206, 249, "recorded writes", size=9.5, fill=SPEC, bg=WORK_T)
+        s.arrow([(x + 166, 348), (x + 166, 372), (x + 132, 372)], stroke=SPEC, dash="4 3")
+        s.label(x + 190, 386, "rebuild", size=9.5, fill=SPEC, bg=WHITE)
         conf_group(s, x + 10, 462, 280, 120)
         block(s, x + 100, 488, 100, 80, CONF, CONF_T, "Δ^{*}", size=17, shadow=False)
         s.arrow([(x + 243, 348), (x + 243, 454), (x + 180, 454), (x + 180, 486)], stroke=CONF, sw=2)
@@ -224,12 +216,11 @@ def a2_rooms(out, ex):
         x = 670
         room(s, x + 10, 198, 280, 206, "worker")
         cache_group(s, x + 20, 228, 260, 164)
-        wy, cy = cache_block(s, x + 60, 256, 84, 96)
-        stack(s, x + 162, 270, ["Ω_{9}", "Ω_{8}", "Ω_{7}"], SPEC, SPEC_T, w=32, gap=4)   # newest next to ω
-        s.text(x + 216, 316, "log", size=10.5, fill=MUTED, anchor="middle")
-        s.arrow([(x + 146, wy + 8), (x + 160, wy + 8)], stroke=SPEC)
-        s.arrow([(x + 178, 300), (x + 178, cy + 6), (x + 146, cy + 6)], stroke=SPEC)
-        s.label(x + 178, 318, "fold", size=9.5, fill=SPEC, bg=WHITE)
+        block(s, x + 60, 256, 84, 96, SPEC, SPEC_T, "Ω^{*}", size=16, shadow=False)
+        stack(s, x + 162, 270, ["Ω_{9}", "Ω_{8}", "Ω_{7}"], SPEC, SPEC_T, w=32, gap=4)   # newest next to Ω*
+        s.text(x + 216, 318, "log", size=10.5, fill=MUTED, anchor="middle")
+        s.arrow([(x + 178, 300), (x + 178, 330), (x + 146, 330)], stroke=SPEC, dash="4 3")
+        s.label(x + 200, 344, "rebuild", size=9.5, fill=SPEC, bg=WHITE)
         s.arrow([(x + 250, 300), (x + 250, 420)], stroke=CONF, sw=2)       # commit Ω7 → Δ*
         conf_group(s, x + 124, 412, 166, 68)
         block(s, x + 222, 422, 60, 50, CONF, CONF_T, "Δ^{*}", size=15, shadow=False)
@@ -239,7 +230,9 @@ def a2_rooms(out, ex):
         s.text(x + 150, 576, "one container per op", size=10.5, fill=MUTED, anchor="middle")
         s.arrow([(x + 30, 404), (x + 30, 526)], stroke=POOL)
         s.label(x + 30, 440, "fork", size=10.5, fill=POOL, bg=WHITE)
-        s.arrow([(x + 48, 526), (x + 48, wy), (x + 58, wy)], stroke=LIVE)
+        s.arrow([(x + 48, 526), (x + 48, 300), (x + 58, 300)], stroke=LIVE)    # the join writes Ω* directly
+        s.arrow([(x + 48, 300), (x + 48, 249), (x + 178, 249), (x + 178, 268)], stroke=SPEC)  # and is logged
+        s.label(x + 140, 249, "recorded", size=9.5, fill=SPEC, bg=WHITE)
         s.label(x + 48, 466, "join", size=10.5, fill=LIVE, bg=WHITE)
         s.arrow([(x + 252, 526), (x + 252, 482)], stroke=MUTED, dash="4 3")
         s.arrow([(x + 102, 526), (x + 102, 354)], stroke=MUTED, dash="4 3")
@@ -325,9 +318,9 @@ def a3_matrix(out, ex):
             capsule(s, X - 92 + i * 34, y + 4, 30, 20, None)
             s.arrow([(X - 77 + i * 34, y + 24), (X - 6, y + 52)], stroke=LIVE, sw=1.1)
         s.rect(X - 92, y - 2, 134, 32, r=8, fill="none", stroke=POOL, sw=1.2, dash="2 3")
-        cache_block(s, X - 30, y + 52, 48, 50, size=12)
+        block(s, X - 30, y + 52, 48, 44, SPEC, SPEC_T, "Ω^{*}", size=12, shadow=False)
         s.text(X + 50, y + 18, "parallel", size=11, fill=POOL)
-        cap(y + 118, "a container per op, in parallel, then merged")
+        cap(y + 118, "a container per op, in parallel, then merged into Ω^{*}")
 
     # commit
     y = 506
@@ -354,7 +347,7 @@ def a3_matrix(out, ex):
         for i, op in enumerate((1, 1, 0.35, 0.35)):
             card(s, x0 + i * 34, y + 8, "Ω", SPEC, SPEC_T, w=30, h=26, shadow=False, opacity=op)
         s.line(x0 + 66, y + 4, x0 + 134, y + 38, stroke=DROP, sw=2)
-        cap(y + 66, "drop the tail, refold Ω^{*}")
+        cap(y + 66, "drop the tail, rebuild Ω^{*}")
     s.save(os.path.join(out, f"{PFX}-a3-matrix-{ex}"))
 
 

@@ -11,14 +11,15 @@ Batch 10 (executor_model.py): o1 c ← 5, o2 e ← 8, o3 read e, o4 read b. The 
 writes it and o3 reads it in parallel, so o3 sees the stale 7. Every step shows where that collision is (iteration 09: state appears only while it is used):
   1 run in parallel       each op in its own container on T1–T4, writing only its ℓ
   2 collision check       the worker compares accesses: e is W by o2 and R by o3, so they collide
-  3 merge non-colliders   ℓ1 and ℓ4 go into ω10 in batch order; o2 and o3 wait
-  4 re-run colliders      o2 then o3 run again on the worker over Ω* ⊕ ω10; o3 now reads 8
-  5 append Ω10            ω10 becomes Ω10, Ω* folds it in, and o3's held reply is 8
+  3 merge non-colliders   ℓ1 and ℓ4 are merged straight into Ω*, in batch order; o2 and o3 wait
+  4 re-run colliders      o2 then o3 run again on the worker, straight on Ω*; o3 now reads 8
+  5 log Ω10               batch 10's recorded writes join the log as Ω10; o3's held reply is 8
+(iteration 18: there is no ω. Batch 10 writes Ω* directly; Ω* is rebuilt from the log only after a backtrack.)
 Then the confirmation of the oldest pending decision, 7 (iteration 14): decisions are confirmed in
 order, so 10 cannot be confirmed before 7, 8 and 9.
   6 confirm 7 arrives     Ω7 is the head of the log; Ω8, Ω9 and Ω10 stay speculated, waiting their turn
   7 commit Ω7 → Δ7        Δ7's stored writes go into Δ*; Ω7 leaves the log; Ω* is left as it is
-                          (iteration 15: Ω* is refolded only on a backtrack, never on a confirm)
+                          (iteration 15: Ω* is rebuilt only after a backtrack, never on a confirm)
   8 send the replies      batch 7's replies reach their clients; batch 10's wait with Ω10
 
 The read pool (unordered reads) is left out from iteration 08 on, so as to keep the figures on speculation.
@@ -40,36 +41,38 @@ S0, C0, LOG0 = CRUD[0].S, CRUD[0].C, CRUD[0].log
 C1 = SCALABLE[1].C
 S7 = SCALABLE[2].S                           # after Δ7: the oldest decision, confirmed first
 S_AT = {7: S7, 8: S7}
-C_AT = {5: C1, 6: C1, 7: C1, 8: C1}          # a confirm does not touch Ω*: only a backtrack refolds it
+CM = {**C0, **TRACE10.bd_pass1}              # Ω* after the merge of ℓ1 and ℓ4 (c ← 5), before the re-runs
+assert {**CM, "e": "8"} == C1
+# Batch 10 writes Ω* directly (there is no ω). A confirm does not touch Ω*: only a backtrack rebuilds it.
+C_AT = {0: C1, 3: CM, 4: C1, 5: C1, 6: C1, 7: C1, 8: C1}
+C_RINGS = {3: {"c"}, 4: {"e"}}
 DELTA7 = dict(LOG0[0][1])                    # {a: 5, d: 9}
 REPLIES7 = [(op_text(op), r) for op, r in zip(BATCH[7], LOG0[0][2])]   # batch 7's ops and their replies
 OPS = TRACE10.ops
 COLL = TRACE10.colliders                     # {1, 2}: o2 and o3
-OMEGA = {0: TRACE10.delta, 1: {}, 2: {}, 3: dict(TRACE10.bd_pass1), 4: TRACE10.delta, 5: TRACE10.delta}
-NEW_IN_OMEGA = {3: {"c"}, 4: {"e"}}
 
 STEPS = {
-    0: ("overview", "Steps 1–5 speculate batch 10; steps 6–8 confirm the oldest decision, Ω7. Decisions are confirmed in order."),
+    0: ("overview", "Steps 1–5 speculate batch 10 straight on Ω^{*}; steps 6–8 confirm the oldest decision, Ω7. Ω^{*} is rebuilt only after a backtrack."),
     1: ("run in parallel",
         "o2 writes e = 8 into its own ℓ2 while o3 reads e: o3 cannot see ℓ2, so it finds the stale 7 in Δ^{*}."),
     2: ("collision check",
         "The worker compares every op's accesses: e is written by o2 and read by o3, so o2 and o3 collide."),
     3: ("merge non-colliders",
-        "ℓ1 and ℓ4 go into ω10 in batch order. o2 and o3 are set aside: their ℓ and replies are dropped."),
+        "ℓ1 and ℓ4 are merged straight into Ω^{*}, in batch order: c 4 → 5. o2 and o3 are set aside: their ℓ and replies are dropped."),
     4: ("re-run colliders",
-        "o2, then o3, run again on the worker over Ω^{*} ⊕ ω10. o3 now reads e = 8: the collision is resolved."),
-    5: ("append Ω10",
-        "ω10 becomes Ω10 and is folded into Ω^{*}. The reply held for o3 is 8, never the stale 7."),
+        "o2, then o3, run again on the worker, straight on Ω^{*}: o2 writes e = 8 and o3 reads it. The collision is resolved."),
+    5: ("log Ω10",
+        "Batch 10's recorded writes join the log as Ω10; Ω^{*} already holds them. The reply held for o3 is 8, never the stale 7."),
     6: ("confirm 7 arrives",
         "Consensus confirms the oldest pending decision, 7: it is the head of the log. Ω8, Ω9 and Ω10 stay speculated."),
     7: ("commit Ω7 → Δ7",
-        "Δ7's stored writes go into Δ^{*}: a 1 → 5, d + 9. Ω7 leaves the log; Ω^{*} is not refolded, only a backtrack does that."),
+        "Δ7's stored writes go into Δ^{*}: a 1 → 5, d + 9. Ω7 leaves the log; Ω^{*} is not rebuilt, only a backtrack does that."),
     8: ("send the replies of Δ7",
         "Batch 7's replies reach their clients. Batch 10's (o3 → 8) wait with Ω10 until 8 and 9 are confirmed first."),
 }
 # What the worker's persistent state is used for in each step; anything else is drawn faded.
-# ω10 and Ω10 belong to batch 10 and are not drawn at all before they exist (ω10 from step 3, Ω10 at step 5).
-USED = {0: {"log", "C", "S"}, 1: {"C", "S"}, 2: set(), 3: set(), 4: {"C", "S"}, 5: {"log", "C"},
+# Ω10 belongs to batch 10 and is not drawn at all before it exists (step 5).
+USED = {0: {"log", "C", "S"}, 1: {"C", "S"}, 2: set(), 3: {"C"}, 4: {"C", "S"}, 5: {"log"},
         6: {"log"}, 7: {"log", "S"}, 8: {"log"}}
 LEGEND = [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated"),
           ("capsule", LIVE, LIVE_T, "container / being built"), ("badge", WORK, None, "thread"),
@@ -241,9 +244,9 @@ def step_panel(s, x, y, w, h, step):
         return
     s.rect(x, y, w, h, r=12, fill=WHITE, stroke=WORK, sw=1.2, shadow=True)
     badge_n(s, x + 16, y + 18, step)
-    s.text(x + 32, y + 22, {2: "collision check", 3: "merge the non-colliders, in batch order",
-                            4: "re-run the colliders, in batch order, over Ω^{*} ⊕ ω_{10}",
-                            5: "append, and fold into Ω^{*}",
+    s.text(x + 32, y + 22, {2: "collision check", 3: "merge the non-colliders into Ω^{*}, in batch order",
+                            4: "re-run the colliders, in batch order, straight on Ω^{*}",
+                            5: "log batch 10 as Ω_{10}",
                             6: "confirmation of 7 arrives", 7: "commit Ω_{7} → Δ_{7}",
                             8: "send the replies of Δ_{7}"}[step], size=12.5, weight=600)
     thread_badge(s, x + w - 26, y + 18, "W", WORK)
@@ -255,15 +258,15 @@ def step_panel(s, x, y, w, h, step):
         s.text(x + 22 + cw, r2 + 1, "→ o2 and o3 collide", size=11.5, weight=600, fill=DROP)
         s.text(x + 16, r3 + 2, "their ℓ and replies will be dropped", size=11, fill=MUTED)
     elif step == 3:
-        s.text(x + 16, r1, "ℓ_{1}  c ← 5   → ω_{10}", size=11.5, fill=LIVE, weight=600)
+        s.text(x + 16, r1, "ℓ_{1}  c ← 5   → Ω^{*}", size=11.5, fill=SPEC, weight=600)
         s.text(x + 200, r1, "ℓ_{4}  nothing to merge", size=11.5, fill=MUTED)
         collision_chip(s, x + 12, r2 + 4, "o2, o3 wait for step 4")
     elif step == 4:
         cw = (w - 44) / 2
         capsule(s, x + 14, y + 36, cw, 26, "o2 again · e ← 8", size=11)
         capsule(s, x + 30 + cw, y + 36, cw, 26, "o3 again · read e", size=11)
-        s.text(x + 14 + cw / 2, r3 + 2, "writes e = 8 into ω_{10}", size=11, fill=LIVE, anchor="middle")
-        s.text(x + 30 + cw * 1.5, r3 + 2, "→ 8 from ω_{10}, was 7", size=11, weight=600, fill=CONF,
+        s.text(x + 14 + cw / 2, r3 + 2, "writes e = 8 into Ω^{*}", size=11, fill=SPEC, anchor="middle")
+        s.text(x + 30 + cw * 1.5, r3 + 2, "→ 8 from Ω^{*}, was 7", size=11, weight=600, fill=CONF,
                anchor="middle")
         s.arrow([(x + 14 + cw, y + 49), (x + 30 + cw, y + 49)], stroke=LIVE, sw=1.4)
     elif step == 6:
@@ -275,7 +278,7 @@ def step_panel(s, x, y, w, h, step):
     elif step == 7:
         s.text(x + 16, r1, "Δ^{*} ← Δ^{*} ⊕ Δ_{7}:  a 1 → 5,  d + 9", size=11.5, fill=CONF, weight=600)
         s.text(x + 16, r2, "Ω_{7} leaves the log", size=11.5, fill=MUTED)
-        s.text(x + 16, r3 + 2, "Ω^{*} is not refolded: Ω_{7}'s writes stay in it, and now match Δ^{*}", size=11, fill=MUTED)
+        s.text(x + 16, r3 + 2, "Ω^{*} is not rebuilt: Ω_{7}'s writes stay in it, and now match Δ^{*}", size=11, fill=MUTED)
     elif step == 8:
         xx = x + 16
         s.text(xx, r1, "batch 7:", size=11.5, fill=MUTED)
@@ -287,8 +290,8 @@ def step_panel(s, x, y, w, h, step):
         s.text(x + 16, r2 + 4, "batch 10's replies (o3 → 8) wait with Ω_{10}", size=11.5, fill=CONF)
         s.text(x + 16, r3 + 4, "until Δ_{8} and Δ_{9} are committed first", size=11, fill=MUTED)
     else:
-        s.text(x + 16, r1, "ω_{10} → Ω_{10}, the newest log entry", size=11.5, fill=SPEC, weight=600)
-        s.text(x + 16, r2, "Ω^{*} ← Ω^{*} ⊕ Ω_{10}:  c 4 → 5,  e + 8", size=11.5, fill=SPEC)
+        s.text(x + 16, r1, "Ω_{10} = batch 10's recorded writes, the newest log entry", size=11.5, fill=SPEC, weight=600)
+        s.text(x + 16, r2, "Ω^{*} already holds them:  c 4 → 5,  e + 8", size=11.5, fill=MUTED)
         s.text(x + 16, r3 + 2, "replies held:  o1 4 · o2 7 ·", size=11.5, fill=MUTED)
         s.text(x + 16 + text_width("replies held:  o1 4 · o2 7 · ", 11.5), r3 + 2, "o3 8", size=11.5, weight=600,
                fill=CONF)
@@ -310,7 +313,7 @@ def head(s, style, step, h):
 
 
 def spec_group(s, x, y, w, h, title="speculative cache", tx=None, ty=None, anchor="start"):
-    """The speculative cache: everything the worker holds that is not yet confirmed (ω, the log, Ω*)."""
+    """The speculative cache: everything the worker holds that is not yet confirmed (the log and Ω*)."""
     s.rect(x, y, w, h, r=12, fill=WHITE, stroke=SPEC, sw=1.4, dash="6 4", opacity=0.55)
     s.rect(x, y, w, h, r=12, fill="none", stroke=SPEC, sw=1.4, dash="6 4")
     s.text(x + 12 if tx is None else tx, y + 18 if ty is None else ty, title, size=11.5, weight=600, fill=SPEC,
@@ -324,36 +327,8 @@ def conf_box(s, x, y, w, h, title="confirmed state", sub="written only by commit
     s.text(x + 14 + text_width(title, 12, 600) + 10, y + 20, sub, size=10.5, fill=MUTED)
 
 
-CACHE_H = 116
-
-
-def cache_box(s, x, y, omega, c_vals, c_sub, omega_rings=(), c_rings=(), w=168):
-    """The speculative cache as one entity: ω10 (the open batch, its newest layer) over Ω*.
-    Cells line up with kv_box's, so a read can drop straight down from ω to Ω* to Δ*."""
-    s.rect(x, y, w, CACHE_H, r=12, fill=SPEC_T, stroke=SPEC, sw=1.6, shadow=True)
-    if omega is not None:
-        strip(s, x + 12, y + 22, omega, LIVE, cell=24, gap=6, keys=False, size=12, rings=omega_rings, ring_colour=INK)
-    s.line(x + 8, y + 56, x + w - 8, y + 56, stroke=SPEC, sw=0.8, dash="2 3", opacity=0.6)
-    strip(s, x + 12, y + 76, c_vals, SPEC, cell=24, gap=6, keys=False, size=12, rings=c_rings, ring_colour=INK)
-    for i, k in enumerate(KEYS):
-        s.text(x + 24 + i * 30, y + 111, k, size=9.5, fill=MUTED, anchor="middle")
-    cache_text(s, x, y, omega is not None, c_sub, bg=None)
-
-
-def cache_text(s, x, y, omega, c_sub, bg=SPEC_T):
-    """The cache_box's row names. Called again with a background after drawing reads, so rays pass under them."""
-    if omega:
-        s.label(x + 12, y + 16, "ω_{10}", size=13, weight=600, fill=LIVE, anchor="start", bg=bg, pad=2)
-        s.label(x + 44, y + 16, "batch 10, open", size=10, fill=MUTED, anchor="start", bg=bg, pad=2)
-    else:
-        s.text(x + 12, y + 16, "ω", size=13, weight=600, fill=LIVE, opacity=0.4)
-        s.text(x + 28, y + 16, "no open batch", size=10, fill=MUTED)
-    s.label(x + 12, y + 70, "Ω^{*}", size=14, weight=600, fill=SPEC, anchor="start", bg=bg, pad=2)
-    s.label(x + 42, y + 70, c_sub, size=10.5, fill=MUTED, anchor="start", bg=bg, pad=2)
-
-
 def cell_x(x, k):
-    """The centre x of key k's cell in a cache_box or kv_box at x."""
+    """The centre x of key k's cell in a kv_box at x."""
     return x + 24 + KEYS.index(k) * 30
 
 
@@ -378,9 +353,9 @@ def x1(out, step):
         s.arrow([(150, 130), (150, 156)], stroke=CONS)
         s.label(214, 146, "batch k: one op per thread", size=11, fill=CONS, bg=WHITE)
 
-    # the worker holds the speculative cache: the log, and ω10 (still open) as the newest layer over Ω*
+    # the worker holds the speculative cache: the log and Ω*, which batch 10 writes directly
     room(s, 430, 158, 540, 360, "worker", WORK, WORK_T, "holds the speculative cache")
-    spec_group(s, 440, 298, 520, 212, tx=944, ty=502, anchor="end")
+    spec_group(s, 440, 298, 520, 212, tx=452, ty=502)
     xs = [596, 680, 764, 848]
     log_row(s, xs, 318, step)
     if step <= 5:
@@ -393,13 +368,7 @@ def x1(out, step):
     s.text(xs[1] + 4, 312, "write log", size=12, weight=600)
     if "log" not in USED[step]:
         fade(s, (xs[0] if step >= 6 else xs[1]) - 6, 310, 254 + (84 if step >= 6 else 0), 96)
-    ws = Sheet(500, 440, slot=50, dx=40, dy=-26)
-    if step in (0, 3, 4, 5):
-        ws.draw(s, LIVE, LIVE_T, OMEGA[step], size=13)
-        s.text(474, ws.y - 2, "ω_{10}", size=18, weight=600, fill=LIVE, anchor="end")
-        for k in NEW_IN_OMEGA.get(step, ()):
-            s.poly(ws.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
-    cs = Sheet(500, 492, slot=50, dx=40, dy=-26)
+    cs = Sheet(500, 462, slot=50, dx=40, dy=-26)
     cs.draw(s, SPEC, SPEC_T, C_AT.get(step, C0), size=13)
     s.text(474, cs.y - 2, "Ω^{*}", size=20, weight=600, fill=SPEC, anchor="end")
     if "C" not in USED[step]:
@@ -412,26 +381,27 @@ def x1(out, step):
     s.text(474, ss.y - 2, "Δ^{*}", size=20, weight=600, fill=CONF, anchor="end")
     if "S" not in USED[step]:
         fade(s, 452, ss.y - 32, 370, 40, WHITE)
-    if step in (5, 7):
-        for k in (("c", "e") if step == 5 else ("a", "d")):
-            pts = (cs if step == 5 else ss).tile(KEYS.index(k))
-            s.poly(pts, fill="none", stroke=INK, sw=2)
+    for k in C_RINGS.get(step, ()):
+        s.poly(cs.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
+    if step == 7:
+        for k in ("a", "d"):
+            s.poly(ss.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
 
     # the worker's activity in this step
     step_panel(s, 446, 196, 508, 96, step)
     if step == 2:
         s.arrow([(410, 244), (444, 244)], stroke=LIVE, sw=1.8)
         s.label(427, 234, "join", size=10.5, fill=LIVE, bg=WHITE)
-    if step in (0, 3):
-        s.arrow([(410, 427), (514, 427)], stroke=LIVE, sw=1.8)
-        s.label(454, 417, "join", size=10.5, fill=LIVE, bg=WHITE)
-    if step == 4:
-        s.arrow([(560, 294), (560, 412)], stroke=LIVE, sw=1.8)
-    if step in (0, 5):
-        s.arrow([(650, 414), (650, 378)], stroke=SPEC, sw=1.6)
-        s.arrow([(922, 372), (938, 372), (938, 479), (842, 479)], stroke=SPEC, sw=1.6)
-    if step == 0:
-        s.label(936, 456, "fold: Ω^{*} = Ω_{7} ⊕ … ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WHITE, anchor="end")
+    if step in (0, 3):                       # the merge writes Ω* directly
+        s.arrow([(410, 456), (508, 456)], stroke=LIVE, sw=1.8)
+        s.label(428, 446, "merge", size=10.5, fill=LIVE, bg=WHITE)
+    if step == 4:                            # and so do the re-runs
+        s.arrow([(560, 294), (560, 432)], stroke=LIVE, sw=1.8)
+    if step == 5:                            # the recorded writes become the log entry Ω10
+        s.arrow([(632, 294), (632, 316)], stroke=SPEC, sw=1.6)
+    if step == 0:                            # Ω* is rebuilt from the log only after a backtrack
+        s.arrow([(920, 368), (932, 368), (932, 449), (800, 449)], stroke=SPEC, sw=1.4, dash="5 4")
+        s.label(928, 474, "rebuilt only after a backtrack", size=10.5, fill=SPEC, bg=WHITE, anchor="end")
         badge_n(s, 396, 176, 1)
         for n, bx in ((2, 456), (3, 480), (4, 504)):
             badge_n(s, bx, 214, n)
@@ -443,11 +413,11 @@ def x1(out, step):
         i = KEYS.index("e")
         ex_, ey = cs.centre(i)
         sx_, sy = ss.centre(i)
-        ray(s, [(394, 404), (418, 404), (418, 449), (ex_, 449), (ex_, sy - 11)], [(ex_, ey)])
+        ray(s, [(394, 404), (418, 404), (418, 422), (ex_, 422), (ex_, sy - 11)], [(ex_, ey)])
         s.text(sx_ + 14, sy - 26, "o3 finds e = 7, stale", size=11, weight=600, fill=DROP)
         i = KEYS.index("b")
         bx, by = cs.centre(i)
-        ray(s, [(394, 470), (428, 470), (428, 459), (bx, 459), (bx, by - 11)])
+        ray(s, [(394, 470), (404, 470), (404, 430), (bx, 430), (bx, by - 11)])
         s.text(46, 604, "&Ω^{*}, &Δ^{*}: read-only, shared by all four threads", size=10.5, fill=MUTED)
 
     # overview: the confirmation of 7, the oldest decision
@@ -516,11 +486,11 @@ def x2(out, step, mix=False):
         s.arrow([(138, 244), (152, 244), (152, 188), (182, 188)], stroke=CONS)
         s.label(150, 210, "batch k", size=10.5, fill=CONS, bg=PANEL, anchor="end")
 
-    # the worker lane holds the speculative cache: the log, and ω10 as the newest layer of Ω*
+    # the worker lane holds the speculative cache: the log and Ω*, which batch 10 writes directly
     s.rect(172, 254, 712, 262, r=14, fill=WORK_T)
     thread_badge(s, 184, 272, "worker", WORK)
     if mix:
-        s.text(360, 278, "holds the speculative cache: the log, ω and Ω^{*}", size=11, fill=MUTED)
+        s.text(360, 278, "holds the speculative cache: the log and Ω^{*}", size=11, fill=MUTED)
     spec_group(s, 180, 282, 696, 124, ty=400)
     xs = [584, 502, 420, 338]                 # newest on the right, next to Ω*
     log_row(s, xs, 296, step)
@@ -531,15 +501,14 @@ def x2(out, step, mix=False):
         s.text(x_new + 72, 380, "newest", size=10.5, fill=MUTED, anchor="end")
     else:
         confirm_labels(s, xs, 378, step, 8)
-    c_sub = {5: "Ω^{*} ⊕ Ω_{10}", 6: "Ω_{7} ⊕ … ⊕ Ω_{10}", 7: "Ω_{7} ⊕ … ⊕ Ω_{10}",
-             8: "Ω_{7} ⊕ … ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
-    CX, CY = 702, 288
-    cache_box(s, CX, CY, OMEGA[step] if step in (0, 3, 4, 5) else None, C_AT.get(step, C0), c_sub,
-              omega_rings=NEW_IN_OMEGA.get(step, ()), c_rings={"c", "e"} if step == 5 else ())
+    c_sub = {1: "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", 2: "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", 3: "+ batch 10's merge",
+             4: "+ batch 10's writes"}.get(step, "Ω_{7} ⊕ … ⊕ Ω_{10}")
+    CX, CY = 702, 296
+    kv_box(s, CX, CY, 168, 76, "Ω^{*}", C_AT.get(step, C0), SPEC, SPEC_T, c_sub, rings=C_RINGS.get(step, ()))
     if "log" not in USED[step]:
         fade(s, 334, 290, 326 if step >= 6 else 244, 92)
     if "C" not in USED[step]:
-        fade(s, CX + 4, CY + 58, 160, 56, SPEC_T)
+        fade(s, CX - 6, CY - 6, 180, 88)
 
     # the confirmed state, in a lane of its own
     conf_box(s, 172, 528, 712, 92)
@@ -548,19 +517,20 @@ def x2(out, step, mix=False):
     if "S" not in USED[step]:
         fade(s, 696, 530, 180, 88, WHITE)
 
-    if step in (0, 5):
-        s.arrow([(700, 322), (658, 322)], stroke=SPEC, sw=1.6)          # ω10 is appended as Ω10
-        s.arrow([(620, 356), (620, 364), (700, 364)], stroke=SPEC, sw=1.6)  # the log folds into Ω*
-        s.label(676, 364, "fold", size=10.5, fill=SPEC, bg=WHITE)
+    if step == 0:                            # Ω* is rebuilt from the log only after a backtrack
+        s.arrow([(620, 356), (620, 364), (700, 364)], stroke=SPEC, sw=1.4, dash="5 4")
+        s.label(664, 364, "rebuild", size=10.5, fill=SPEC, bg=WHITE)
 
     step_panel(s, 184, 418, 460, 92, step)
     if step == 2:
         s.arrow([(322, 238), (322, 416)], stroke=LIVE, sw=1.8)
         s.label(322, 262, "join", size=10.5, fill=LIVE, bg=WORK_T)
-    if step in (0, 3):
-        s.arrow([(740, 238), (740, 286)], stroke=LIVE, sw=1.8)
+    if step in (0, 3):                       # the merge writes Ω* directly
+        s.arrow([(862, 238), (862, 294)], stroke=LIVE, sw=1.8)
         if step == 3:
-            s.label(740, 262, "join", size=10.5, fill=LIVE, bg=WORK_T)
+            s.label(862, 262, "merge", size=10.5, fill=LIVE, bg=WORK_T)
+    if step == 5:                            # the recorded writes become the log entry Ω10
+        s.arrow([(596, 416), (596, 358)], stroke=SPEC, sw=1.6)
     if step == 4:
         s.arrow([(644, 462), (690, 462), (690, 322), (700, 322)], stroke=LIVE, sw=1.8)
     if step == 0:
@@ -568,15 +538,14 @@ def x2(out, step, mix=False):
         for n, bx in ((2, 200), (3, 224), (4, 248)):
             badge_n(s, bx, 438, n)
         s.text(264, 442, "check, merge, re-run: on the worker", size=10.5, fill=MUTED)
-        badge_n(s, 680, 306, 5)
+        badge_n(s, 644, 282, 5)
 
     # reads: every op reads ℓ, then Ω*, then Δ*
     if step in (0, 1):
         if mix:
             cx = cell_x(CX, "e")
-            ray(s, [(640, 226), (640, 248), (890, 248), (890, CY + 88), (cx, CY + 88), (cx, 574)], [(cx, CY + 88)])
+            ray(s, [(690, 226), (690, 280), (cx, 280), (cx, 574)], [(cx, CY + 52)])
             s.text(690, 590, "o3 finds e = 7, stale", size=11, weight=600, fill=DROP, anchor="end")
-            cache_text(s, CX, CY, step in (0, 3, 4, 5), c_sub)
             s.text(632, 244, "o3 reads e: ℓ_{3} → Ω^{*} → Δ^{*}", size=10.5, fill=MUTED, anchor="end")
         else:
             s.arrow([(800, 238), (800, 286)], stroke=MUTED, dash="4 3")

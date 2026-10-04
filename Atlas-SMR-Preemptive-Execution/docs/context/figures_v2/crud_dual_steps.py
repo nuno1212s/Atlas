@@ -11,9 +11,10 @@ Batch 10 is the running example (executor_model.py): o1 c ← 5, o2 e ← 8, o3 
 Both executors run it in order, so o3 reads o2's 8 and there is no collision to resolve.
 
 CRUD cache, one worker thread:
-  1 o1, o2 write into ω10   one container over Ω* and Δ*; writes land only in ω10
-  2 o3, o4 read             o3 finds 8 in ω10, o4 finds b deleted in Ω*
-  3 append Ω10              ω10 becomes Ω10 and is folded into Ω*; the replies are held
+  1 o1, o2 write Ω*         one container runs straight on Ω* (a miss reads Δ*) and records its writes
+  2 o3, o4 read             o3 finds o2's 8 in Ω*, o4 finds b deleted in Ω*
+  3 log Ω10                 the recorded writes join the log as Ω10; the replies are held
+(iteration 18: there is no ω. Ω* is rebuilt from the log only after a backtrack.)
   4 confirm 7 arrives       the oldest decision, Ω7, is the head of the log; Ω8–Ω10 stay speculated
   5 commit Ω7 → Δ7          Δ7's writes go into Δ*; Ω7 leaves the log; Ω* is left as it is
   6 send the replies        batch 7's replies go out; batch 10's wait with Ω10
@@ -27,7 +28,7 @@ Dual-state, main + preemptive + confirmed workers:
 Decisions are confirmed in order, so the first confirmation after batch 10 is for 7 (iteration 14).
 State is drawn only while it is used: batch 10's own state appears when it exists, and persistent
 state that a step does not touch is faded. The read pool is not drawn. In the CRUD cache figures the worker holds
-the speculative cache (ω10 as its newest, still open layer, the log and Ω*), and the confirmed state Δ* is drawn
+the speculative cache (the log and Ω*, which batch 10 writes directly), and the confirmed state Δ* is drawn
 apart from it (iteration 16).
 """
 import os
@@ -38,7 +39,7 @@ from executor_model import BATCH, CRUD, DUAL, KEYS, op_text  # noqa: E402
 
 from caching import Sheet, ray  # noqa: E402
 from scalable_arch import clients, room, wcard  # noqa: E402
-from scalable_steps import (badge_n, cache_box, cache_text, cell_x, chip, conf_box, confirm_labels,  # noqa: E402
+from scalable_steps import (badge_n, cell_x, chip, conf_box, confirm_labels,  # noqa: E402
                             confirm_log, dcard, fade, kv_box, progress, shown, spec_group, strip)
 from svgkit import (CONF, CONF_T, CONS, CONS_T, INK, LIVE, LIVE_T, MUTED, PANEL, SPEC, SPEC_T,  # noqa: E402
                     WHITE, WORK, WORK_T, Svg, legend, text_width, thread_badge)
@@ -50,26 +51,26 @@ REPLIES = list(CRUD[1].log[-1][2])                 # ['4', '7', '8', 'none'], th
 OMEGA10 = CRUD[1].log[-1][1]                       # {c: 5, e: 8}
 S0, C0, LOG0 = CRUD[0].S, CRUD[0].C, CRUD[0].log
 C1 = CRUD[1].C
-S7 = CRUD[2].S                                     # after Δ7, the oldest decision (Ω* is not refolded)
+S7 = CRUD[2].S                                     # after Δ7, the oldest decision (Ω* is not rebuilt)
 P0, P1 = DUAL[0].P, DUAL[1].P
 assert DUAL[2].S == S7 and DUAL[2].P == P1          # both executors confirm 7 to the same Δ*
 DELTA7 = dict(LOG0[0][1])                          # {a: 5, d: 9}
 REPLIES7 = [(op_text(op), r) for op, r in zip(BATCH[7], LOG0[0][2])]
 
 # where each op's read lands, in order: o1 and o2 read the old value they overwrite
-SOURCE = {"crud": ["Ω^{*}", "Δ^{*}", "ω_{10}", "Ω^{*}"], "dual": ["Ω^{*}", "Ω^{*}", "Ω^{*}", "Ω^{*}"]}
+SOURCE = {"crud": ["Ω^{*}", "Δ^{*}", "Ω^{*}", "Ω^{*}"], "dual": ["Ω^{*}", "Ω^{*}", "Ω^{*}", "Ω^{*}"]}
 ACTIVE = {1: {0, 1}, 2: {2, 3}}
 
 STEPS = {
     "crud": {
-        0: ("overview", "Steps 1–3 speculate batch 10; steps 4–6 confirm the oldest decision, Ω7. Decisions are confirmed in order."),
-        1: ("o1, o2 write into ω10",
-            "One container runs the ops in order. o1 and o2 write c = 5 and e = 8 into ω10; Ω^{*} and Δ^{*} are only read."),
+        0: ("overview", "Steps 1–3 speculate batch 10 straight on Ω^{*}; steps 4–6 confirm the oldest decision, Ω7. Ω^{*} is rebuilt only after a backtrack."),
+        1: ("o1, o2 write Ω^{*}",
+            "One container runs the ops in order, straight on Ω^{*}: o1 and o2 write c = 5 and e = 8 into it, and the container records each write."),
         2: ("o3, o4 read",
-            "o3 finds e = 8 in ω10: running in order, it sees o2's write, so nothing collides. o4 finds b deleted in Ω^{*}."),
-        3: ("append Ω10", "ω10 becomes Ω10 and is folded into Ω^{*}. The replies held are 4, 7, 8 and none."),
+            "o3 finds e = 8 in Ω^{*}: running in order, it sees o2's write, so nothing collides. o4 finds b deleted in Ω^{*}."),
+        3: ("log Ω10", "The recorded writes join the log as Ω10; Ω^{*} already holds them. The replies held are 4, 7, 8 and none."),
         4: ("confirm 7 arrives", "Consensus confirms the oldest pending decision, 7: it is the head of the log. Ω8, Ω9, Ω10 stay speculated."),
-        5: ("commit Ω7 → Δ7", "Δ7's stored writes go into Δ^{*}: a 1 → 5, d + 9. Ω7 leaves the log; Ω^{*} is not refolded, only a backtrack does that."),
+        5: ("commit Ω7 → Δ7", "Δ7's stored writes go into Δ^{*}: a 1 → 5, d + 9. Ω7 leaves the log; Ω^{*} is not rebuilt, only a backtrack does that."),
         6: ("send the replies of Δ7", "Batch 7's replies reach their clients. Batch 10's (o3 → 8) wait with Ω10 until 8 and 9 are confirmed."),
     },
     "dual": {
@@ -87,7 +88,7 @@ STEPS = {
 }
 # Persistent state each step uses; everything else that exists is faded.
 USED = {
-    "crud": {0: {"log", "C", "S"}, 1: {"C", "S"}, 2: {"C"}, 3: {"log", "C"}, 4: {"log"}, 5: {"log", "S"},
+    "crud": {0: {"log", "C", "S"}, 1: {"C", "S"}, 2: {"C"}, 3: {"log"}, 4: {"log"}, 5: {"log", "S"},
              6: {"log"}},
     "dual": {0: {"log", "Sp", "S"}, 1: {"Sp"}, 2: {"Sp"}, 3: {"log"}, 4: {"log"}, 5: {"log"}, 6: {"S"}},
 }
@@ -126,8 +127,8 @@ def panel(s, x, y, w, h, n, title, rows, thread="W"):
 
 PANELS = {
     "crud": {
-        3: ("append, and fold into Ω^{*}", [[("ω_{10} → Ω_{10}, the newest log entry", SPEC, 600)],
-                                        [("Ω^{*} ← Ω^{*} ⊕ Ω_{10}:  c 4 → 5,  e + 8", SPEC, 400)],
+        3: ("log batch 10 as Ω_{10}", [[("Ω_{10} = the container's recorded writes, the newest log entry", SPEC, 600)],
+                                    [("Ω^{*} already holds them:  c 4 → 5,  e + 8", MUTED, 400)],
                                         [("replies held:  o1 4 · o2 7 ·", MUTED, 400), ("o3 8", CONF, 600),
                                          ("· o4 none", MUTED, 400)]]),
         4: ("confirmation of 7 arrives", [[("the head of the log is Ω_{7}, the oldest: it was speculated", CONF, 600)],
@@ -135,7 +136,7 @@ PANELS = {
                                           [("Ω_{8}, Ω_{9}, Ω_{10} stay speculated: each is confirmed in turn", MUTED, 400)]]),
         5: ("commit Ω_{7} → Δ_{7}", [[("Δ^{*} ← Δ^{*} ⊕ Δ_{7}:  a 1 → 5,  d + 9", CONF, 600)],
                                      [("Ω_{7} leaves the log", MUTED, 400)],
-                                     [("Ω^{*} is not refolded: Ω_{7}'s writes stay in it, and now match Δ^{*}", MUTED, 400)]]),
+                                     [("Ω^{*} is not rebuilt: Ω_{7}'s writes stay in it, and now match Δ^{*}", MUTED, 400)]]),
         6: ("send the replies of Δ_{7}", [[("batch 7:", MUTED, 400)] + [(f"{op} → {r}", INK, 400) for op, r in REPLIES7],
                                           [("batch 10's replies (o3 → 8) wait with Ω_{10}", CONF, 400)],
                                           [("until Δ_{8} and Δ_{9} are committed first", MUTED, 400)]]),
@@ -163,7 +164,7 @@ def ops_box(s, ex, x, y, w, step, horizontal=False, cell_w=None):
     """Batch 10's ops: in a container (CRUD) or applied straight to Ω* (dual)."""
     done = step >= 3 and step != 0
     if ex == "crud":
-        edge, fill, dash, title = LIVE, LIVE_T, "5 4", "container · reads ω, then Ω^{*}, then Δ^{*}"
+        edge, fill, dash, title = LIVE, LIVE_T, "5 4", "container · reads and writes Ω^{*}, a miss reads Δ^{*}"
     else:
         edge, fill, dash, title = SPEC, SPEC_T, None, "batch 10 · runs in place on Ω^{*}"
     h = 82 if horizontal else 142
@@ -249,7 +250,7 @@ def reply_chips(s, x, y):
 # CRUD cache — X1 rooms
 # ---------------------------------------------------------------------------
 def crud_x1(out, step):
-    """The worker holds the speculative cache (ω10 over Ω*, and the log); Δ* is drawn apart from it."""
+    """The worker holds the speculative cache (Ω*, which batch 10 writes directly, and the log); Δ* is apart."""
     ex, H = "crud", 860
     s = Svg(1000, H)
     head(s, ex, "x1", step, H, 812)
@@ -258,28 +259,21 @@ def crud_x1(out, step):
     room(s, 30, 150, 940, 466, "worker", WORK, WORK_T, "the only thread · holds the speculative cache")
     ops_box(s, ex, 46, 188, 360, step)
 
-    # the speculative cache: batch 10's open write set ω10 as its newest layer, then Ω*, plus the log
+    # the speculative cache: Ω*, which batch 10 writes directly, and the log
     spec_group(s, 46, 404, 908, 200)
-    ws, cs = Sheet(150, 488, slot=46, dx=38, dy=-24), Sheet(150, 572, slot=46, dx=38, dy=-24)
-    if step in (0, 1, 2, 3):
-        ws.draw(s, LIVE, LIVE_T, OMEGA10, size=12)
-        s.text(132, ws.y - 6, "ω_{10}", size=18, weight=600, fill=LIVE, anchor="end")
-        s.text(132, ws.y + 10, "batch 10, open", size=10, fill=MUTED, anchor="end")
-        for k in ({1: ("c", "e"), 2: ("e",)}.get(step, ())):
-            s.poly(ws.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
-    cs.draw(s, SPEC, SPEC_T, C1 if step >= 3 else C0, size=12)
+    cs = Sheet(150, 540, slot=46, dx=38, dy=-24)
+    cs.draw(s, SPEC, SPEC_T, C1, size=12)          # from step 1 on, batch 10's writes are in it
     s.text(132, cs.y - 6, "Ω^{*}", size=18, weight=600, fill=SPEC, anchor="end")
-    s.text(132, cs.y + 10, "Ω_{7} ⊕ … ⊕ Ω_{10}" if step >= 3 else "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", size=10,
+    s.text(132, cs.y + 10, "+ batch 10" if step in (1, 2) else "Ω_{7} ⊕ … ⊕ Ω_{10}", size=10,
            fill=MUTED, anchor="end")
-    if step == 3:
-        for k in ("c", "e"):
-            s.poly(cs.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
+    for k in {1: ("c", "e"), 2: ("e",)}.get(step, ()):
+        s.poly(cs.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
     if "C" not in USED[ex][step]:
         fade(s, 60, cs.y - 30, 420, 40)
     xs = [604, 688, 772, 856]
     log_row(s, ex, xs, 432, step)
     log_labels(s, xs, 508, step)
-    s.text(xs[1] + 4, 528, "write log", size=12, weight=600)
+    s.text(xs[1] + 4, 424, "write log", size=12, weight=600)
     if "log" not in USED[ex][step]:
         fade(s, (xs[0] if step >= 4 else xs[1]) - 6, 424, 254 + (84 if step >= 4 else 0), 112)
 
@@ -294,25 +288,26 @@ def crud_x1(out, step):
     if "S" not in USED[ex][step]:
         fade(s, 60, ss.y - 30, 420, 40, WHITE)
 
-    # step 1: the writes land in ω10; step 2: the reads go ω10, then Ω*, then Δ*
+    # step 1: the writes land in Ω* itself; step 2: the reads find them there
     if step == 1:
         for k in ("c", "e"):
-            kx, ky = ws.centre(KEYS.index(k))
+            kx, ky = cs.centre(KEYS.index(k))
             s.arrow([(kx, 332), (kx, ky - 10)], stroke=LIVE, sw=1.8)
-        s.text(ws.centre(4)[0] + 10, 372, "o1, o2 write into ω_{10}", size=10.5, weight=600, fill=LIVE)
+        s.text(cs.centre(4)[0] + 10, 372, "o1, o2 write into Ω^{*}", size=10.5, weight=600, fill=LIVE)
     if step == 2:
-        kx, ky = ws.centre(KEYS.index("e"))
+        kx, ky = cs.centre(KEYS.index("e"))
         ray(s, [(kx, 332), (kx, ky - 10)])
-        s.text(kx + 10, 372, "o3: e = 8 from ω_{10}", size=10.5, weight=600, fill=CONF)
+        s.text(kx + 10, 372, "o3: e = 8 from Ω^{*}", size=10.5, weight=600, fill=CONF)
         bx, by = cs.centre(KEYS.index("b"))
-        ray(s, [(bx, 332), (bx, by - 10)], [ws.centre(KEYS.index("b"))])
+        ray(s, [(bx, 332), (bx, by - 10)])
         s.text(bx + 8, 356, "o4: b is ⊥ in Ω^{*}", size=10.5, fill=MUTED)
-    if step in (0, 3):
-        s.arrow([(426, 468), (602, 468)], stroke=SPEC, sw=1.6)
-        s.label(514, 458, "append", size=10.5, fill=SPEC, bg=WHITE)
-        fx = xs[2] + 36 if step == 0 else xs[0] + 50
-        s.arrow([(fx, 492), (fx, 556), (432, 556)], stroke=SPEC, sw=1.6)
-        s.label(560, 552, "fold", size=10.5, fill=SPEC, bg=WHITE)
+    if step in (0, 3):                       # the container's recorded writes become the log entry Ω10
+        s.arrow([(406, 318), (xs[0] + 36, 318), (xs[0] + 36, 430)], stroke=SPEC, sw=1.6)
+        s.label(530, 318, "recorded writes", size=10.5, fill=SPEC, bg=WORK_T)
+    if step == 0:                            # Ω* is rebuilt from the log only after a backtrack
+        fx = xs[2] + 36
+        s.arrow([(fx, 492), (fx, 528), (428, 528)], stroke=SPEC, sw=1.4, dash="5 4")
+        s.label(540, 528, "rebuilt only after a backtrack", size=10.5, fill=SPEC, bg=WHITE)
 
     if step in PANELS[ex]:
         t, rows = PANELS[ex][step]
@@ -331,7 +326,7 @@ def crud_x1(out, step):
         s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 430)], stroke=CONS)
         s.label(xs[3] + 36, 146, "confirm 7", size=11, fill=CONS, bg=WHITE)
         s.arrow([(946, ss.y - 12), (946, 734)], stroke=INK)
-        for n, (bx_, by_) in enumerate([(424, 214), (424, 262), (514, 488), (xs[3] + 56, 162), (930, 600),
+        for n, (bx_, by_) in enumerate([(424, 214), (424, 262), (466, 318), (xs[3] + 56, 162), (930, 600),
                                         (930, 728)], start=1):
             badge_n(s, bx_, by_, n)
     if step in (0, 1):
@@ -359,7 +354,7 @@ def crud_x2(out, step, mix=False):
     s.rect(156, 96, 744, 528, r=18, fill=PANEL)
     s.rect(172, 112, 712, 396, r=14, fill=WORK_T)
     thread_badge(s, 184, 130, "worker", WORK)
-    s.text(250, 134, "the only thread" + (" · holds the speculative cache: the log, ω and Ω^{*}" if mix else ""),
+    s.text(250, 134, "the only thread" + (" · holds the speculative cache: the log and Ω^{*}" if mix else ""),
            size=11, fill=MUTED)
 
     ops_box(s, ex, 184, 150, 688, step, horizontal=True, cell_w=170)
@@ -375,15 +370,12 @@ def crud_x2(out, step, mix=False):
         confirm_labels(s, xs, 344, step, 6)
     if "log" not in USED[ex][step]:
         fade(s, 352, 256, 320 if step >= 4 else 240, 96)
-    # the speculative cache: ω10 (batch 10's open writes, its newest layer) over Ω*
-    c_sub = {3: "Ω^{*} ⊕ Ω_{10}", 4: "Ω_{7} ⊕ … ⊕ Ω_{10}", 5: "Ω_{7} ⊕ … ⊕ Ω_{10}",
-             6: "Ω_{7} ⊕ … ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
-    CX, CY = 702, 258
-    cache_box(s, CX, CY, OMEGA10 if step <= 3 else None, C1 if step >= 3 else C0, c_sub,
-              omega_rings={"c", "e"} if step == 1 else ({"e"} if step == 2 else ()),
-              c_rings={"c", "e"} if step == 3 else ())
+    # the speculative cache: Ω*, which batch 10 writes directly (from step 1 on, its writes are in it)
+    c_sub = "+ batch 10" if step in (1, 2) else "Ω_{7} ⊕ … ⊕ Ω_{10}"
+    CX, CY = 702, 280
+    kv_box(s, CX, CY, 168, 76, "Ω^{*}", C1, SPEC, SPEC_T, c_sub, rings={1: {"c", "e"}, 2: {"e"}}.get(step, ()))
     if "C" not in USED[ex][step]:
-        fade(s, CX + 4, CY + 58, 160, 56, SPEC_T)
+        fade(s, CX - 6, CY - 6, 180, 88)
 
     conf_box(s, 172, 520, 712, 92)
     kv_box(s, 702, 528, 168, 76, "Δ^{*}", S7 if step >= 5 else S0, CONF, CONF_T, "confirmed",
@@ -394,28 +386,30 @@ def crud_x2(out, step, mix=False):
     if step in PANELS[ex]:
         t, rows = PANELS[ex][step]
         panel(s, 184, 404, 460, 96, step, t, rows)
-    if step == 1:                            # o1 and o2 write into ω10
-        s.arrow([(200, 232), (200, 252), (690, 252), (690, 292), (700, 292)], stroke=LIVE, sw=1.8)
-    if step in (0, 3):
-        s.arrow([(700, 288), (670, 288)], stroke=SPEC, sw=1.6)            # ω10 is appended as Ω10
-        s.arrow([(668, 310), (684, 310), (684, 346), (700, 346)], stroke=SPEC, sw=1.6)  # and folded into Ω*
+    if step == 1:                            # o1 and o2 write into Ω* itself
+        s.arrow([(200, 232), (200, 252), (690, 252), (690, 300), (700, 300)], stroke=LIVE, sw=1.8)
+    if step in (0, 3):                       # the container's recorded writes become the log entry Ω10
+        s.arrow([(632, 232), (632, 260)], stroke=SPEC, sw=1.6)
+        s.label(626, 250, "recorded writes", size=10.5, fill=SPEC, bg=WORK_T, anchor="end")
+    if step == 0:                            # Ω* is rebuilt from the log only after a backtrack
+        s.arrow([(472, 320), (472, 372), (786, 372), (786, 358)], stroke=SPEC, sw=1.4, dash="5 4")
+        s.label(630, 372, "rebuilt only after a backtrack", size=10.5, fill=SPEC, bg=WHITE)
     if step in (1, 2):
-        wy, cy = CY + 34, CY + 88            # centres of the ω and Ω* rows
+        cy = CY + 52                         # the centre of Ω*'s cells
         if mix:
-            if step == 1:                    # o1 and o2 read the value they overwrite: ω, then Ω*, then Δ*
+            if step == 1:                    # o1 and o2 read the value they overwrite: Ω*, then Δ*
                 cx = cell_x(CX, "c")
                 ray(s, [(270, 232), (270, 238), (cx, 238), (cx, cy - 12)])
                 ex_ = cell_x(CX, "e")
                 ray(s, [(440, 232), (440, 241), (ex_, 241), (ex_, 566)], [(ex_, cy)])
-            else:                            # o3 finds e in ω10; o4 falls through to Ω*
+            else:                            # o3 finds o2's e = 8 in Ω*; o4 finds b deleted there
                 ox = cell_x(CX, "e")
-                ray(s, [(610, 232), (610, 240), (ox, 240), (ox, wy - 12)])
+                ray(s, [(610, 232), (610, 240), (ox, 240), (ox, cy - 12)])
                 bx = cell_x(CX, "b")
-                ray(s, [(780, 232), (780, 246), (bx, 246), (bx, cy - 12)], [(bx, wy)])
-            cache_text(s, CX, CY, True, c_sub)
+                ray(s, [(780, 232), (780, 246), (bx, 246), (bx, cy - 12)])
         elif step == 2:                      # (in step 1 the label would sit on the write arrow)
-            s.arrow([(786, 232), (786, 256)], stroke=MUTED, dash="4 3")
-            s.label(780, 246, "each op reads ω, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
+            s.arrow([(786, 232), (786, 278)], stroke=MUTED, dash="4 3")
+            s.label(780, 256, "each op reads Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
     if step in (0, 4):
         s.arrow([(138, 274), (148, 274), (148, 252), (xs[3] + 36, 252), (xs[3] + 36, 260)], stroke=CONS,
@@ -429,7 +423,7 @@ def crud_x2(out, step, mix=False):
         s.arrow([(644, 452), (930, 452), (930, 352)], stroke=INK, sw=1.8)
     if step == 0:
         s.arrow([(870, 566), (930, 566), (930, 352)], stroke=INK)
-        for n, (bx_, by_) in enumerate([(184, 150), (524, 150), (686, 270), (300, 252), (690, 440),
+        for n, (bx_, by_) in enumerate([(184, 150), (524, 150), (648, 246), (300, 252), (690, 440),
                                         (944, 470)], start=1):
             badge_n(s, bx_, by_, n)
     if step in (0, 1):

@@ -4,7 +4,7 @@
 
 One figure per executor and option. Values are the running example (executor_model.py):
 Δ* = {a:1, b:2, c:3, e:7}, decisions 7, 8, 9 pending.
-- CRUD cache: Ω* = Ω7 ⊕ Ω8 ⊕ Ω9 = {a:6, b:⊥, c:4, d:9}; batch 10 has written c ← 5 so far (ω).
+- CRUD cache: Ω* = Ω7 ⊕ Ω8 ⊕ Ω9 = {a:6, b:⊥, c:4, d:9}; batch 10 has written c ← 5 so far, straight into Ω*.
 - Dual-state: Ω* = Δ* with batches 7, 8, 9 run on it = {a:6, c:4, d:9, e:7}.
 - Scalable: the same Ω*; batch 10's four ops each run in their own ℓ (o1 c ← 5, o2 e ← 8,
   o3 read e, o4 read b).
@@ -103,10 +103,11 @@ def b1_layers(out, ex):
     s.title(EXECUTORS[ex], "Caching structure · B1 · see-through layers: a read drops until a layer holds the key")
     if ex == "crud":
         top, gap = 210, 112
-        sheets = [("ω", "the batch being run", LIVE, LIVE_T, OMEGA), ("Ω^{*}", "pending cache", SPEC, SPEC_T, C0),
+        # batch 10 runs straight on Ω*: its first write, c ← 5, is already in it (there is no ω)
+        sheets = [("Ω^{*}", "speculative state, + batch 10", SPEC, SPEC_T, {**C0, **OMEGA}),
                   ("Δ^{*}", "confirmed state", CONF, CONF_T, S0)]
-        geo = [Sheet(170, top + j * gap) for j in range(3)]
-        for j in reversed(range(3)):
+        geo = [Sheet(170, top + j * gap) for j in range(2)]
+        for j in reversed(range(2)):
             name, sub, col, tint, vals = sheets[j]
             geo[j].draw(s, col, tint, vals)
             sheet_label(s, geo[j], name, sub, col)
@@ -118,16 +119,16 @@ def b1_layers(out, ex):
             ray(s, [(x, top - 68), (x, y_hit - 12)], [geo[j].centre(i) for j in range(hit)])
         lx, ly = 580, 330
         s.text(lx, ly - 30, "write log", size=14, weight=600)
-        s.text(lx, ly - 12, "Ω^{*} = Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}, the newest write per key", size=11.5, fill=SPEC)
+        s.text(lx, ly - 12, "Ω^{*} = Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}, plus batch 10's writes so far", size=11.5, fill=SPEC)
         xs = log_cards(s, lx, ly, crud_log())
-        s.arrow([(lx - 4, ly + 22), (geo[1].x + geo[1].w + 30, geo[1].y - 16)], stroke=SPEC, sw=1.8)
-        s.label(lx - 30, ly + 4, "fold", size=11.5, fill=SPEC, bg=WHITE)
-        s.arrow([(lx + 46, ly + 60), (lx + 46, geo[2].y - 14), (geo[2].x + geo[2].w + 28, geo[2].y - 14)],
-                stroke=CONF, sw=2)
+        s.arrow([(lx - 4, ly + 16), (geo[0].x + geo[0].w + 30, geo[0].y - 16)], stroke=SPEC, sw=1.6, dash="5 4")
+        s.label(536, 266, "rebuild, after a backtrack", size=11, fill=SPEC, bg=WHITE)
+        s.arrow([(lx + 46, ly + 60), (lx + 46, ly + 74), (geo[1].x + geo[1].w + 30, ly + 74),
+                 (geo[1].x + geo[1].w + 30, geo[1].y - 12)], stroke=CONF, sw=2)
         s.text(lx + 56, ly + 98, "commit: the oldest, Ω_{7}, becomes Δ_{7}", size=12, fill=CONF)
         s.text(lx + 56, ly + 114, "and is written into Δ^{*}", size=12, fill=CONF)
         s.line(xs[2] - 6, ly - 4, xs[2] - 6, ly + 70, stroke=DROP, sw=2, dash="5 4")
-        s.text(xs[2] + 2, ly + 82, "backtrack: drop from here, refold Ω^{*}", size=12, fill=DROP)
+        s.text(xs[2] + 2, ly + 82, "backtrack: drop from here, rebuild Ω^{*}", size=12, fill=DROP)
         s.text(170, 550, "○  the read passed an empty slot", size=11.5, fill=MUTED)
         s.text(400, 550, "⊥  deleted: the read stops and returns none", size=11.5, fill=MUTED)
 
@@ -196,9 +197,10 @@ def b1_layers(out, ex):
         s.rect(lx + 288, ly, 84, 58, r=8, fill=WHITE, stroke=SPEC, sw=1.4, dash="5 4")
         s.text(lx + 330, ly + 34, "Ω_{10}", size=14, weight=600, fill=SPEC, anchor="middle")
         s.arrow([(minis[3].x + minis[3].w + 30, top - 10), (lx + 330, top - 10), (lx + 330, ly - 2)], stroke=LIVE)
-        s.text(lx + 150, top - 18, "merge the ℓs, re-run colliders", size=11.5, fill=LIVE, anchor="middle")
-        s.arrow([(lx - 4, ly + 22), (cs.x + cs.w + 30, cs.y - 16)], stroke=SPEC, sw=1.8)
-        s.label(lx - 30, ly + 4, "fold", size=11.5, fill=SPEC, bg=WHITE)
+        s.text(lx + 150, top - 18, "merged and re-run on Ω^{*}; recorded as Ω_{10}", size=11.5, fill=LIVE,
+               anchor="middle")
+        s.arrow([(lx - 4, ly + 22), (cs.x + cs.w + 30, cs.y - 16)], stroke=SPEC, sw=1.6, dash="5 4")
+        s.label(lx - 30, ly + 4, "rebuild (backtrack)", size=11.5, fill=SPEC, bg=WHITE)
         s.text(lx, ly + 98, "commit and backtrack: as in the CRUD cache", size=12, fill=MUTED)
     s.save(os.path.join(out, f"{PFX}-b1-layers-{ex}"))
 
@@ -261,13 +263,13 @@ def b2_ledger(out, ex):
         s.text(xs[2] - 2, y + 144, "backtrack: cut here, copy Δ^{*} into Ω^{*},", size=12, fill=DROP)
         s.text(xs[2] - 2, y + 160, "replay what is left", size=12, fill=DROP)
     else:
-        s.arrow([(xn + 108, y + 76), (cx0 - 6, y + 76)], stroke=SPEC, sw=1.8)
-        s.label((xn + 108 + cx0) / 2, y + 66, "fold", size=11.5, fill=SPEC, bg=WHITE)
+        s.arrow([(xn + 108, y + 76), (cx0 - 6, y + 76)], stroke=SPEC, sw=1.6, dash="5 4")
+        s.label((xn + 108 + cx0) / 2, y + 66, "rebuild", size=11.5, fill=SPEC, bg=WHITE)
         key_strip(s, cx0, y, C0, SPEC, SPEC_T, "Ω^{*}  pending cache", "the newest write per key")
         s.arrow([(xs[0] + 20, y + 112), (xs[0] + 20, y + 132), (194, y + 132)], stroke=CONF, sw=2)
         s.text(xs[0] - 4, y + 166, "commit: Ω_{7} becomes Δ_{7}, written into Δ^{*}", size=12, fill=CONF)
         s.line(xs[2] - 6, y + 26, xs[2] - 6, y + 126, stroke=DROP, sw=2, dash="5 4")
-        s.text(xs[2] - 2, y + 144, "backtrack: cut here, refold Ω^{*}", size=12, fill=DROP)
+        s.text(xs[2] - 2, y + 144, "backtrack: cut here, rebuild Ω^{*}", size=12, fill=DROP)
     if ex == "scal":
         # the next entry is assembled from one tiny cache per op
         for pos in range(4):

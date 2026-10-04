@@ -8,7 +8,6 @@ speculated view (Ω* over Δ*) and writes only into the decision being built.
 import os
 import sys
 
-from arch import cache_block
 from svgkit import (EXECUTORS, CONF, CONF_T, CONS, CONS_T, DROP, FAINT, INK, LINE, LIVE, LIVE_T, MUTED, PANEL, POOL, POOL_T,
                     READP, SPEC, SPEC_T, WHITE, WORK, WORK_T, Svg, block, capsule, card, person, text_width,
                     thread_badge)
@@ -240,9 +239,9 @@ def d3_planes(out, ex):
         thread_badge(s, x + 30, 306, "worker", WORK)
         s.text(x + 84, 270, "reads", size=11, fill=MUTED, anchor="end")
         s.arrow([(x + 150, 358), (x + 150, 464)], stroke=LIVE, sw=2)
-        s.text(x + 158, 420, "writes ω", size=11, fill=LIVE)
-        cache_block(s, x + 116, 462, 66, 58, size=13)            # ω is the newest layer of the cache, over Ω*
-        s.arrow([(x + 184, 474), (x + 198, 474)], stroke=SPEC)
+        s.text(x + 158, 420, "writes Ω^{*}", size=11, fill=LIVE)
+        block(s, x + 116, 466, 66, 50, SPEC, SPEC_T, "Ω^{*}", size=14, shadow=False)   # the batch writes Ω* directly
+        s.arrow([(x + 184, 474), (x + 198, 474)], stroke=SPEC, dash="4 3")
         card(s, x + 200, 457, "Ω_{k}", SPEC, SPEC_T, w=44, h=34, size=14)
 
     if ex == "dual":
@@ -271,13 +270,13 @@ def d3_planes(out, ex):
         capsule(s, x + 60, 404, W - 120, 30, "re-run o2, o3", size=11)
         thread_badge(s, x + 60 + W - 120 - 18, 402, "W", WORK)
         s.arrow([(x + 120, 436), (x + 120, 460)], stroke=LIVE, sw=2)
-        cache_block(s, x + 87, 462, 66, 58, size=13)             # ω is the newest layer of the cache, over Ω*
-        s.arrow([(x + 155, 474), (x + 169, 474)], stroke=SPEC)
+        block(s, x + 87, 466, 66, 50, SPEC, SPEC_T, "Ω^{*}", size=14, shadow=False)    # merge and re-runs write Ω*
+        s.arrow([(x + 155, 474), (x + 169, 474)], stroke=SPEC, dash="4 3")
         card(s, x + 171, 457, "Ω_{k}", SPEC, SPEC_T, w=44, h=34, size=14)
         s.text(x + W / 2, 540, "colliders run again, in order", size=11.5, fill=MUTED, anchor="middle")
     if ex == "crud":
-        s.text(160 + W / 2, 540, "ω, the top layer of Ω^{*}, becomes the log entry Ω_{k}", size=11.5, fill=MUTED,
-               anchor="middle")
+        s.text(160 + W / 2, 540, "the batch writes Ω^{*}; its recorded writes are logged as Ω_{k}", size=11.5,
+               fill=MUTED, anchor="middle")
     s.line(30, 588, 440, 588, stroke=LINE, sw=1)
     if ex == "dual":
         s.text(32, 614, "Without a container the batch changes Ω^{*} itself,", size=12, fill=MUTED)

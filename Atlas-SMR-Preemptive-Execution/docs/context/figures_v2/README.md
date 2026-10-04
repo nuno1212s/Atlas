@@ -8,7 +8,7 @@ shapes are flat and rounded.
 |---|---|
 | blue | confirmed: Δ* (the confirmed state), Δk |
 | amber | speculated: Ω* (the speculative state), Ωk |
-| violet | the decision being built (ω) and containers, drawn as dashed capsules |
+| violet | containers and the per-op caches ℓ, drawn as dashed capsules |
 | slate badge | a thread (worker, main, preemptive, confirmed) |
 | teal | the exec pool, which runs in parallel |
 | red | discarded (backtrack) |
@@ -74,19 +74,16 @@ These replace C and S, which read alike, and the dual-state's S_p. The scripts' 
 variables (S0, C0, …) keep their old names.
 
 **Speculative cache and confirmed state are separate entities (from iteration 16).** In the CRUD
-cache and scalable figures, the worker holds the **speculative cache**: a dashed amber group with ω
-(the open batch's writes, its newest layer), the write log and Ω\*. The **confirmed state** Δ\* sits
+cache and scalable figures, the worker holds the **speculative cache**: a dashed amber group with
+the write log and Ω\*. The **confirmed state** Δ\* sits
 in its own box, outside that group, and is reached only by reads that miss the cache and by commits.
 
-**ω is never a box of its own (from iteration 17).** ω is drawn as the top layer of Ω\*:
-- in sheet figures (X1, X3, the CRUD cache X1), a violet sheet stacked over the Ω\* sheet;
-- in box figures (X2, X12), the top row of one cache box (`cache_box` in `scalable_steps.py`), whose
-  cells line up with Δ\*'s so that a read drops straight down from ω to Ω\* to Δ\*;
-- in block figures (A1, A2, A3, D3), a violet band on top of the Ω\* block (`cache_block` in `arch.py`).
-
-In X2/X12 the log runs oldest to newest towards the cache, so Ω10 is appended next to it. The
-parallel reads of the scalable executor go round ω, because ω10 does not exist yet while the exec
-pool runs.
+**There is no ω (from iteration 18).** The running batch has no write set of its own: it reads and
+writes Ω\* directly, and its writes are recorded so that they join the log as Ω_k (for the commit, and
+for a rebuild). In the scalable executor the parallel ops still write their private ℓ, but the merge and
+the collider re-runs write Ω\* directly. Ω\* is rebuilt from the log only after a backtrack, never on a
+confirm, so the old "fold" arrows are now dashed "rebuild" arrows. (The code still runs each batch in
+a local delta and merges it into the cache afterwards; the figures draw the intended design.)
 
 `svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). It also
 holds `Svg(..., ox, oy)`, a canvas whose viewBox origin can be moved, so that a layout drawn once can

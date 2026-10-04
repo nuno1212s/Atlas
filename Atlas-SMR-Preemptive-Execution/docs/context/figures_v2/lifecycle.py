@@ -32,11 +32,11 @@ def chip(s, x, y, who, what, colour):
 # ---------------------------------------------------------------------------
 HOW = {
     "crud": dict(spec="in a container over Ω^{*}, Δ^{*}", commit="apply Ω_{k} to Δ^{*}; Ω^{*} is left as it is",
-                 back="drop Ω_{k} onwards, refold Ω^{*}"),
+                 back="drop Ω_{k} onwards, rebuild Ω^{*}"),
     "dual": dict(spec="in place, on the copy Ω^{*}", commit="run batch k again on Δ^{*}",
                  back="copy all of Δ^{*} into Ω^{*}, replay the rest"),
     "scal": dict(spec="a container per op, in parallel", commit="apply Ω_{k} to Δ^{*}; Ω^{*} is left as it is",
-                 back="drop Ω_{k} onwards, refold Ω^{*}"),
+                 back="drop Ω_{k} onwards, rebuild Ω^{*}"),
 }
 
 
