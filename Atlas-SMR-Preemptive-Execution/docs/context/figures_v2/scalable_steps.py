@@ -8,7 +8,7 @@ Three styles (iteration 07), each drawn as an overview (step 0) and as steps 1�
   X12  a mix: X2's lanes and key strips, with X1's exact read paths and ownership notes
 
 Batch 10 (executor_model.py): o1 c ← 5, o2 e ← 8, o3 read e, o4 read b. The collision is on e: o2
-writes it and o3 reads it in parallel, so o3 sees the stale 7. Every step shows where that collision is:
+writes it and o3 reads it in parallel, so o3 sees the stale 7. Every step shows where that collision is (iteration 09: state appears only while it is used):
   1 run in parallel       each op in its own container on T1–T4, writing only its ℓ
   2 collision check       the worker compares accesses: e is W by o2 and R by o3, so they collide
   3 merge non-colliders   ℓ1 and ℓ4 go into ω10 in batch order; o2 and o3 wait
@@ -50,6 +50,9 @@ STEPS = {
     5: ("append Ω10",
         "ω10 becomes Ω10 and is folded into C. The reply held for o3 is 8, never the stale 7."),
 }
+# What the worker's persistent state is used for in each step; anything else is drawn faded.
+# ω10 and Ω10 belong to batch 10 and are not drawn at all before they exist (ω10 from step 3, Ω10 at step 5).
+USED = {0: {"log", "C", "S"}, 1: {"C", "S"}, 2: set(), 3: set(), 4: {"C", "S"}, 5: {"log", "C"}}
 LEGEND = [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated"),
           ("capsule", LIVE, LIVE_T, "container / being built"), ("badge", WORK, None, "thread"),
           ("badge", POOL, None, "parallel thread"), ("badge", DROP, None, "collision")]
@@ -153,7 +156,14 @@ def container(s, x, y, w, h, pos, step, cell=15, gap=3):
                stroke=DROP, sw=1.4, opacity=0.8)
 
 
+def fade(s, x, y, w, h, tint=WORK_T):
+    """Veil an element that exists but is not used in this step."""
+    s.rect(x, y, w, h, r=8, fill=tint, opacity=0.72)
+
+
 def omega_box(s, x, y, step, w=124, h=74):
+    if step in (1, 2):                       # batch 10's write set does not exist yet
+        return
     vals = OMEGA[step]
     s.rect(x, y, w, h, r=10, fill=LIVE_T, stroke=LIVE, sw=1.6, shadow=True,
            dash="5 4" if not vals else None)
@@ -167,9 +177,6 @@ def log_row(s, xs, y, step, w=72):
         wcard(s, xs[0], y, 10, TRACE10.delta, w=w)
         if step == 5:
             s.rect(xs[0] - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
-    else:
-        s.rect(xs[0], y, w, 58, r=8, fill=WHITE, stroke=SPEC, sw=1.2, dash="4 4", opacity=0.6)
-        s.text(xs[0] + w / 2, y + 34, "Ω_{10}?", size=12, fill=SPEC, anchor="middle", opacity=0.6)
     for x, (q, d, _) in zip(xs[1:], reversed(LOG0)):
         wcard(s, x, y, q, d, w=w)
 
@@ -249,16 +256,22 @@ def x1(out, step):
     omega_box(s, 446, 196, step)
     xs = [596, 680, 764, 848]
     log_row(s, xs, 196, step)
-    s.text(xs[0], 272, "newest", size=10.5, fill=MUTED)
+    s.text(xs[0] if step in (0, 5) else xs[1], 272, "newest", size=10.5, fill=MUTED)
     s.text(xs[3] + 72, 272, "oldest", size=10.5, fill=MUTED, anchor="end")
-    s.arrow([(xs[0] + 50, 268), (xs[3] + 20, 268)], stroke="#b9bfca", sw=1)
+    s.arrow([((xs[0] if step in (0, 5) else xs[1]) + 50, 268), (xs[3] + 20, 268)], stroke="#b9bfca", sw=1)
     s.text(xs[1] + 4, 290, "write log", size=12, weight=600)
+    if "log" not in USED[step]:
+        fade(s, xs[1] - 6, 188, 254, 110)
 
     cs, ss = Sheet(500, 436, slot=50, dx=40, dy=-26), Sheet(500, 560, slot=50, dx=40, dy=-26)
     ss.draw(s, CONF, CONF_T, S0, size=13)
     cs.draw(s, SPEC, SPEC_T, C1 if step == 5 else C0, size=13)
     s.text(474, cs.y - 2, "C", size=20, weight=600, fill=SPEC, anchor="end")
     s.text(474, ss.y - 2, "S", size=20, weight=600, fill=CONF, anchor="end")
+    if "C" not in USED[step]:
+        fade(s, 452, cs.y - 32, 370, 40)
+    if "S" not in USED[step]:
+        fade(s, 452, ss.y - 32, 370, 40)
     if step == 5:
         for k in ("c", "e"):
             pts = cs.tile(KEYS.index(k))
@@ -356,12 +369,19 @@ def x2(out, step, mix=False):
     omega_box(s, 184, 296, step)
     xs = [338, 420, 502, 584]
     log_row(s, xs, 296, step)
-    s.text(xs[0], 374, "newest", size=10.5, fill=MUTED)
-    s.arrow([(xs[0] + 50, 370), (xs[3] + 6, 370)], stroke="#b9bfca", sw=1)
+    x_new = xs[0] if step in (0, 5) else xs[1]
+    s.text(x_new, 374, "newest", size=10.5, fill=MUTED)
+    s.arrow([(x_new + 50, 370), (xs[3] + 6, 370)], stroke="#b9bfca", sw=1)
     s.text(xs[3] + 4, 388, "oldest", size=10.5, fill=MUTED, anchor="end")
     kv_box(s, 702, 286, 168, 76, "C", C1 if step == 5 else C0, SPEC, SPEC_T,
            "C ⊕ Ω_{10}" if step == 5 else "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}", rings={"c", "e"} if step == 5 else ())
     kv_box(s, 702, 376, 168, 76, "S", S0, CONF, CONF_T, "confirmed")
+    if "log" not in USED[step]:
+        fade(s, xs[1] - 4, 290, 252, 104)
+    if "C" not in USED[step]:
+        fade(s, 696, 280, 180, 88)
+    if "S" not in USED[step]:
+        fade(s, 696, 370, 180, 88)
     if step in (0, 5):
         s.arrow([(308, 325), (336, 325)], stroke=SPEC, sw=1.6)
         s.arrow([(658, 310), (700, 310)], stroke=SPEC, sw=1.6)
@@ -405,6 +425,19 @@ def x2(out, step, mix=False):
     s.save(os.path.join(out, f"{PFX}-{style}-step{step}"))
 
 
+def gif(out, style, seconds=3.0, width=1400):
+    """Steps 1–5 as a looping GIF (needs ImageMagick's `magick`)."""
+    import shutil
+    import subprocess
+    if not shutil.which("magick"):
+        print("magick not found: skipping the GIF")
+        return
+    frames = [os.path.join(out, f"{PFX}-{style}-step{n}.png") for n in range(1, 6)]
+    subprocess.run(["magick", "-delay", str(int(seconds * 100)), "-loop", "0", *frames,
+                    "-resize", f"{width}x", "+dither", "-colors", "256", "-layers", "Optimize",
+                    os.path.join(out, f"{PFX}-{style}-steps.gif")], check=True)
+
+
 if __name__ == "__main__":
     out = sys.argv[1] if len(sys.argv) > 1 else "."
     os.makedirs(out, exist_ok=True)
@@ -412,4 +445,6 @@ if __name__ == "__main__":
         x1(out, step)
         x2(out, step)
         x2(out, step, mix=True)
-    print("x1, x2, x12: steps 0-5")
+    for style in ("x1", "x2", "x12"):
+        gif(out, style)
+    print("x1, x2, x12: steps 0-5, and a GIF of steps 1-5 for each")

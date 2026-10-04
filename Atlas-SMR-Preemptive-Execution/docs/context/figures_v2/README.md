@@ -35,6 +35,11 @@ of batch 10, and every step shows where the collision on e stands: run in parall
 check, merge non-colliders, re-run colliders, append Ω10. The files are
 `arch-scal-{x1,x2,x12}-step{0..5}`.
 
+From iteration 09, a step figure shows batch 10's own state only once it exists: ω10 from step 3,
+Ω10 at step 5. The persistent state (the log, C and S) is faded in any step that does not use it.
+The read pool is no longer drawn (iteration 08). If ImageMagick (`magick`) is installed, the
+script also writes `arch-scal-{x1,x2,x12}-steps.gif`, which cycles through steps 1–5 at 3 s each.
+
 `svgkit.py` holds the palette and shared glyphs (block, card, capsule, thread badge, arrows). It also
 holds `Svg(..., ox, oy)`, a canvas whose viewBox origin can be moved, so that a layout drawn once can
 be cropped to one executor without moving any coordinates. The caching sheets take their values
