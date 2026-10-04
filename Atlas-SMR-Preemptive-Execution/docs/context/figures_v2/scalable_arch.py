@@ -75,13 +75,6 @@ def op_container(s, x, y, w, h, pos, cell=15, gap=3):
            weight=600 if stale else 400)
 
 
-def omega_box(s, x, y, w=124, h=74):
-    s.rect(x, y, w, h, r=10, fill=LIVE_T, stroke=LIVE, sw=1.6, shadow=True)
-    s.text(x + 10, y + 19, "ω_{10}", size=14, weight=600, fill=LIVE)
-    s.text(x + w - 8, y + 19, "built here", size=10.5, fill=MUTED, anchor="end")
-    strip(s, x + 10, y + 42, OMEGA10, LIVE, LIVE_T, cell=18, gap=3)
-
-
 def clients(s, x, y, n=3):
     for i in range(n):
         person(s, x + i * 20, y, colour="#8b93a3", scale=0.9)
@@ -103,6 +96,10 @@ def x3_layers_threads(out):
     s.rect(120, 290, 850, 206, r=16, fill=WORK_T)
     thread_badge(s, 132, 308, "worker · holds the speculative cache", WORK)
     spec_group(s, 130, 322, 830, 166, tx=140, ty=482)
+    # ω10, batch 10's open writes, is the newest layer of the cache, over Ω*
+    ws = Sheet(190, 408)
+    ws.draw(s, LIVE, LIVE_T, OMEGA10)
+    sheet_label(s, ws, "ω_{10}", "open", LIVE)
     cs = Sheet(190, 466)
     cs.draw(s, SPEC, SPEC_T, C0)
     sheet_label(s, cs, "Ω^{*}", "", SPEC)
@@ -128,26 +125,24 @@ def x3_layers_threads(out):
     x0, y0 = minis[2].centre(i)
     cx, cy = cs.centre(i)
     hx, hy = ss.centre(i)
-    ray(s, [(x0, y0), (cx, cy), (hx, hy - 12)], [(x0, y0), (cx, cy)])
+    # (it runs in parallel, before ω10 exists, so it goes round that layer)
+    ray(s, [(x0, y0), (x0, 282), (108, 282), (108, 428), (cx - 26, 428), (cx, cy), (hx, hy - 12)],
+        [(x0, y0), (cx, cy)])
     s.text(hx + 14, hy - 30, "o3: e → 7, stale", size=11.5, weight=600, fill=DROP)
 
-    # ω10 and the log, inside the speculative cache
+    # the log, inside the speculative cache
     xs = [620, 704, 788, 872]
     ly = 418
-    s.rect(xs[0], 330, 124, 74, r=10, fill=LIVE_T, stroke=LIVE, sw=1.6, shadow=True)
-    s.text(xs[0] + 10, 349, "ω_{10}", size=14, weight=600, fill=LIVE)
-    s.text(xs[0] + 116, 349, "batch 10", size=10.5, fill=MUTED, anchor="end")
-    strip(s, xs[0] + 10, 372, OMEGA10, LIVE, LIVE_T, cell=18, gap=3)
-    s.text(xs[0] + 136, 354, "merge ℓ_{1}, ℓ_{4}", size=10.5, fill=MUTED)
-    s.text(xs[0] + 136, 368, "re-run o2, o3", size=10.5, fill=MUTED)
+    s.text(616, 350, "join: merge ℓ_{1}, ℓ_{4}, re-run o2, o3", size=10.5, fill=MUTED)
     wcard(s, xs[0], ly, 10, OMEGA10, dashed=True)
     for x, (q, d, _) in zip(xs[1:], reversed(LOG0)):
         wcard(s, x, ly, q, d)
     s.text(xs[2], 412, "write log", size=12, weight=600)
     jx = minis[3].x + minis[3].w + 26
-    s.arrow([(jx, top - 30), (604, top - 30), (604, 367), (618, 367)], stroke=LIVE, sw=1.8)
+    s.arrow([(jx, top - 30), (604, top - 30), (604, 334), (500, 334), (500, 374)], stroke=LIVE, sw=1.8)
     s.label(jx + 20, top - 40, "join", size=10.5, fill=LIVE, bg=WHITE)
-    s.arrow([(xs[0] + 36, 404), (xs[0] + 36, 416)], stroke=SPEC, sw=1.6)
+    s.arrow([(514, 393), (xs[0] + 40, 393), (xs[0] + 40, 416)], stroke=SPEC, sw=1.6)
+    s.label(580, 393, "append", size=10.5, fill=SPEC, bg=WHITE)
     s.arrow([(xs[0] - 2, 447), (cs.x + cs.w + 34, 447)], stroke=SPEC, sw=1.6)
     s.label(596, 440, "fold", size=10.5, fill=SPEC, bg=WHITE)
     s.arrow([(xs[3] + 36, ly + 60), (xs[3] + 36, ss.y - 15), (ss.x + ss.w + 30, ss.y - 15)], stroke=CONF, sw=2)

@@ -38,8 +38,8 @@ from executor_model import BATCH, CRUD, DUAL, KEYS, op_text  # noqa: E402
 
 from caching import Sheet, ray  # noqa: E402
 from scalable_arch import clients, room, wcard  # noqa: E402
-from scalable_steps import (badge_n, chip, conf_box, confirm_labels, confirm_log, dcard, fade, kv_box,  # noqa: E402
-                            progress, shown, spec_group, strip)
+from scalable_steps import (badge_n, cache_box, cache_text, cell_x, chip, conf_box, confirm_labels,  # noqa: E402
+                            confirm_log, dcard, fade, kv_box, progress, shown, spec_group, strip)
 from svgkit import (CONF, CONF_T, CONS, CONS_T, INK, LIVE, LIVE_T, MUTED, PANEL, SPEC, SPEC_T,  # noqa: E402
                     WHITE, WORK, WORK_T, Svg, legend, text_width, thread_badge)
 
@@ -191,15 +191,6 @@ def ops_box(s, ex, x, y, w, step, horizontal=False, cell_w=None):
                    anchor="end", weight=600 if active else 400)
             s.text(x + w - 60, ry + 2, src, size=10.5, fill=MUTED, anchor="end")
     return h
-
-
-def omega_box(s, x, y, step, w=150, h=74):
-    if step not in (0, 1, 2, 3):
-        return
-    s.rect(x, y, w, h, r=10, fill=LIVE_T, stroke=LIVE, sw=1.6, shadow=True)
-    s.text(x + 10, y + 19, "ω_{10}", size=14, weight=600, fill=LIVE)
-    strip(s, x + 12, y + 42, OMEGA10, LIVE, cell=20, gap=4, rings={"c", "e"} if step == 1 else
-          ({"e"} if step == 2 else ()), ring_colour=INK)
 
 
 def bcard(s, x, y, q, w=64, h=58, dashed=False):
@@ -368,23 +359,31 @@ def crud_x2(out, step, mix=False):
     s.rect(156, 96, 744, 528, r=18, fill=PANEL)
     s.rect(172, 112, 712, 396, r=14, fill=WORK_T)
     thread_badge(s, 184, 130, "worker", WORK)
-    s.text(250, 134, "the only thread" + (" · holds the speculative cache: ω, the log and Ω^{*}" if mix else ""),
+    s.text(250, 134, "the only thread" + (" · holds the speculative cache: the log, ω and Ω^{*}" if mix else ""),
            size=11, fill=MUTED)
 
     ops_box(s, ex, 184, 150, 688, step, horizontal=True, cell_w=170)
     spec_group(s, 180, 244, 696, 148, tx=192, ty=386)
-    omega_box(s, 192, 262, step)
-    xs = [356, 436, 516, 596]
+    xs = [596, 516, 436, 356]                 # newest on the right, next to the cache
     log_row(s, ex, xs, 262, step)
-    log_labels(s, xs, 344, step)
+    if step <= 3:
+        x_new = xs[0] if step in (0, 3) else xs[1]
+        s.text(xs[3], 340, "oldest", size=10.5, fill=MUTED)
+        s.arrow([(xs[3] + 44, 336), (x_new + 20, 336)], stroke="#b9bfca", sw=1)
+        s.text(x_new + 72, 340, "newest", size=10.5, fill=MUTED, anchor="end")
+    else:
+        confirm_labels(s, xs, 344, step, 6)
     if "log" not in USED[ex][step]:
-        fade(s, (xs[0] if step >= 4 else xs[1]) - 4, 256, 252 + (80 if step >= 4 else 0), 96)
+        fade(s, 352, 256, 320 if step >= 4 else 240, 96)
+    # the speculative cache: ω10 (batch 10's open writes, its newest layer) over Ω*
     c_sub = {3: "Ω^{*} ⊕ Ω_{10}", 4: "Ω_{7} ⊕ … ⊕ Ω_{10}", 5: "Ω_{7} ⊕ … ⊕ Ω_{10}",
              6: "Ω_{7} ⊕ … ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
-    kv_box(s, 702, 258, 168, 76, "Ω^{*}", C1 if step >= 3 else C0, SPEC, SPEC_T, c_sub,
-           rings={"c", "e"} if step == 3 else ())
+    CX, CY = 702, 258
+    cache_box(s, CX, CY, OMEGA10 if step <= 3 else None, C1 if step >= 3 else C0, c_sub,
+              omega_rings={"c", "e"} if step == 1 else ({"e"} if step == 2 else ()),
+              c_rings={"c", "e"} if step == 3 else ())
     if "C" not in USED[ex][step]:
-        fade(s, 696, 252, 180, 88)
+        fade(s, CX + 4, CY + 58, 160, 56, SPEC_T)
 
     conf_box(s, 172, 520, 712, 92)
     kv_box(s, 702, 528, 168, 76, "Δ^{*}", S7 if step >= 5 else S0, CONF, CONF_T, "confirmed",
@@ -395,39 +394,42 @@ def crud_x2(out, step, mix=False):
     if step in PANELS[ex]:
         t, rows = PANELS[ex][step]
         panel(s, 184, 404, 460, 96, step, t, rows)
-    if step == 1:
-        s.arrow([(260, 232), (260, 260)], stroke=LIVE, sw=1.8)
+    if step == 1:                            # o1 and o2 write into ω10
+        s.arrow([(200, 232), (200, 252), (690, 252), (690, 292), (700, 292)], stroke=LIVE, sw=1.8)
     if step in (0, 3):
-        s.arrow([(342, 291), (354, 291)], stroke=SPEC, sw=1.6)
-        s.arrow([(668, 291), (700, 291)], stroke=SPEC, sw=1.6)
+        s.arrow([(700, 288), (670, 288)], stroke=SPEC, sw=1.6)            # ω10 is appended as Ω10
+        s.arrow([(668, 310), (684, 310), (684, 346), (700, 346)], stroke=SPEC, sw=1.6)  # and folded into Ω*
     if step in (1, 2):
+        wy, cy = CY + 34, CY + 88            # centres of the ω and Ω* rows
         if mix:
-            if step == 1:
-                cx = 714 + 2 * 30 + 12
-                ray(s, [(270, 232), (270, 238), (cx, 238), (cx, 296)])
-                ex_ = 714 + 4 * 30 + 12
-                ray(s, [(440, 232), (440, 241), (ex_, 241), (ex_, 566)], [(ex_, 310)])
-            else:
-                ox = 204 + 4 * 24 + 10
-                ray(s, [(610, 232), (610, 240), (ox, 240), (ox, 302)])
-                bx = 714 + 30 + 12
-                ray(s, [(780, 232), (780, 246), (bx, 246), (bx, 296)])
-        else:
+            if step == 1:                    # o1 and o2 read the value they overwrite: ω, then Ω*, then Δ*
+                cx = cell_x(CX, "c")
+                ray(s, [(270, 232), (270, 238), (cx, 238), (cx, cy - 12)])
+                ex_ = cell_x(CX, "e")
+                ray(s, [(440, 232), (440, 241), (ex_, 241), (ex_, 566)], [(ex_, cy)])
+            else:                            # o3 finds e in ω10; o4 falls through to Ω*
+                ox = cell_x(CX, "e")
+                ray(s, [(610, 232), (610, 240), (ox, 240), (ox, wy - 12)])
+                bx = cell_x(CX, "b")
+                ray(s, [(780, 232), (780, 246), (bx, 246), (bx, cy - 12)], [(bx, wy)])
+            cache_text(s, CX, CY, True, c_sub)
+        elif step == 2:                      # (in step 1 the label would sit on the write arrow)
             s.arrow([(786, 232), (786, 256)], stroke=MUTED, dash="4 3")
             s.label(780, 246, "each op reads ω, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
-    if step == 4:
-        s.arrow([(138, 274), (148, 274), (148, 252), (xs[3] + 36, 252), (xs[3] + 36, 260)], stroke=CONS, sw=1.8)
-        s.label(300, 252, "confirm 7", size=10.5, fill=CONS, bg=WHITE, weight=600)
+    if step in (0, 4):
+        s.arrow([(138, 274), (148, 274), (148, 252), (xs[3] + 36, 252), (xs[3] + 36, 260)], stroke=CONS,
+                sw=1.8 if step == 4 else 1.4)
+        s.label(240, 252, "confirm 7", size=10.5, fill=CONS, bg=WHITE, weight=600 if step == 4 else 400)
     if step in (0, 5):
-        s.arrow([(658, 322), (658, 548), (700, 548)], stroke=CONF, sw=2.2 if step == 5 else 2)
-        s.text(664, 470, "Δ_{7} into Δ^{*}" if step == 5 else "on confirm 7: commit Ω_{7} → Δ_{7}", size=10.5,
-               fill=CONF, weight=600 if step == 5 else 400)
+        s.arrow([(418, 322), (418, 397), (690, 397), (690, 566), (700, 566)], stroke=CONF, sw=2.2 if step == 5 else 2)
+        s.text(684, 470, "Δ_{7} into Δ^{*}" if step == 5 else "on confirm 7: Ω_{7} → Δ_{7}", size=10.5,
+               fill=CONF, weight=600 if step == 5 else 400, anchor="end")
     if step == 6:
         s.arrow([(644, 452), (930, 452), (930, 352)], stroke=INK, sw=1.8)
     if step == 0:
         s.arrow([(870, 566), (930, 566), (930, 352)], stroke=INK)
-        for n, (bx_, by_) in enumerate([(184, 150), (524, 150), (348, 278), (xs[3] + 60, 250), (648, 466),
+        for n, (bx_, by_) in enumerate([(184, 150), (524, 150), (686, 270), (300, 252), (690, 440),
                                         (944, 470)], start=1):
             badge_n(s, bx_, by_, n)
     if step in (0, 1):

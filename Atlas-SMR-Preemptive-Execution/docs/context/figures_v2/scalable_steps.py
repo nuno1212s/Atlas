@@ -182,17 +182,6 @@ def fade(s, x, y, w, h, tint=WORK_T):
     s.rect(x, y, w, h, r=8, fill=tint, opacity=0.72)
 
 
-def omega_box(s, x, y, step, w=124, h=74):
-    if step in (1, 2, 6, 7, 8):              # before step 3 it does not exist; from step 6 it is Ω10's
-        return
-    vals = OMEGA[step]
-    s.rect(x, y, w, h, r=10, fill=LIVE_T, stroke=LIVE, sw=1.6, shadow=True,
-           dash="5 4" if not vals else None)
-    s.text(x + 10, y + 19, "ω_{10}", size=14, weight=600, fill=LIVE)
-    s.text(x + w - 8, y + 19, "empty" if not vals else "on the worker", size=10.5, fill=MUTED, anchor="end")
-    strip(s, x + 10, y + 42, vals, LIVE, rings=NEW_IN_OMEGA.get(step, ()), ring_colour=INK)
-
-
 def dcard(s, x, y, q, d, w=72, h=58):
     """A confirmed decision: Δq with the writes it carries into Δ*."""
     s.rect(x, y, w, h, r=8, fill=CONF_T, stroke=CONF, sw=1.6, shadow=True)
@@ -335,6 +324,39 @@ def conf_box(s, x, y, w, h, title="confirmed state", sub="written only by commit
     s.text(x + 14 + text_width(title, 12, 600) + 10, y + 20, sub, size=10.5, fill=MUTED)
 
 
+CACHE_H = 116
+
+
+def cache_box(s, x, y, omega, c_vals, c_sub, omega_rings=(), c_rings=(), w=168):
+    """The speculative cache as one entity: ω10 (the open batch, its newest layer) over Ω*.
+    Cells line up with kv_box's, so a read can drop straight down from ω to Ω* to Δ*."""
+    s.rect(x, y, w, CACHE_H, r=12, fill=SPEC_T, stroke=SPEC, sw=1.6, shadow=True)
+    if omega is not None:
+        strip(s, x + 12, y + 22, omega, LIVE, cell=24, gap=6, keys=False, size=12, rings=omega_rings, ring_colour=INK)
+    s.line(x + 8, y + 56, x + w - 8, y + 56, stroke=SPEC, sw=0.8, dash="2 3", opacity=0.6)
+    strip(s, x + 12, y + 76, c_vals, SPEC, cell=24, gap=6, keys=False, size=12, rings=c_rings, ring_colour=INK)
+    for i, k in enumerate(KEYS):
+        s.text(x + 24 + i * 30, y + 111, k, size=9.5, fill=MUTED, anchor="middle")
+    cache_text(s, x, y, omega is not None, c_sub, bg=None)
+
+
+def cache_text(s, x, y, omega, c_sub, bg=SPEC_T):
+    """The cache_box's row names. Called again with a background after drawing reads, so rays pass under them."""
+    if omega:
+        s.label(x + 12, y + 16, "ω_{10}", size=13, weight=600, fill=LIVE, anchor="start", bg=bg, pad=2)
+        s.label(x + 44, y + 16, "batch 10, open", size=10, fill=MUTED, anchor="start", bg=bg, pad=2)
+    else:
+        s.text(x + 12, y + 16, "ω", size=13, weight=600, fill=LIVE, opacity=0.4)
+        s.text(x + 28, y + 16, "no open batch", size=10, fill=MUTED)
+    s.label(x + 12, y + 70, "Ω^{*}", size=14, weight=600, fill=SPEC, anchor="start", bg=bg, pad=2)
+    s.label(x + 42, y + 70, c_sub, size=10.5, fill=MUTED, anchor="start", bg=bg, pad=2)
+
+
+def cell_x(x, k):
+    """The centre x of key k's cell in a cache_box or kv_box at x."""
+    return x + 24 + KEYS.index(k) * 30
+
+
 # ---------------------------------------------------------------------------
 # X1 — rooms
 # ---------------------------------------------------------------------------
@@ -356,10 +378,9 @@ def x1(out, step):
         s.arrow([(150, 130), (150, 156)], stroke=CONS)
         s.label(214, 146, "batch k: one op per thread", size=11, fill=CONS, bg=WHITE)
 
-    # the worker holds the speculative cache: ω10 (still open), the log and Ω*
+    # the worker holds the speculative cache: the log, and ω10 (still open) as the newest layer over Ω*
     room(s, 430, 158, 540, 360, "worker", WORK, WORK_T, "holds the speculative cache")
-    spec_group(s, 440, 298, 520, 212, tx=944, ty=312, anchor="end")
-    omega_box(s, 452, 318, step)
+    spec_group(s, 440, 298, 520, 212, tx=944, ty=502, anchor="end")
     xs = [596, 680, 764, 848]
     log_row(s, xs, 318, step)
     if step <= 5:
@@ -369,9 +390,15 @@ def x1(out, step):
         s.arrow([(x_new + 50, 390), (xs[3] + 20, 390)], stroke="#b9bfca", sw=1)
     else:
         confirm_labels(s, xs, 394, step, 8)
-    s.text(xs[1] + 4, 412, "write log", size=12, weight=600)
+    s.text(xs[1] + 4, 312, "write log", size=12, weight=600)
     if "log" not in USED[step]:
-        fade(s, (xs[0] if step >= 6 else xs[1]) - 6, 310, 254 + (84 if step >= 6 else 0), 110)
+        fade(s, (xs[0] if step >= 6 else xs[1]) - 6, 310, 254 + (84 if step >= 6 else 0), 96)
+    ws = Sheet(500, 440, slot=50, dx=40, dy=-26)
+    if step in (0, 3, 4, 5):
+        ws.draw(s, LIVE, LIVE_T, OMEGA[step], size=13)
+        s.text(474, ws.y - 2, "ω_{10}", size=18, weight=600, fill=LIVE, anchor="end")
+        for k in NEW_IN_OMEGA.get(step, ()):
+            s.poly(ws.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
     cs = Sheet(500, 492, slot=50, dx=40, dy=-26)
     cs.draw(s, SPEC, SPEC_T, C_AT.get(step, C0), size=13)
     s.text(474, cs.y - 2, "Ω^{*}", size=20, weight=600, fill=SPEC, anchor="end")
@@ -396,44 +423,42 @@ def x1(out, step):
         s.arrow([(410, 244), (444, 244)], stroke=LIVE, sw=1.8)
         s.label(427, 234, "join", size=10.5, fill=LIVE, bg=WHITE)
     if step in (0, 3):
-        s.arrow([(410, 355), (450, 355)], stroke=LIVE, sw=1.8)
-        s.label(430, 345, "join", size=10.5, fill=LIVE, bg=WHITE)
+        s.arrow([(410, 427), (514, 427)], stroke=LIVE, sw=1.8)
+        s.label(454, 417, "join", size=10.5, fill=LIVE, bg=WHITE)
     if step == 4:
-        s.arrow([(514, 294), (514, 316)], stroke=LIVE, sw=1.8)
+        s.arrow([(560, 294), (560, 412)], stroke=LIVE, sw=1.8)
     if step in (0, 5):
-        s.arrow([(576, 347), (594, 347)], stroke=SPEC, sw=1.6)
-        fx = xs[2] + 36 if step == 0 else xs[0] + 50
-        s.arrow([(fx, 378), (fx, 468)], stroke=SPEC, sw=1.6)
+        s.arrow([(650, 414), (650, 378)], stroke=SPEC, sw=1.6)
+        s.arrow([(922, 372), (938, 372), (938, 479), (842, 479)], stroke=SPEC, sw=1.6)
     if step == 0:
-        s.label(xs[2] + 26, 436, "fold: Ω^{*} = Ω_{7} ⊕ … ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WHITE, anchor="end")
+        s.label(936, 456, "fold: Ω^{*} = Ω_{7} ⊕ … ⊕ Ω_{9}", size=10.5, fill=SPEC, bg=WHITE, anchor="end")
         badge_n(s, 396, 176, 1)
         for n, bx in ((2, 456), (3, 480), (4, 504)):
             badge_n(s, bx, 214, n)
         s.text(520, 218, "check, merge, re-run: on the worker", size=10.5, fill=MUTED)
-        badge_n(s, 585, 332, 5)
+        badge_n(s, 668, 400, 5)
 
     # reads cross from the pool into Ω* and Δ*
     if step in (0, 1):
         i = KEYS.index("e")
         ex_, ey = cs.centre(i)
         sx_, sy = ss.centre(i)
-        ray(s, [(394, 404), (418, 404), (418, 446), (ex_, 446), (ex_, sy - 11)], [(ex_, ey)])
+        ray(s, [(394, 404), (418, 404), (418, 449), (ex_, 449), (ex_, sy - 11)], [(ex_, ey)])
         s.text(sx_ + 14, sy - 26, "o3 finds e = 7, stale", size=11, weight=600, fill=DROP)
         i = KEYS.index("b")
         bx, by = cs.centre(i)
-        ray(s, [(394, 470), (428, 470), (428, 458), (bx, 458), (bx, by - 11)])
+        ray(s, [(394, 470), (428, 470), (428, 459), (bx, 459), (bx, by - 11)])
         s.text(46, 604, "&Ω^{*}, &Δ^{*}: read-only, shared by all four threads", size=10.5, fill=MUTED)
 
     # overview: the confirmation of 7, the oldest decision
     if step == 0:
         s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 316)], stroke=CONS)
         s.label(xs[3] + 36, 146, "confirm 7", size=11, fill=CONS, bg=WHITE)
-        s.arrow([(xs[3] + 72, 360), (950, 360), (950, ss.y - 13), (ss.x + ss.w + 24, ss.y - 13)], stroke=CONF, sw=2)
-        s.text(944, 440, "commit", size=11.5, fill=CONF, weight=600, anchor="end")
-        s.text(944, 455, "Ω_{7} → Δ_{7}", size=11.5, fill=CONF, anchor="end")
+        s.arrow([(xs[3] + 72, 350), (950, 350), (950, ss.y - 13), (ss.x + ss.w + 24, ss.y - 13)], stroke=CONF, sw=2)
+        s.text(944, 522, "commit Ω_{7} → Δ_{7}", size=11, fill=CONF, anchor="end")
         s.arrow([(950, ss.y - 13), (950, 634)], stroke=INK)
         badge_n(s, xs[3] + 60, 162, 6)
-        badge_n(s, 908, 476, 7)
+        badge_n(s, 958, 528, 7)
         badge_n(s, 926, 628, 8)
 
     # confirmation of 7, the oldest decision: it sits at the head, on the right of the log
@@ -441,7 +466,7 @@ def x1(out, step):
         s.arrow([(962, 130), (962, 347), (922, 347)], stroke=CONS, sw=1.8)
         s.label(962, 146, "confirm 7", size=11, fill=CONS, bg=WHITE, weight=600, anchor="end")
     if step == 7:
-        s.arrow([(xs[3] + 72, 360), (950, 360), (950, ss.y - 13), (ss.x + ss.w + 24, ss.y - 13)], stroke=CONF,
+        s.arrow([(xs[3] + 72, 350), (950, 350), (950, ss.y - 13), (ss.x + ss.w + 24, ss.y - 13)], stroke=CONF,
                 sw=2.2)
         s.text(944, 524, "Δ_{7} into Δ^{*}", size=11.5, fill=CONF, weight=600, anchor="end")
     if step == 8:
@@ -491,30 +516,30 @@ def x2(out, step, mix=False):
         s.arrow([(138, 244), (152, 244), (152, 188), (182, 188)], stroke=CONS)
         s.label(150, 210, "batch k", size=10.5, fill=CONS, bg=PANEL, anchor="end")
 
-    # the worker lane holds the speculative cache: ω10, the log and Ω*
+    # the worker lane holds the speculative cache: the log, and ω10 as the newest layer of Ω*
     s.rect(172, 254, 712, 262, r=14, fill=WORK_T)
     thread_badge(s, 184, 272, "worker", WORK)
     if mix:
-        s.text(360, 278, "holds the speculative cache: ω, the log and Ω^{*}", size=11, fill=MUTED)
-    spec_group(s, 180, 286, 696, 112, ty=392)
-    omega_box(s, 192, 296, step)
-    xs = [338, 420, 502, 584]
+        s.text(360, 278, "holds the speculative cache: the log, ω and Ω^{*}", size=11, fill=MUTED)
+    spec_group(s, 180, 282, 696, 124, ty=400)
+    xs = [584, 502, 420, 338]                 # newest on the right, next to Ω*
     log_row(s, xs, 296, step)
     if step <= 5:
         x_new = xs[0] if step in (0, 5) else xs[1]
-        s.text(x_new, 374, "newest", size=10.5, fill=MUTED)
-        s.arrow([(x_new + 50, 370), (xs[3] + 6, 370)], stroke="#b9bfca", sw=1)
-        s.text(xs[3] + 4, 388, "oldest", size=10.5, fill=MUTED, anchor="end")
+        s.text(xs[3], 380, "oldest", size=10.5, fill=MUTED)
+        s.arrow([(xs[3] + 44, 376), (x_new + 20, 376)], stroke="#b9bfca", sw=1)
+        s.text(x_new + 72, 380, "newest", size=10.5, fill=MUTED, anchor="end")
     else:
         confirm_labels(s, xs, 378, step, 8)
     c_sub = {5: "Ω^{*} ⊕ Ω_{10}", 6: "Ω_{7} ⊕ … ⊕ Ω_{10}", 7: "Ω_{7} ⊕ … ⊕ Ω_{10}",
              8: "Ω_{7} ⊕ … ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
-    kv_box(s, 702, 296, 168, 76, "Ω^{*}", C_AT.get(step, C0), SPEC, SPEC_T, c_sub,
-           rings={"c", "e"} if step == 5 else ())
+    CX, CY = 702, 288
+    cache_box(s, CX, CY, OMEGA[step] if step in (0, 3, 4, 5) else None, C_AT.get(step, C0), c_sub,
+              omega_rings=NEW_IN_OMEGA.get(step, ()), c_rings={"c", "e"} if step == 5 else ())
     if "log" not in USED[step]:
-        fade(s, (xs[0] if step >= 6 else xs[1]) - 4, 290, 252 + (82 if step >= 6 else 0), 104)
+        fade(s, 334, 290, 326 if step >= 6 else 244, 92)
     if "C" not in USED[step]:
-        fade(s, 696, 290, 180, 88)
+        fade(s, CX + 4, CY + 58, 160, 56, SPEC_T)
 
     # the confirmed state, in a lane of its own
     conf_box(s, 172, 528, 712, 92)
@@ -524,51 +549,54 @@ def x2(out, step, mix=False):
         fade(s, 696, 530, 180, 88, WHITE)
 
     if step in (0, 5):
-        s.arrow([(308, 325), (336, 325)], stroke=SPEC, sw=1.6)
-        s.arrow([(658, 314), (700, 314)], stroke=SPEC, sw=1.6)
-        s.label(679, 304, "fold", size=10.5, fill=SPEC, bg=WHITE)
+        s.arrow([(700, 322), (658, 322)], stroke=SPEC, sw=1.6)          # ω10 is appended as Ω10
+        s.arrow([(620, 356), (620, 364), (700, 364)], stroke=SPEC, sw=1.6)  # the log folds into Ω*
+        s.label(676, 364, "fold", size=10.5, fill=SPEC, bg=WHITE)
 
-    step_panel(s, 184, 410, 460, 92, step)
+    step_panel(s, 184, 418, 460, 92, step)
     if step == 2:
-        s.arrow([(322, 238), (322, 408)], stroke=LIVE, sw=1.8)
+        s.arrow([(322, 238), (322, 416)], stroke=LIVE, sw=1.8)
         s.label(322, 262, "join", size=10.5, fill=LIVE, bg=WORK_T)
     if step in (0, 3):
-        s.arrow([(246, 238), (246, 294)], stroke=LIVE, sw=1.8)
-        s.label(246, 262, "join", size=10.5, fill=LIVE, bg=WORK_T)
+        s.arrow([(740, 238), (740, 286)], stroke=LIVE, sw=1.8)
+        if step == 3:
+            s.label(740, 262, "join", size=10.5, fill=LIVE, bg=WORK_T)
     if step == 4:
-        s.arrow([(246, 408), (246, 372)], stroke=LIVE, sw=1.8)
+        s.arrow([(644, 462), (690, 462), (690, 322), (700, 322)], stroke=LIVE, sw=1.8)
     if step == 0:
         badge_n(s, 172 + 700, 130, 1)
         for n, bx in ((2, 200), (3, 224), (4, 248)):
-            badge_n(s, bx, 426, n)
-        s.text(264, 430, "check, merge, re-run: on the worker", size=10.5, fill=MUTED)
-        badge_n(s, 322, 310, 5)
+            badge_n(s, bx, 438, n)
+        s.text(264, 442, "check, merge, re-run: on the worker", size=10.5, fill=MUTED)
+        badge_n(s, 680, 306, 5)
 
     # reads: every op reads ℓ, then Ω*, then Δ*
     if step in (0, 1):
         if mix:
-            i = KEYS.index("e")
-            cx = 714 + i * 30 + 12
-            ray(s, [(640, 226), (640, 262), (cx, 262), (cx, 574)], [(cx, 348)])
+            cx = cell_x(CX, "e")
+            ray(s, [(640, 226), (640, 248), (890, 248), (890, CY + 88), (cx, CY + 88), (cx, 574)], [(cx, CY + 88)])
             s.text(690, 590, "o3 finds e = 7, stale", size=11, weight=600, fill=DROP, anchor="end")
-            s.text(652, 254, "o3 reads e: ℓ_{3} → Ω^{*} → Δ^{*}", size=10.5, fill=MUTED)
+            cache_text(s, CX, CY, step in (0, 3, 4, 5), c_sub)
+            s.text(632, 244, "o3 reads e: ℓ_{3} → Ω^{*} → Δ^{*}", size=10.5, fill=MUTED, anchor="end")
         else:
-            s.arrow([(786, 238), (786, 294)], stroke=MUTED, dash="4 3")
-            s.label(786, 264, "each op reads ℓ, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
+            s.arrow([(800, 238), (800, 286)], stroke=MUTED, dash="4 3")
+            s.label(796, 264, "each op reads ℓ, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
-    if step == 6:
-        s.arrow([(138, 274), (152, 274), (152, 291), (xs[3] + 36, 291), (xs[3] + 36, 294)], stroke=CONS, sw=1.8)
-        s.label(300, 291, "confirm 7", size=10.5, fill=CONS, bg=WHITE, weight=600)
+    if step in (0, 6):
+        s.arrow([(138, 274), (152, 274), (152, 291), (xs[3] + 36, 291), (xs[3] + 36, 294)], stroke=CONS,
+                sw=1.8 if step == 6 else 1.4)
+        s.label(250, 291, "confirm 7", size=10.5, fill=CONS, bg=WHITE, weight=600 if step == 6 else 400)
     if step in (0, 7):
-        s.arrow([(650, 356), (650, 556), (700, 556)], stroke=CONF, sw=2.2 if step == 7 else 2)
-        s.text(656, 522, "Δ_{7} into Δ^{*}" if step == 7 else "on confirm 7: commit Ω_{7} → Δ_{7}", size=10.5,
+        s.arrow([(xs[3] + 36, 356), (xs[3] + 36, 412), (690, 412), (690, 574), (700, 574)], stroke=CONF,
+                sw=2.2 if step == 7 else 2)
+        s.text(696, 470, "Δ_{7} into Δ^{*}" if step == 7 else "on confirm 7: Ω_{7} → Δ_{7}", size=10.5,
                fill=CONF, weight=600 if step == 7 else 400)
     if step == 8:
-        s.arrow([(644, 456), (930, 456), (930, 396)], stroke=INK, sw=1.8)
-        s.text(924, 472, "replies of Δ_{7}", size=11, fill=INK, anchor="end")
+        s.arrow([(644, 464), (930, 464), (930, 396)], stroke=INK, sw=1.8)
+        s.text(924, 480, "replies of Δ_{7}", size=11, fill=INK, anchor="end")
     if step == 0:
-        badge_n(s, xs[3] + 60, 282, 6)
-        badge_n(s, 636, 518, 7)
+        badge_n(s, 302, 291, 6)
+        badge_n(s, 690, 440, 7)
         s.arrow([(870, 574), (930, 574), (930, 396)], stroke=INK)
         s.text(924, 592, "replies", size=11, fill=INK, anchor="end")
         badge_n(s, 944, 480, 8)
