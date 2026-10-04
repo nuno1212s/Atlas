@@ -4,7 +4,7 @@
 
 Three styles (iteration 07), each drawn as an overview (step 0) and as steps 1–5 of batch 10:
   X1   rooms: each thread's room holds the state it owns; C over S as see-through sheets
-  X2   lanes: exec pool, worker and read pool as lanes; the worker's state as a ledger and key strips
+  X2   lanes: exec pool and worker as lanes; the worker's state as a ledger and key strips
   X12  a mix: X2's lanes and key strips, with X1's exact read paths and ownership notes
 
 Batch 10 (executor_model.py): o1 c ← 5, o2 e ← 8, o3 read e, o4 read b. The collision is on e: o2
@@ -14,6 +14,8 @@ writes it and o3 reads it in parallel, so o3 sees the stale 7. Every step shows 
   3 merge non-colliders   ℓ1 and ℓ4 go into ω10 in batch order; o2 and o3 wait
   4 re-run colliders      o2 then o3 run again on the worker over C ⊕ ω10; o3 now reads 8
   5 append Ω10            ω10 becomes Ω10, C folds it in, and o3's held reply is 8
+
+The read pool (unordered reads) is left out from iteration 08 on, so as to keep the figures on speculation.
 """
 import os
 import sys
@@ -24,7 +26,7 @@ from executor_model import CRUD, KEYS, SCALABLE, TOMB, TRACE10, op_text  # noqa:
 from caching import Sheet, ray  # noqa: E402
 from scalable_arch import clients, room, wcard  # noqa: E402
 from svgkit import (CONF, CONF_T, CONS, CONS_T, DROP, DROP_T, INK, LIVE, LIVE_T, MUTED, PANEL, POOL,  # noqa: E402
-                    POOL_T, READP, READP_T, SPEC, SPEC_T, WHITE, WORK, WORK_T, Svg, capsule, legend,
+                    POOL_T, SPEC, SPEC_T, WHITE, WORK, WORK_T, Svg, capsule, legend,
                     text_width, thread_badge)
 
 PFX = "arch-scal"
@@ -234,7 +236,7 @@ def x1(out, step):
     s.rect(30, 96, 940, 34, r=17, fill=CONS_T, stroke=CONS, sw=1.3)
     s.text(500, 118, "consensus", size=13, weight=600, fill=CONS, anchor="middle")
 
-    room(s, 30, 158, 380, 362, "exec pool", POOL, POOL_T, "4 threads, in parallel")
+    room(s, 30, 158, 380, 446, "exec pool", POOL, POOL_T, "4 threads, in parallel")
     for pos in range(4):
         container(s, 46, 196 + pos * 80, 348, 64, pos, step)
     if step in (0, 1, 2):
@@ -310,10 +312,6 @@ def x1(out, step):
         s.arrow([(950, ss.y - 12), (950, 622)], stroke=INK)
         s.text(944, 612, "replies of Δ_{7}", size=11, fill=INK, anchor="end")
 
-    room(s, 30, 540, 380, 64, "read pool", READP, READP_T, "4 threads, unordered reads")
-    for k in range(4):
-        s.circle(330 + k * 18, 586, 6, fill=READP, opacity=0.75)
-    s.arrow([(410, 572), (ss.x + 4, 572), (ss.x + 14, ss.y - 4)], stroke=READP, dash="4 3")
     s.rect(30, 624, 940, 40, r=20, fill="#eef0f3")
     clients(s, 480, 646)
     s.save(os.path.join(out, f"{PFX}-x1-step{step}"))
@@ -331,14 +329,14 @@ def kv_box(s, x, y, w, h, name, values, colour, tint, sub=None, rings=()):
 
 
 def x2(out, step, mix=False):
-    H = 680
+    H = 600
     s = Svg(1000, H)
     style = "x12" if mix else "x2"
     head(s, style, step, H)
     s.rect(30, 230, 108, 58, r=12, fill=CONS_T, stroke=CONS, sw=1.4)
     s.text(84, 257, "consensus", size=13.5, weight=600, fill=CONS, anchor="middle")
     s.text(84, 274, "orders batches", size=10.5, fill=MUTED, anchor="middle")
-    s.rect(156, 96, 744, 494, r=18, fill=PANEL)
+    s.rect(156, 96, 744, 418, r=18, fill=PANEL)
 
     s.rect(172, 112, 712, 126, r=14, fill=POOL_T)
     pool_label = "exec pool · 4 threads in parallel" + (" · each writes only its own ℓ" if mix else "")
@@ -404,12 +402,6 @@ def x2(out, step, mix=False):
         s.text(924, 432, "replies", size=11, fill=INK, anchor="middle")
     clients(s, 916, 366)
 
-    s.rect(172, 512, 712, 62, r=14, fill=READP_T)
-    thread_badge(s, 184, 530, "read pool · 4 threads", READP)
-    for k in range(4):
-        s.circle(212 + k * 24, 556, 7, fill=READP, opacity=0.75)
-    s.text(360, 548, "unordered reads, on S only", size=11, fill=MUTED)
-    s.arrow([(724, 512), (724, 454)], stroke=READP, dash="4 3")
     s.save(os.path.join(out, f"{PFX}-{style}-step{step}"))
 
 
