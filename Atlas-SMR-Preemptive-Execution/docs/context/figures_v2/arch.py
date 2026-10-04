@@ -71,9 +71,6 @@ def a1_blocks(out, ex):
         s.label(560, y + 186, "commit: Ω → Δ", size=10.5, fill=CONF, bg=PANEL)
         s.arrow([(640, y + 182), (900, y + 182), (918, y + 142)], stroke=INK)
         s.label(800, y + 186, "replies", size=10.5, bg=PANEL)
-        s.rect(730, y + 54, 150, 40, r=20, fill=READP_T, stroke=READP, sw=1.2)
-        s.text(805, y + 79, "read pool ×4", size=12, weight=600, fill=READP, anchor="middle")
-        s.arrow([(730, y + 86), (678, y + 104)], stroke=READP, dash="4 3")
         clients(s, 922, y + 120)
 
     if ex == "dual":
@@ -99,9 +96,6 @@ def a1_blocks(out, ex):
         s.label(594, y + 166, "copy Δ^{*} back", size=10.5, fill=DROP, bg=PANEL)
         s.arrow([(430, y + 176), (430, y + 184), (900, y + 184), (918, y + 142)], stroke=INK)
         s.label(800, y + 188, "replies", size=10.5, bg=PANEL)
-        s.rect(784, y + 54, 104, 40, r=20, fill=READP_T, stroke=READP, sw=1.2)
-        s.text(836, y + 79, "read pool", size=12, weight=600, fill=READP, anchor="middle")
-        s.arrow([(800, y + 94), (746, y + 116)], stroke=READP, dash="4 3")
         clients(s, 922, y + 120)
 
     if ex == "scal":
@@ -132,9 +126,6 @@ def a1_blocks(out, ex):
         s.label(560, y + 186, "commit: Ω → Δ", size=10.5, fill=CONF, bg=PANEL)
         s.arrow([(650, y + 182), (900, y + 182), (918, y + 142)], stroke=INK)
         s.label(800, y + 186, "replies", size=10.5, bg=PANEL)
-        s.rect(730, y + 54, 150, 40, r=20, fill=READP_T, stroke=READP, sw=1.2)
-        s.text(805, y + 79, "read pool ×4", size=12, weight=600, fill=READP, anchor="middle")
-        s.arrow([(730, y + 86), (680, y + 104)], stroke=READP, dash="4 3")
         clients(s, 922, y + 120)
 
     items = [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated")]
@@ -155,14 +146,14 @@ def room(s, x, y, w, h, name, colour=WORK, tint=WORK_T):
 def a2_rooms(out, ex):
     """Each thread is a room; the state drawn inside a room is owned by that thread."""
     x0 = {"crud": 30, "dual": 350, "scal": 670}[ex]
-    s = Svg(340, 790, ox=x0 - 10)
+    s = Svg(340, 700, ox=x0 - 10)
     s.title(EXECUTORS[ex], "Architecture · A2 · threads as rooms")
     s.rect(x0 + 10, 96, 280, 36, r=18, fill=CONS_T, stroke=CONS, sw=1.3)
     s.text(x0 + 150, 119, "consensus", size=13, weight=600, fill=CONS, anchor="middle")
-    s.rect(x0 + 10, 690, 280, 36, r=18, fill="#eef0f3")
+    s.rect(x0 + 10, 600, 280, 36, r=18, fill="#eef0f3")
     for i in range(5):
-        person(s, x0 + 90 + i * 30, 712, colour="#9aa1af", scale=0.65)
-    sub = {"crud": "1 thread + read pool", "dual": "3 threads + read pool", "scal": "worker + 2 pools"}[ex]
+        person(s, x0 + 90 + i * 30, 622, colour="#9aa1af", scale=0.65)
+    sub = {"crud": "1 thread", "dual": "3 threads", "scal": "worker + exec pool"}[ex]
     s.text(x0 + 150, 172, sub, size=12, fill=MUTED, anchor="middle")
 
     if ex == "crud":
@@ -174,14 +165,9 @@ def a2_rooms(out, ex):
         s.text(x + 90, 346, "log", size=10.5, fill=MUTED, anchor="middle")
         layered(s, x + 160, 380, w=96, h=90)
         s.arrow([(x + 92, 266), (x + 92, 298)], stroke=LIVE)
-        room(s, x + 10, 540, 280, 100, "read pool ×4", READP, READP_T)
-        for i in range(4):
-            s.circle(x + 50 + i * 26, 600, 8, fill=READP, opacity=0.75)
-        s.arrow([(x + 220, 560), (x + 220, 500)], stroke=READP, dash="4 3")
-        s.label(x + 240, 532, "&Δ^{*}", size=11, fill=READP, bg=WHITE)
         s.arrow([(x + 40, 132), (x + 40, 196)], stroke=CONS)
-        s.arrow([(x + 280, 330), (x + 300, 330), (x + 300, 688)], stroke=INK)
-        s.label(x + 300, 664, "replies", size=10.5, bg=WHITE)
+        s.arrow([(x + 280, 330), (x + 300, 330), (x + 300, 598)], stroke=INK)
+        s.label(x + 300, 574, "replies", size=10.5, bg=WHITE)
 
     if ex == "dual":
         # dual-state: three rooms, two full copies
@@ -194,19 +180,14 @@ def a2_rooms(out, ex):
         block(s, x + 176, 300, 96, 108, SPEC, SPEC_T, "Ω^{*}", size=17)
         room(s, x + 10, 440, 280, 128, "confirmed")
         block(s, x + 176, 452, 96, 108, CONF, CONF_T, "Δ^{*}", size=17)
-        room(s, x + 10, 586, 280, 70, "read pool", READP, READP_T)
-        for i in range(4):
-            s.circle(x + 40 + i * 22, 632, 7, fill=READP, opacity=0.75)
         s.arrow([(x + 40, 132), (x + 40, 196)], stroke=CONS)
         s.arrow([(x + 40, 254), (x + 40, 270)], stroke=CONS)
         s.arrow([(x + 122, 350), (x + 122, 506), (x + 174, 506)], stroke=CONF, sw=2)
         s.text(x + 114, 530, "run k again", size=10.5, fill=CONF, anchor="end")
         s.arrow([(x + 210, 452), (x + 210, 410)], stroke=DROP, dash="4 3")
         s.label(x + 150, 433, "copy of Δ^{*}", size=10.5, fill=DROP, bg=WHITE)
-        s.arrow([(x + 250, 610), (x + 250, 562)], stroke=READP, dash="4 3")
-        s.label(x + 270, 600, "&Δ^{*}", size=11, fill=READP, bg=READP_T)
-        s.arrow([(x + 290, 346), (x + 304, 346), (x + 304, 688)], stroke=INK)
-        s.label(x + 304, 664, "replies", size=10.5, bg=WHITE)
+        s.arrow([(x + 290, 346), (x + 304, 346), (x + 304, 598)], stroke=INK)
+        s.label(x + 304, 574, "replies", size=10.5, bg=WHITE)
 
     if ex == "scal":
         # scalable: the worker owns the state; the pool borrows it
@@ -221,9 +202,6 @@ def a2_rooms(out, ex):
         for i in range(4):
             capsule(s, x + 24 + i * 66, 506, 56, 26, f"op {i + 1}", size=10.5)
         s.text(x + 150, 556, "one container per op", size=10.5, fill=MUTED, anchor="middle")
-        room(s, x + 10, 586, 280, 70, "read pool ×4", READP, READP_T)
-        for i in range(4):
-            s.circle(x + 50 + i * 22, 632, 7, fill=READP, opacity=0.75)
         s.arrow([(x + 40, 278), (x + 40, 504)], stroke=POOL)
         s.label(x + 40, 330, "fork", size=10.5, fill=POOL, bg=WORK_T)
         s.arrow([(x + 90, 504), (x + 90, 282)], stroke=LIVE)
@@ -231,10 +209,11 @@ def a2_rooms(out, ex):
         s.arrow([(x + 200, 504), (x + 200, 422)], stroke=MUTED, dash="4 3")
         s.label(x + 200, 470, "&Ω^{*}, &Δ^{*}", size=11, fill=MUTED, bg=WHITE)
         s.arrow([(x + 40, 132), (x + 40, 196)], stroke=CONS)
-        s.arrow([(x + 290, 280), (x + 300, 280), (x + 300, 688)], stroke=INK)
-        s.label(x + 300, 664, "replies", size=10.5, bg=WHITE)
-    s.text(x0 + 150, 760, "&Δ^{*} = read-only access to another", size=11.5, fill=MUTED, anchor="middle")
-    s.text(x0 + 150, 775, "thread's state", size=11.5, fill=MUTED, anchor="middle")
+        s.arrow([(x + 290, 280), (x + 300, 280), (x + 300, 598)], stroke=INK)
+        s.label(x + 300, 574, "replies", size=10.5, bg=WHITE)
+    if ex == "scal":
+        s.text(x0 + 150, 666, "&Ω^{*}, &Δ^{*} = read-only access to the", size=11.5, fill=MUTED, anchor="middle")
+        s.text(x0 + 150, 681, "worker's state", size=11.5, fill=MUTED, anchor="middle")
     s.save(os.path.join(out, f"{PFX}-a2-rooms-{ex}"))
 
 
@@ -264,9 +243,9 @@ def a3_matrix(out, ex):
 
     # threads
     y = 160
-    badges = {"crud": [("worker", WORK), ("read ×4", READP)],
-              "dual": [("main", WORK), ("preemptive", WORK), ("confirmed", WORK), ("read ×4", READP)],
-              "scal": [("worker", WORK), ("exec ×4", POOL), ("read ×4", READP)]}[ex]
+    badges = {"crud": [("worker", WORK)],
+              "dual": [("main", WORK), ("preemptive", WORK), ("confirmed", WORK)],
+              "scal": [("worker", WORK), ("exec ×4", POOL)]}[ex]
     from svgkit import text_width
     total = sum(text_width(n, 10.5, 600) + 12 for n, _ in badges) + 6 * (len(badges) - 1)
     x = X - total / 2

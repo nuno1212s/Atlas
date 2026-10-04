@@ -98,7 +98,7 @@ def x1_rooms_layers(out):
     s.text(500, 118, "consensus", size=13, weight=600, fill=CONS, anchor="middle")
 
     # exec pool: one container per op, each with its private ℓ
-    room(s, 30, 158, 380, 362, "exec pool", POOL, POOL_T, "4 threads, in parallel")
+    room(s, 30, 158, 380, 446, "exec pool", POOL, POOL_T, "4 threads, in parallel")
     for pos in range(4):
         op_container(s, 46, 196 + pos * 80, 348, 64, pos)
     s.arrow([(150, 130), (150, 156)], stroke=CONS)
@@ -147,12 +147,7 @@ def x1_rooms_layers(out):
     ray(s, [(394, 468), (420, 468), (420, 386), (bx, 386), (bx, by - 11)])
     s.text(446, 362, "&Ω^{*}, &Δ^{*}: read-only, shared by all four threads", size=10.5, fill=MUTED)
 
-    # read pool and clients
-    room(s, 30, 540, 380, 64, "read pool", READP, READP_T, "4 threads, unordered reads")
-    for k in range(4):
-        s.circle(330 + k * 18, 586, 6, fill=READP, opacity=0.75)
-    s.arrow([(410, 572), (ss.x + 4, 572), (ss.x + 14, ss.y - 4)], stroke=READP, dash="4 3")
-    s.label(452, 586, "&Δ^{*}", size=11, fill=READP, bg=WORK_T)
+    # clients
     s.rect(30, 624, 940, 40, r=20, fill="#eef0f3")
     clients(s, 480, 646)
     s.arrow([(950, ss.y - 12), (950, 622)], stroke=INK)
@@ -218,15 +213,6 @@ def x2_lanes_ledger(out):
     # every op reads the worker's C, then S
     s.arrow([(786, 238), (786, 288)], stroke=MUTED, dash="4 3")
     s.label(786, 262, "each op reads ℓ, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
-
-    # read pool lane
-    s.rect(172, 500, 712, 60, r=14, fill=READP_T)
-    thread_badge(s, 184, 518, "read pool · 4 threads", READP)
-    for k in range(4):
-        s.circle(212 + k * 24, 544, 7, fill=READP, opacity=0.75)
-    s.text(360, 534, "unordered reads, on Δ^{*} only", size=11, fill=MUTED)
-    s.arrow([(786, 500), (786, 458)], stroke=READP, dash="4 3")
-    s.label(806, 486, "&Δ^{*}", size=11, fill=READP, bg=READP_T)
 
     # replies
     s.arrow([(870, 418), (930, 418), (930, 398)], stroke=INK)
@@ -298,16 +284,13 @@ def x3_layers_threads(out):
     s.arrow([(xs[3] + 36, ly + 60), (xs[3] + 36, ss.y - 14), (ss.x + ss.w + 30, ss.y - 14)], stroke=CONF, sw=2)
     s.text(xs[3] + 30, ss.y - 22, "commit Ω_{7} → Δ_{7}", size=11, fill=CONF, anchor="end")
 
-    # consensus and clients, read pool
+    # consensus and clients
     s.rect(820, 100, 150, 40, r=12, fill=CONS_T, stroke=CONS, sw=1.3)
     s.text(895, 125, "consensus", size=13, weight=600, fill=CONS, anchor="middle")
     s.arrow([(900, 140), (900, 160), (xs[3] + 36, 160), (xs[3] + 36, ly - 2)], stroke=CONS)
     s.text(908, 160, "confirm k", size=10.5, fill=CONS)
     s.arrow([(820, 112), (360, 112), (360, top - 94)], stroke=CONS)
     s.label(600, 106, "batch k: one op per thread", size=10.5, fill=CONS, bg=WHITE)
-    s.rect(120, 568, 300, 40, r=20, fill=READP_T, stroke=READP, sw=1.2)
-    s.text(270, 593, "read pool ×4 · unordered reads", size=12, weight=600, fill=READP, anchor="middle")
-    s.arrow([(270, 568), (270, ss.y + 2)], stroke=READP, dash="4 3")
     clients(s, 880, 580)
     s.arrow([(xs[3] + 36, ss.y - 14), (xs[3] + 36, 570), (868, 570)], stroke=INK)
     s.text(xs[3] + 44, 560, "replies", size=11, fill=INK)

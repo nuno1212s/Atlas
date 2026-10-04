@@ -11,7 +11,6 @@ shapes are flat and rounded.
 | violet | the decision being built (ω) and containers, drawn as dashed capsules |
 | slate badge | a thread (worker, main, preemptive, confirmed) |
 | teal | the exec pool, which runs in parallel |
-| sand | the read pool |
 | red | discarded (backtrack) |
 
 There are four figure types with three options each. Since iteration 05, every option is drawn once
@@ -37,21 +36,25 @@ check, merge non-colliders, re-run colliders, append Ω10. The files are
 
 From iteration 09, a step figure shows batch 10's own state only once it exists: ω10 from step 3,
 Ω10 at step 5. The persistent state (the log, Ω\* and Δ\*) is faded in any step that does not use it.
-The read pool is no longer drawn (iteration 08). If ImageMagick (`magick`) is installed, the
+The read pool is not drawn in any figure (iterations 08 and 14). If ImageMagick (`magick`) is installed, the
 script also writes `arch-scal-{x1,x2,x12}-steps.gif`, which cycles through steps 1–5 at 3 s each.
 
-From iteration 10 the story continues past speculation. Steps 6–8 confirm decision 10:
-confirm 10 arrives (Ω10 is the head of the log), commit Ω10 → Δ10 into Δ\* (Ω\* is refolded), and
-send the replies (o3's client gets 8). The step tracker groups the steps as speculate 1–5 and
+From iteration 10 the story continues past speculation. Since iteration 14 the confirmation steps
+confirm the **oldest** pending decision, Ω7, because decisions are confirmed in order and 10 cannot be
+confirmed before 7, 8 and 9:
+- *confirm 7 arrives:* Ω7 is the head of the log, while Ω8–Ω10 stay speculated;
+- *commit Ω7 → Δ7* into Δ\*: Ω\* is refolded from Ω8, Ω9 and Ω10;
+- *send the replies of Δ7:* batch 10's replies wait with Ω10.
+ The step tracker groups the steps as speculate 1–5 and
 confirm 6–8, and the GIFs cycle through all eight.
 
 `crud_dual_steps.py` (iteration 11) gives the CRUD cache and dual-state executors the same
 treatment, one figure per executor, in the X1, X2 and X12 styles. Each has an overview and six
 steps of batch 10, speculate 1–3 then confirm 4–6:
-- CRUD cache: o1 and o2 write into ω10, o3 and o4 read, append Ω10; then confirm, commit
-  Ω10 → Δ10, send the replies.
-- Dual-state: o1 and o2 write Ω\* in place, o3 and o4 read Ω\*, log batch 10; then confirm, send
-  the replies and forward the batch, and the confirmed worker re-runs it on Δ\*.
+- CRUD cache: o1 and o2 write into ω10, o3 and o4 read, append Ω10; then confirm 7, commit
+  Ω7 → Δ7, send the replies of Δ7.
+- Dual-state: o1 and o2 write Ω\* in place, o3 and o4 read Ω\*, log batch 10; then confirm 7, send
+  batch 7's replies and forward it, and the confirmed worker re-runs batch 7 on Δ\*.
 
 The files are `arch-{crud,dual}-{x1,x2,x12}-step{0..6}`, plus `-steps.gif`.
 

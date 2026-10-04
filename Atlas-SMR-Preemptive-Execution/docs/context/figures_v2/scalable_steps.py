@@ -14,10 +14,11 @@ writes it and o3 reads it in parallel, so o3 sees the stale 7. Every step shows 
   3 merge non-colliders   ℓ1 and ℓ4 go into ω10 in batch order; o2 and o3 wait
   4 re-run colliders      o2 then o3 run again on the worker over Ω* ⊕ ω10; o3 now reads 8
   5 append Ω10            ω10 becomes Ω10, Ω* folds it in, and o3's held reply is 8
-Then the confirmation of decision 10 (iteration 10):
-  6 confirm 10 arrives    Ω7–Ω9 were confirmed first; Ω10 is now the head of the log, so nothing re-runs
-  7 commit Ω10 → Δ10      Δ10's stored writes go into Δ*; Ω10 leaves the log and Ω* is refolded (empty)
-  8 send the replies      the replies held with Ω10 reach their clients: o3's client gets 8
+Then the confirmation of the oldest pending decision, 7 (iteration 14): decisions are confirmed in
+order, so 10 cannot be confirmed before 7, 8 and 9.
+  6 confirm 7 arrives     Ω7 is the head of the log; Ω8, Ω9 and Ω10 stay speculated, waiting their turn
+  7 commit Ω7 → Δ7        Δ7's stored writes go into Δ*; Ω7 leaves the log; Ω* = Ω8 ⊕ Ω9 ⊕ Ω10
+  8 send the replies      batch 7's replies reach their clients; batch 10's wait with Ω10
 
 The read pool (unordered reads) is left out from iteration 08 on, so as to keep the figures on speculation.
 """
@@ -25,7 +26,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "figures"))
-from executor_model import CRUD, KEYS, SCALABLE, TOMB, TRACE10, crud_commit, op_text  # noqa: E402
+from executor_model import BATCH, CRUD, KEYS, SCALABLE, TOMB, TRACE10, op_text  # noqa: E402
 
 from caching import Sheet, ray  # noqa: E402
 from scalable_arch import clients, room, wcard  # noqa: E402
@@ -36,21 +37,18 @@ from svgkit import (CONF, CONF_T, CONS, CONS_T, DROP, DROP_T, INK, LIVE, LIVE_T,
 PFX = "arch-scal"
 S0, C0, LOG0 = CRUD[0].S, CRUD[0].C, CRUD[0].log
 C1 = SCALABLE[1].C
-_st = SCALABLE[1]
-for _ in range(3):                           # Δ7, Δ8, Δ9 are confirmed before 10, the same way
-    _st = crud_commit(_st)
-S6, C6 = _st.S, _st.C                        # the log now holds only Ω10
-S7 = crud_commit(_st).S                      # after Δ10
-S_AT = {6: S6, 7: S7, 8: S7}
-C_AT = {5: C1, 6: C6, 7: {}, 8: {}}
-REPLIES10 = TRACE10.replies                  # ['4', '7', '8', 'none']
+S7, C7 = SCALABLE[2].S, SCALABLE[2].C        # after Δ7: the oldest decision, confirmed first
+S_AT = {7: S7, 8: S7}
+C_AT = {5: C1, 6: C1, 7: C7, 8: C7}          # C7 = Ω8 ⊕ Ω9 ⊕ Ω10
+DELTA7 = dict(LOG0[0][1])                    # {a: 5, d: 9}
+REPLIES7 = [(op_text(op), r) for op, r in zip(BATCH[7], LOG0[0][2])]   # batch 7's ops and their replies
 OPS = TRACE10.ops
 COLL = TRACE10.colliders                     # {1, 2}: o2 and o3
 OMEGA = {0: TRACE10.delta, 1: {}, 2: {}, 3: dict(TRACE10.bd_pass1), 4: TRACE10.delta, 5: TRACE10.delta}
 NEW_IN_OMEGA = {3: {"c"}, 4: {"e"}}
 
 STEPS = {
-    0: ("overview", "Steps 1–5 speculate batch 10 and steps 6–8 confirm it; each shows where the collision on e stands."),
+    0: ("overview", "Steps 1–5 speculate batch 10; steps 6–8 confirm the oldest decision, Ω7. Decisions are confirmed in order."),
     1: ("run in parallel",
         "o2 writes e = 8 into its own ℓ2 while o3 reads e: o3 cannot see ℓ2, so it finds the stale 7 in Δ^{*}."),
     2: ("collision check",
@@ -61,17 +59,17 @@ STEPS = {
         "o2, then o3, run again on the worker over Ω^{*} ⊕ ω10. o3 now reads e = 8: the collision is resolved."),
     5: ("append Ω10",
         "ω10 becomes Ω10 and is folded into Ω^{*}. The reply held for o3 is 8, never the stale 7."),
-    6: ("confirm 10 arrives",
-        "Ω7, Ω8 and Ω9 were confirmed first, the same way. Ω10 is now the head of the log: nothing runs again."),
-    7: ("commit Ω10 → Δ10",
-        "Δ10's stored writes go into Δ^{*}: c 4 → 5, e 7 → 8. Ω10 leaves the log and Ω^{*} is refolded from what is left."),
-    8: ("send the replies",
-        "The replies of Δ10 reach their clients: o3's client gets 8. The collision never reaches a client."),
+    6: ("confirm 7 arrives",
+        "Consensus confirms the oldest pending decision, 7: it is the head of the log. Ω8, Ω9 and Ω10 stay speculated."),
+    7: ("commit Ω7 → Δ7",
+        "Δ7's stored writes go into Δ^{*}: a 1 → 5, d + 9. Ω7 leaves the log; Ω^{*} is refolded from Ω8, Ω9 and Ω10."),
+    8: ("send the replies of Δ7",
+        "Batch 7's replies reach their clients. Batch 10's (o3 → 8) wait with Ω10 until 8 and 9 are confirmed first."),
 }
 # What the worker's persistent state is used for in each step; anything else is drawn faded.
 # ω10 and Ω10 belong to batch 10 and are not drawn at all before they exist (ω10 from step 3, Ω10 at step 5).
 USED = {0: {"log", "C", "S"}, 1: {"C", "S"}, 2: set(), 3: set(), 4: {"C", "S"}, 5: {"log", "C"},
-        6: {"log"}, 7: {"log", "C", "S"}, 8: set()}
+        6: {"log"}, 7: {"log", "C", "S"}, 8: {"log"}}
 LEGEND = [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated"),
           ("capsule", LIVE, LIVE_T, "container / being built"), ("badge", WORK, None, "thread"),
           ("badge", POOL, None, "parallel thread"), ("badge", DROP, None, "collision")]
@@ -218,26 +216,33 @@ def log_row(s, xs, y, step, w=72):
         for x, (q, d, _) in zip(xs[1:], reversed(LOG0)):
             wcard(s, x, y, q, d, w=w)
         return
-    # confirmation: every decision keeps the slot it had while speculated (Ω10 left … Ω7 right);
-    # the ones already confirmed become ghosts "in S" where they stood
+    def card(x, q):
+        wcard(s, x, y, q, TRACE10.delta if q == 10 else dict(LOG0[q - 7][1]), w=w)
+    confirm_log(s, xs, y, step, 6, card, lambda x: dcard(s, x, y, 7, DELTA7, w=w), w=w)
+
+
+def confirm_log(s, xs, y, step, first, card, d7, w=72):
+    """While confirming 7, the oldest decision: every decision keeps its slot (Ω10 left … Ω7 right).
+    Ω7 is the head; it turns into Δ7 on commit and then into a ghost "in Δ*". Ω8–Ω10 stay speculated."""
     slot = {10: xs[0], 9: xs[1], 8: xs[2], 7: xs[3]}
-    for q in ((7, 8, 9) if step < 8 else (7, 8, 9, 10)):
-        ghost(s, slot[q], y, q, w=w)
-    if step == 6:
-        wcard(s, slot[10], y, 10, TRACE10.delta, w=w)
-        s.rect(slot[10] - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
-    elif step == 7:
-        dcard(s, slot[10], y, 10, TRACE10.delta, w=w)
-        s.rect(slot[10] - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
+    for q in (10, 9, 8):
+        card(slot[q], q)
+    phase = step - first                     # 0: confirm arrives, 1: commit, 2: after
+    if phase == 0:
+        card(slot[7], 7)
+    elif phase == 1:
+        d7(slot[7])
+    else:
+        ghost(s, slot[7], y, 7, w=w)
+    if phase < 2:
+        s.rect(slot[7] - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
 
 
 def confirm_labels(s, xs, y, step, last, w=72):
-    """Under the log while confirming: the head (Ω10, in its own slot) and what is already in Δ*."""
-    if step < last:
-        s.text(xs[0] + w / 2, y, "head", size=10.5, fill=MUTED, anchor="middle")
-        s.text((xs[1] + xs[3] + w) / 2, y, "already confirmed, in Δ^{*}", size=10.5, fill=MUTED, anchor="middle")
-    else:
-        s.text((xs[0] + xs[3] + w) / 2, y, "all confirmed, in Δ^{*}", size=10.5, fill=MUTED, anchor="middle")
+    """Under the log while confirming 7: the head on the right, the decisions still speculated on the left."""
+    s.text((xs[0] + xs[2] + w) / 2, y, "still speculated, in order" if step < last else "still speculated · Ω_{8} is next",
+           size=10.5, fill=MUTED, anchor="middle")
+    s.text(xs[3] + w / 2, y, "head" if step < last else "confirmed", size=10.5, fill=MUTED, anchor="middle")
 
 
 def step_panel(s, x, y, w, h, step):
@@ -249,8 +254,8 @@ def step_panel(s, x, y, w, h, step):
     s.text(x + 32, y + 22, {2: "collision check", 3: "merge the non-colliders, in batch order",
                             4: "re-run the colliders, in batch order, over Ω^{*} ⊕ ω_{10}",
                             5: "append, and fold into Ω^{*}",
-                            6: "confirmation of 10 arrives", 7: "commit Ω_{10} → Δ_{10}",
-                            8: "send the replies of Δ_{10}"}[step], size=12.5, weight=600)
+                            6: "confirmation of 7 arrives", 7: "commit Ω_{7} → Δ_{7}",
+                            8: "send the replies of Δ_{7}"}[step], size=12.5, weight=600)
     thread_badge(s, x + w - 26, y + 18, "W", WORK)
     r1, r2, r3 = y + 42, y + 60, y + 78
     if step == 2:
@@ -272,23 +277,26 @@ def step_panel(s, x, y, w, h, step):
                anchor="middle")
         s.arrow([(x + 14 + cw, y + 49), (x + 30 + cw, y + 49)], stroke=LIVE, sw=1.4)
     elif step == 6:
-        s.text(x + 16, r1, "the head of the log is Ω_{10}: it was speculated", size=11.5, fill=CONF, weight=600)
-        s.text(x + 16, r2, "its writes and replies are already computed", size=11.5, fill=MUTED)
-        s.text(x + 16, r3 + 2, "nothing runs again; Ω_{7}, Ω_{8}, Ω_{9} went the same way before", size=11,
+        s.text(x + 16, r1, "the head of the log is Ω_{7}, the oldest: it was speculated", size=11.5, fill=CONF,
+               weight=600)
+        s.text(x + 16, r2, "its writes and replies are already computed: nothing runs again", size=11.5, fill=MUTED)
+        s.text(x + 16, r3 + 2, "Ω_{8}, Ω_{9}, Ω_{10} stay speculated: each is confirmed in turn", size=11,
                fill=MUTED)
     elif step == 7:
-        s.text(x + 16, r1, "Δ^{*} ← Δ^{*} ⊕ Δ_{10}:  c 4 → 5,  e 7 → 8", size=11.5, fill=CONF, weight=600)
-        s.text(x + 16, r2, "Ω_{10} leaves the log", size=11.5, fill=MUTED)
-        s.text(x + 16, r3 + 2, "Ω^{*} is refolded from what is left: nothing, so Ω^{*} is empty", size=11, fill=MUTED)
+        s.text(x + 16, r1, "Δ^{*} ← Δ^{*} ⊕ Δ_{7}:  a 1 → 5,  d + 9", size=11.5, fill=CONF, weight=600)
+        s.text(x + 16, r2, "Ω_{7} leaves the log", size=11.5, fill=MUTED)
+        s.text(x + 16, r3 + 2, "Ω^{*} is refolded from Ω_{8}, Ω_{9}, Ω_{10}: d now comes from Δ^{*}", size=11,
+               fill=MUTED)
     elif step == 8:
         xx = x + 16
-        for i, r in enumerate(REPLIES10):
-            t = f"o{i + 1} → {r}"
-            hot = i == 2
-            s.text(xx, r1, t, size=12 if hot else 11.5, weight=600 if hot else 400, fill=CONF if hot else INK)
-            xx += text_width(t, 12 if hot else 11.5, 600 if hot else 400) + 22
-        s.text(x + 16, r2 + 4, "o3's client gets 8, computed by its re-run in step 4", size=11.5, fill=CONF)
-        s.text(x + 16, r3 + 4, "the stale 7 from step 1 never left the worker", size=11, fill=MUTED)
+        s.text(xx, r1, "batch 7:", size=11.5, fill=MUTED)
+        xx += text_width("batch 7:", 11.5) + 10
+        for op, r in REPLIES7:
+            t = f"{op} → {r}"
+            s.text(xx, r1, t, size=11.5, fill=INK)
+            xx += text_width(t, 11.5) + 22
+        s.text(x + 16, r2 + 4, "batch 10's replies (o3 → 8) wait with Ω_{10}", size=11.5, fill=CONF)
+        s.text(x + 16, r3 + 4, "until Δ_{8} and Δ_{9} are committed first", size=11, fill=MUTED)
     else:
         s.text(x + 16, r1, "ω_{10} → Ω_{10}, the newest log entry", size=11.5, fill=SPEC, weight=600)
         s.text(x + 16, r2, "Ω^{*} ← Ω^{*} ⊕ Ω_{10}:  c 4 → 5,  e + 8", size=11.5, fill=SPEC)
@@ -357,7 +365,7 @@ def x1(out, step):
     if "S" not in USED[step]:
         fade(s, 452, ss.y - 32, 370, 40)
     if step in (5, 7):
-        for k in ("c", "e"):
+        for k in (("c", "e") if step == 5 else ("a", "d")):
             pts = (cs if step == 5 else ss).tile(KEYS.index(k))
             s.poly(pts, fill="none", stroke=INK, sw=2)
 
@@ -401,7 +409,7 @@ def x1(out, step):
     # commit and replies belong to the overview only
     if step == 0:
         s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 194)], stroke=CONS)
-        s.label(xs[3] + 36, 146, "confirm k", size=11, fill=CONS, bg=WHITE)
+        s.label(xs[3] + 36, 146, "confirm 7", size=11, fill=CONS, bg=WHITE)
         s.arrow([(xs[3] + 72, 230), (950, 230), (950, ss.y - 12), (ss.x + ss.w + 24, ss.y - 12)], stroke=CONF,
                 sw=2)
         s.text(944, 470, "commit", size=11.5, fill=CONF, weight=600, anchor="end")
@@ -409,17 +417,17 @@ def x1(out, step):
         s.arrow([(950, ss.y - 12), (950, 622)], stroke=INK)
         s.text(944, 612, "replies of Δ_{7}", size=11, fill=INK, anchor="end")
 
-    # confirmation of 10
+    # confirmation of 7, the oldest decision: it sits at the head, on the right of the log
     if step == 6:
-        s.arrow([(xs[0] + 36, 130), (xs[0] + 36, 190)], stroke=CONS, sw=1.8)
-        s.label(xs[0] + 36, 146, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
+        s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 190)], stroke=CONS, sw=1.8)
+        s.label(xs[3] + 36, 146, "confirm 7", size=11, fill=CONS, bg=WHITE, weight=600)
     if step == 7:
-        s.arrow([(594, 225), (438, 225), (438, ss.y + 18), (ss.x + 40, ss.y + 18), (ss.x + 40, ss.y + 2)],
-                stroke=CONF, sw=2.2)
-        s.text(446, 484, "Δ_{10} into Δ^{*}", size=11.5, fill=CONF, weight=600)
+        s.arrow([(xs[3] + 72, 230), (950, 230), (950, ss.y - 12), (ss.x + ss.w + 24, ss.y - 12)], stroke=CONF,
+                sw=2.2)
+        s.text(944, 470, "Δ_{7} into Δ^{*}", size=11.5, fill=CONF, weight=600, anchor="end")
     if step == 8:
         s.arrow([(930, 350), (950, 350), (950, 622)], stroke=INK, sw=1.8)
-        s.text(944, 612, "replies of Δ_{10}", size=11, fill=INK, anchor="end")
+        s.text(944, 612, "replies of Δ_{7}", size=11, fill=INK, anchor="end")
     if step == 0:
         badge_n(s, xs[3] + 60, 162, 6)
         badge_n(s, 888, 466, 7)
@@ -429,9 +437,8 @@ def x1(out, step):
     clients(s, 480, 646)
     if step == 8:
         xx = 540
-        for i, r in enumerate(REPLIES10):
-            hot = i == 2
-            xx += chip(s, xx, 646, f"o{i + 1} → {r}", CONF if hot else MUTED, CONF_T if hot else WHITE) + 8
+        for op, r in REPLIES7:
+            xx += chip(s, xx, 646, f"{op} → {r}", CONF, CONF_T) + 8
     s.save(os.path.join(out, f"{PFX}-x1-step{step}"))
 
 
@@ -483,11 +490,12 @@ def x2(out, step, mix=False):
         s.text(xs[3] + 4, 388, "oldest", size=10.5, fill=MUTED, anchor="end")
     else:
         confirm_labels(s, xs, 378, step, 8)
-    c_sub = {5: "Ω^{*} ⊕ Ω_{10}", 6: "fold of Ω_{10}", 7: "empty", 8: "empty"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
+    c_sub = {5: "Ω^{*} ⊕ Ω_{10}", 6: "Ω_{7} ⊕ … ⊕ Ω_{10}", 7: "Ω_{8} ⊕ Ω_{9} ⊕ Ω_{10}",
+             8: "Ω_{8} ⊕ Ω_{9} ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
     kv_box(s, 702, 286, 168, 76, "Ω^{*}", C_AT.get(step, C0), SPEC, SPEC_T, c_sub,
            rings={"c", "e"} if step == 5 else ())
     kv_box(s, 702, 376, 168, 76, "Δ^{*}", S_AT.get(step, S0), CONF, CONF_T, "confirmed",
-           rings={"c", "e"} if step == 7 else ())
+           rings={"a", "d"} if step == 7 else ())
     if "log" not in USED[step]:
         fade(s, (xs[0] if step >= 6 else xs[1]) - 4, 290, 252 + (82 if step >= 6 else 0), 104)
     if "C" not in USED[step]:
@@ -528,20 +536,20 @@ def x2(out, step, mix=False):
             s.label(786, 262, "each op reads ℓ, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
     if step == 6:
-        s.arrow([(138, 274), (150, 274), (150, 325), (xs[0] - 2, 325)], stroke=CONS, sw=1.8)
-        s.label(244, 318, "confirm 10", size=10.5, fill=CONS, bg=WORK_T, weight=600)
+        s.arrow([(138, 274), (152, 274), (152, 287), (xs[3] + 36, 287), (xs[3] + 36, 292)], stroke=CONS, sw=1.8)
+        s.label(300, 291, "confirm 7", size=10.5, fill=CONS, bg=WORK_T, weight=600)
     if step == 7:
-        s.arrow([(xs[0] + 36, 294), (xs[0] + 36, 288), (690, 288), (690, 414), (700, 414)], stroke=CONF, sw=2.2)
-        s.text(600, 283, "Δ_{10} into Δ^{*}", size=10.5, fill=CONF, anchor="middle", weight=600)
+        s.arrow([(xs[3] + 60, 356), (xs[3] + 60, 384), (700, 384)], stroke=CONF, sw=2.2)
+        s.text(xs[3] + 54, 394, "Δ_{7} into Δ^{*}", size=10.5, fill=CONF, anchor="end", weight=600)
     if step == 8:
         s.arrow([(686, 444), (692, 444), (692, 470), (930, 470), (930, 396)], stroke=INK, sw=1.8)
-        s.text(924, 486, "replies of Δ_{10}", size=11, fill=INK, anchor="end")
+        s.text(924, 486, "replies of Δ_{7}", size=11, fill=INK, anchor="end")
     if step == 0:
         badge_n(s, 598, 396, 6)
         badge_n(s, 621, 396, 7)
         badge_n(s, 896, 450, 8)
         s.arrow([(xs[3] + 60, 356), (xs[3] + 60, 384), (700, 384)], stroke=CONF, sw=2)
-        s.text(694, 412, "on confirm k: commit Ω_{7} → Δ_{7}", size=10.5, fill=CONF, anchor="end")
+        s.text(694, 412, "on confirm 7: commit Ω_{7} → Δ_{7}", size=10.5, fill=CONF, anchor="end")
         s.arrow([(870, 414), (930, 414), (930, 394)], stroke=INK)
         s.text(924, 432, "replies", size=11, fill=INK, anchor="middle")
     clients(s, 916, 366)

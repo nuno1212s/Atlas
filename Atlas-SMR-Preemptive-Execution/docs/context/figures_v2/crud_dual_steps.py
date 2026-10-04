@@ -14,16 +14,17 @@ CRUD cache, one worker thread:
   1 o1, o2 write into ω10   one container over Ω* and Δ*; writes land only in ω10
   2 o3, o4 read             o3 finds 8 in ω10, o4 finds b deleted in Ω*
   3 append Ω10              ω10 becomes Ω10 and is folded into Ω*; the replies are held
-  4 confirm 10 arrives      Ω7–Ω9 went first; Ω10 is the head of the log, nothing re-runs
-  5 commit Ω10 → Δ10        Δ10's writes go into Δ*; Ω10 leaves the log; Ω* is refolded
-  6 send the replies        o3's client gets 8
+  4 confirm 7 arrives       the oldest decision, Ω7, is the head of the log; Ω8–Ω10 stay speculated
+  5 commit Ω7 → Δ7          Δ7's writes go into Δ*; Ω7 leaves the log; Ω* = Ω8 ⊕ Ω9 ⊕ Ω10
+  6 send the replies        batch 7's replies go out; batch 10's wait with Ω10
 Dual-state, main + preemptive + confirmed workers:
   1 o1, o2 write Ω*        no container: the batch changes the full copy Ω* in place
   2 o3, o4 read Ω*         o3 finds 8, o4 finds no b
   3 log batch 10            the batch and its replies join the log
-  4 confirm 10 arrives      batch 10 is the head of the log
-  5 send replies, forward   the preemptive worker sends the replies and forwards batch 10
-  6 run batch 10 again      the confirmed worker re-executes it on Δ* and drops its replies
+  4 confirm 7 arrives       batch 7, the oldest, is the head of the log; 8–10 stay speculated
+  5 send replies, forward   the preemptive worker sends batch 7's replies and forwards batch 7
+  6 run batch 7 again       the confirmed worker re-executes it on Δ* and drops its replies
+Decisions are confirmed in order, so the first confirmation after batch 10 is for 7 (iteration 14).
 State is drawn only while it is used: batch 10's own state appears when it exists, and persistent
 state that a step does not touch is faded. The read pool is not drawn.
 """
@@ -31,12 +32,12 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "figures"))
-from executor_model import BATCH, CRUD, DUAL, KEYS, crud_commit, dual_commit, op_text  # noqa: E402
+from executor_model import BATCH, CRUD, DUAL, KEYS, op_text  # noqa: E402
 
 from caching import Sheet, ray  # noqa: E402
 from scalable_arch import clients, room, wcard  # noqa: E402
-from scalable_steps import (badge_n, chip, confirm_labels, dcard, fade, ghost, kv_box, progress,  # noqa: E402
-                            shown, strip)
+from scalable_steps import (badge_n, chip, confirm_labels, confirm_log, dcard, fade, kv_box,  # noqa: E402
+                            progress, shown, strip)
 from svgkit import (CONF, CONF_T, CONS, CONS_T, INK, LIVE, LIVE_T, MUTED, PANEL, SPEC, SPEC_T,  # noqa: E402
                     WHITE, WORK, WORK_T, Svg, legend, text_width, thread_badge)
 
@@ -47,15 +48,11 @@ REPLIES = list(CRUD[1].log[-1][2])                 # ['4', '7', '8', 'none'], th
 OMEGA10 = CRUD[1].log[-1][1]                       # {c: 5, e: 8}
 S0, C0, LOG0 = CRUD[0].S, CRUD[0].C, CRUD[0].log
 C1 = CRUD[1].C
-_c = CRUD[1]
-for _ in range(3):
-    _c = crud_commit(_c)
-S6, C6, S7 = _c.S, _c.C, crud_commit(_c).S
+S7, C7 = CRUD[2].S, CRUD[2].C                      # after Δ7, the oldest decision: C7 = Ω8 ⊕ Ω9 ⊕ Ω10
 P0, P1 = DUAL[0].P, DUAL[1].P
-_d = DUAL[1]
-for _ in range(3):
-    _d = dual_commit(_d)
-assert _d.S == S6 and dual_commit(_d).S == S7       # both executors confirm to the same state
+assert DUAL[2].S == S7 and DUAL[2].P == P1          # both executors confirm 7 to the same Δ*
+DELTA7 = dict(LOG0[0][1])                          # {a: 5, d: 9}
+REPLIES7 = [(op_text(op), r) for op, r in zip(BATCH[7], LOG0[0][2])]
 
 # where each op's read lands, in order: o1 and o2 read the old value they overwrite
 SOURCE = {"crud": ["Ω^{*}", "Δ^{*}", "ω_{10}", "Ω^{*}"], "dual": ["Ω^{*}", "Ω^{*}", "Ω^{*}", "Ω^{*}"]}
@@ -63,33 +60,33 @@ ACTIVE = {1: {0, 1}, 2: {2, 3}}
 
 STEPS = {
     "crud": {
-        0: ("overview", "Steps 1–3 speculate batch 10 and steps 4–6 confirm it."),
+        0: ("overview", "Steps 1–3 speculate batch 10; steps 4–6 confirm the oldest decision, Ω7. Decisions are confirmed in order."),
         1: ("o1, o2 write into ω10",
             "One container runs the ops in order. o1 and o2 write c = 5 and e = 8 into ω10; Ω^{*} and Δ^{*} are only read."),
         2: ("o3, o4 read",
             "o3 finds e = 8 in ω10: running in order, it sees o2's write, so nothing collides. o4 finds b deleted in Ω^{*}."),
         3: ("append Ω10", "ω10 becomes Ω10 and is folded into Ω^{*}. The replies held are 4, 7, 8 and none."),
-        4: ("confirm 10 arrives", "Ω7, Ω8 and Ω9 were confirmed first. Ω10 is now the head of the log: nothing runs again."),
-        5: ("commit Ω10 → Δ10", "Δ10's stored writes go into Δ^{*}: c 4 → 5, e 7 → 8. Ω10 leaves the log and Ω^{*} is refolded."),
-        6: ("send the replies", "The replies of Δ10 reach their clients: o3's client gets 8."),
+        4: ("confirm 7 arrives", "Consensus confirms the oldest pending decision, 7: it is the head of the log. Ω8, Ω9, Ω10 stay speculated."),
+        5: ("commit Ω7 → Δ7", "Δ7's stored writes go into Δ^{*}: a 1 → 5, d + 9. Ω7 leaves the log; Ω^{*} is refolded from Ω8, Ω9, Ω10."),
+        6: ("send the replies of Δ7", "Batch 7's replies reach their clients. Batch 10's (o3 → 8) wait with Ω10 until 8 and 9 are confirmed."),
     },
     "dual": {
-        0: ("overview", "Steps 1–3 speculate batch 10 and steps 4–6 confirm it."),
+        0: ("overview", "Steps 1–3 speculate batch 10; steps 4–6 confirm the oldest batch, 7. Batches are confirmed in order."),
         1: ("o1, o2 write Ω^{*}",
             "There is no container: batch 10 changes the full copy Ω^{*} in place, c 4 → 5 and e 7 → 8."),
         2: ("o3, o4 read Ω^{*}", "o3 reads e = 8 straight from Ω^{*}, after o2's write; o4 finds no b."),
         3: ("log batch 10", "The batch and its replies join the log: Ω^{*} already holds its effect."),
-        4: ("confirm 10 arrives", "Batches 7, 8 and 9 were confirmed first. Batch 10 is now the head of the log."),
+        4: ("confirm 7 arrives", "Consensus confirms the oldest pending batch, 7: it is the head of the log. 8, 9 and 10 stay speculated."),
         5: ("send replies, forward",
-            "The preemptive worker sends the replies of Δ10 (o3's client gets 8) and forwards batch 10."),
-        6: ("run batch 10 again",
-            "The confirmed worker runs batch 10 again on Δ^{*}: c 4 → 5, e 7 → 8. The replies it computes are dropped."),
+            "The preemptive worker sends batch 7's replies and forwards batch 7. Batch 10's replies (o3 → 8) wait their turn."),
+        6: ("run batch 7 again",
+            "The confirmed worker runs batch 7 again on Δ^{*}: a 1 → 5, d + 9. The replies it computes are dropped."),
     },
 }
 # Persistent state each step uses; everything else that exists is faded.
 USED = {
     "crud": {0: {"log", "C", "S"}, 1: {"C", "S"}, 2: {"C"}, 3: {"log", "C"}, 4: {"log"}, 5: {"log", "C", "S"},
-             6: set()},
+             6: {"log"}},
     "dual": {0: {"log", "Sp", "S"}, 1: {"Sp"}, 2: {"Sp"}, 3: {"log"}, 4: {"log"}, 5: {"log"}, 6: {"S"}},
 }
 LEGEND = {
@@ -131,31 +128,31 @@ PANELS = {
                                         [("Ω^{*} ← Ω^{*} ⊕ Ω_{10}:  c 4 → 5,  e + 8", SPEC, 400)],
                                         [("replies held:  o1 4 · o2 7 ·", MUTED, 400), ("o3 8", CONF, 600),
                                          ("· o4 none", MUTED, 400)]]),
-        4: ("confirmation of 10 arrives", [[("the head of the log is Ω_{10}: it was speculated", CONF, 600)],
-                                           [("its writes and replies are already computed", MUTED, 400)],
-                                           [("nothing runs again; Ω_{7}, Ω_{8}, Ω_{9} went the same way", MUTED, 400)]]),
-        5: ("commit Ω_{10} → Δ_{10}", [[("Δ^{*} ← Δ^{*} ⊕ Δ_{10}:  c 4 → 5,  e 7 → 8", CONF, 600)],
-                                       [("Ω_{10} leaves the log", MUTED, 400)],
-                                       [("Ω^{*} is refolded from what is left: nothing, so Ω^{*} is empty", MUTED, 400)]]),
-        6: ("send the replies of Δ_{10}", [[("o1 → 4", INK, 400), ("o2 → 7", INK, 400), ("o3 → 8", CONF, 600),
-                                            ("o4 → none", INK, 400)],
-                                           [("o3's client gets 8: it read o2's write, in order", CONF, 400)]]),
+        4: ("confirmation of 7 arrives", [[("the head of the log is Ω_{7}, the oldest: it was speculated", CONF, 600)],
+                                          [("its writes and replies are already computed: nothing runs again", MUTED, 400)],
+                                          [("Ω_{8}, Ω_{9}, Ω_{10} stay speculated: each is confirmed in turn", MUTED, 400)]]),
+        5: ("commit Ω_{7} → Δ_{7}", [[("Δ^{*} ← Δ^{*} ⊕ Δ_{7}:  a 1 → 5,  d + 9", CONF, 600)],
+                                     [("Ω_{7} leaves the log", MUTED, 400)],
+                                     [("Ω^{*} is refolded from Ω_{8}, Ω_{9}, Ω_{10}: d now comes from Δ^{*}", MUTED, 400)]]),
+        6: ("send the replies of Δ_{7}", [[("batch 7:", MUTED, 400)] + [(f"{op} → {r}", INK, 400) for op, r in REPLIES7],
+                                          [("batch 10's replies (o3 → 8) wait with Ω_{10}", CONF, 400)],
+                                          [("until Δ_{8} and Δ_{9} are committed first", MUTED, 400)]]),
     },
     "dual": {
         3: ("log batch 10 and its replies", [[("batch 10 joins the log, with its replies", SPEC, 600)],
                                              [("replies held:  o1 4 · o2 7 ·", MUTED, 400), ("o3 8", CONF, 600),
                                               ("· o4 none", MUTED, 400)],
                                              [("Ω^{*} already holds batch 10's effect", MUTED, 400)]]),
-        4: ("confirmation of 10 arrives", [[("the head of the log is batch 10", CONF, 600)],
-                                           [("its replies were computed on Ω^{*}", MUTED, 400)],
-                                           [("batches 7, 8 and 9 went the same way before", MUTED, 400)]]),
-        5: ("send the replies, forward batch 10", [[("o1 → 4", INK, 400), ("o2 → 7", INK, 400),
-                                                    ("o3 → 8", CONF, 600), ("o4 → none", INK, 400)],
-                                                   [("batch 10 leaves the log and goes to the confirmed worker",
-                                                     MUTED, 400)]]),
-        6: ("run batch 10 again on Δ^{*}", [[("Δ^{*}:  c 4 → 5,  e 7 → 8", CONF, 600)],
+        4: ("confirmation of 7 arrives", [[("the head of the log is batch 7, the oldest", CONF, 600)],
+                                          [("its replies were computed on Ω^{*}", MUTED, 400)],
+                                          [("batches 8, 9 and 10 stay speculated, in order", MUTED, 400)]]),
+        5: ("send the replies, forward batch 7", [[("batch 7:", MUTED, 400)] + [(f"{op} → {r}", INK, 400)
+                                                                             for op, r in REPLIES7],
+                                                  [("batch 7 leaves the log and goes to the confirmed worker", MUTED, 400)],
+                                                  [("batch 10's replies (o3 → 8) wait with Ω_{10}", CONF, 400)]]),
+        6: ("run batch 7 again on Δ^{*}", [[("Δ^{*}:  a 1 → 5,  d + 9", CONF, 600)],
                                         [("the replies it computes are dropped", MUTED, 400)],
-                                        [("Δ^{*} and Ω^{*} agree again on batch 10", MUTED, 400)]]),
+                                        [("Δ^{*} catches up with Ω^{*} to batch 7", MUTED, 400)]]),
     },
 }
 
@@ -225,23 +222,18 @@ def log_row(s, ex, xs, y, step, w=72):
         for x, (q, d) in zip(xs[1:], olds):
             card(x, q, d)
         return
-    # confirmation: every decision keeps its slot (Ω10 left … Ω7 right); confirmed ones become ghosts there
-    slot = {10: xs[0], 9: xs[1], 8: xs[2], 7: xs[3]}
-    for q in ((7, 8, 9) if step in (4, 5) else (7, 8, 9, 10)):
-        ghost(s, slot[q], y, q, w=w)
-    x10 = slot[10]
-    if step == 4:
-        card(x10, 10, OMEGA10)
-        s.rect(x10 - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
-    elif step == 5:
+    def cardq(x, q):
+        card(x, q, OMEGA10 if q == 10 else dict(LOG0[q - 7][1]))
+
+    def d7(x):
         if ex == "crud":
-            dcard(s, x10, y, 10, OMEGA10, w=w)
+            dcard(s, x, y, 7, DELTA7, w=w)
         else:                                # confirmed, on its way to the confirmed worker
-            s.rect(x10, y, w, 58, r=8, fill=CONF_T, stroke=CONF, sw=1.6, shadow=True)
-            s.text(x10 + 8, y + 17, "Δ_{10}", size=12.5, weight=600, fill=CONF)
-            s.text(x10 + 8, y + 34, "batch 10", size=9.5, fill=INK)
-            s.text(x10 + 8, y + 46, "+ replies", size=9.5, fill=MUTED)
-        s.rect(x10 - 4, y - 4, w + 8, 66, r=11, fill="none", stroke=INK, sw=1.6)
+            s.rect(x, y, w, 58, r=8, fill=CONF_T, stroke=CONF, sw=1.6, shadow=True)
+            s.text(x + 8, y + 17, "Δ_{7}", size=12.5, weight=600, fill=CONF)
+            s.text(x + 8, y + 34, "batch 7", size=9.5, fill=INK)
+            s.text(x + 8, y + 46, "+ replies", size=9.5, fill=MUTED)
+    confirm_log(s, xs, y, step, 4, cardq, d7, w=w)
 
 
 def log_labels(s, xs, y, step, w=72):
@@ -255,9 +247,9 @@ def log_labels(s, xs, y, step, w=72):
 
 
 def reply_chips(s, x, y):
-    for i, r in enumerate(REPLIES):
-        hot = i == 2
-        x += chip(s, x, y, f"o{i + 1} → {r}", CONF if hot else MUTED, CONF_T if hot else WHITE) + 8
+    """Batch 7's replies, the ones that leave once 7 is confirmed."""
+    for op, r in REPLIES7:
+        x += chip(s, x, y, f"{op} → {r}", CONF, CONF_T) + 8
 
 
 # ---------------------------------------------------------------------------
@@ -281,8 +273,8 @@ def crud_x1(out, step):
         fade(s, (xs[0] if step >= 4 else xs[1]) - 6, 188, 254 + (84 if step >= 4 else 0), 112)
 
     cs, ss = Sheet(500, 470, slot=50, dx=40, dy=-26), Sheet(500, 600, slot=50, dx=40, dy=-26)
-    ss.draw(s, CONF, CONF_T, S0 if step <= 3 else (S6 if step == 4 else S7), size=13)
-    cs.draw(s, SPEC, SPEC_T, {3: C1, 4: C6, 5: {}, 6: {}}.get(step, C0), size=13)
+    ss.draw(s, CONF, CONF_T, S7 if step >= 5 else S0, size=13)
+    cs.draw(s, SPEC, SPEC_T, {3: C1, 4: C1, 5: C7, 6: C7}.get(step, C0), size=13)
     s.text(474, cs.y - 2, "Ω^{*}", size=20, weight=600, fill=SPEC, anchor="end")
     s.text(474, ss.y - 2, "Δ^{*}", size=20, weight=600, fill=CONF, anchor="end")
     if "C" not in USED[ex][step]:
@@ -292,6 +284,7 @@ def crud_x1(out, step):
     for k in ("c", "e"):
         if step == 3:
             s.poly(cs.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
+    for k in ("a", "d"):
         if step == 5:
             s.poly(ss.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
 
@@ -322,17 +315,16 @@ def crud_x1(out, step):
         t, rows = PANELS[ex][step]
         panel(s, 446, 310, 500, 96, step, t, rows)
     if step == 4:
-        s.arrow([(xs[0] + 36, 130), (xs[0] + 36, 190)], stroke=CONS, sw=1.8)
-        s.label(xs[0] + 36, 146, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
+        s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 190)], stroke=CONS, sw=1.8)
+        s.label(xs[3] + 36, 146, "confirm 7", size=11, fill=CONS, bg=WHITE, weight=600)
     if step == 5:
-        s.arrow([(594, 225), (436, 225), (436, ss.y + 18), (ss.x + 40, ss.y + 18), (ss.x + 40, ss.y + 2)],
-                stroke=CONF, sw=2.2)
-        s.text(444, 534, "Δ_{10} into Δ^{*}", size=11.5, fill=CONF, weight=600)
+        s.arrow([(xs[3] + 72, 230), (958, 230), (958, ss.y - 12), (ss.x + ss.w + 24, ss.y - 12)], stroke=CONF, sw=2.2)
+        s.text(950, 540, "Δ_{7} into Δ^{*}", size=11.5, fill=CONF, weight=600, anchor="end")
     if step == 6:
         s.arrow([(946, 360), (958, 360), (958, 676)], stroke=INK, sw=1.8)
     if step == 0:
         s.arrow([(xs[3] + 36, 130), (xs[3] + 36, 190)], stroke=CONS)
-        s.label(xs[3] + 36, 146, "confirm k", size=11, fill=CONS, bg=WHITE)
+        s.label(xs[3] + 36, 146, "confirm 7", size=11, fill=CONS, bg=WHITE)
         s.arrow([(xs[3] + 72, 230), (958, 230), (958, ss.y - 12), (ss.x + ss.w + 24, ss.y - 12)], stroke=CONF, sw=2)
         s.arrow([(958, ss.y - 12), (958, 676)], stroke=INK)
         for n, (bx, by) in enumerate([(30 + 386, 214), (30 + 386, 262), (582, 210), (xs[3] + 54, 160),
@@ -372,11 +364,12 @@ def crud_x2(out, step, mix=False):
     log_labels(s, xs, 340, step)
     if "log" not in USED[ex][step]:
         fade(s, (xs[0] if step >= 4 else xs[1]) - 4, 254, 252 + (80 if step >= 4 else 0), 94)
-    c_vals = {3: C1, 4: C6, 5: {}, 6: {}}.get(step, C0)
-    c_sub = {3: "Ω^{*} ⊕ Ω_{10}", 4: "fold of Ω_{10}", 5: "empty", 6: "empty"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
+    c_vals = {3: C1, 4: C1, 5: C7, 6: C7}.get(step, C0)
+    c_sub = {3: "Ω^{*} ⊕ Ω_{10}", 4: "Ω_{7} ⊕ … ⊕ Ω_{10}", 5: "Ω_{8} ⊕ Ω_{9} ⊕ Ω_{10}",
+             6: "Ω_{8} ⊕ Ω_{9} ⊕ Ω_{10}"}.get(step, "Ω_{7} ⊕ Ω_{8} ⊕ Ω_{9}")
     kv_box(s, 702, 250, 168, 76, "Ω^{*}", c_vals, SPEC, SPEC_T, c_sub, rings={"c", "e"} if step == 3 else ())
-    kv_box(s, 702, 340, 168, 76, "Δ^{*}", S0 if step <= 3 else (S6 if step == 4 else S7), CONF, CONF_T, "confirmed",
-           rings={"c", "e"} if step == 5 else ())
+    kv_box(s, 702, 340, 168, 76, "Δ^{*}", S7 if step >= 5 else S0, CONF, CONF_T, "confirmed",
+           rings={"a", "d"} if step == 5 else ())
     if "C" not in USED[ex][step]:
         fade(s, 696, 244, 180, 88)
     if "S" not in USED[ex][step]:
@@ -407,11 +400,11 @@ def crud_x2(out, step, mix=False):
             s.label(780, 242, "each op reads ω, then Ω^{*}, then Δ^{*}", size=10.5, fill=MUTED, bg=WORK_T, anchor="end")
 
     if step == 4:
-        s.arrow([(138, 274), (148, 274), (148, 289), (xs[0] - 2, 289)], stroke=CONS, sw=1.8)
-        s.label(252, 282, "confirm 10", size=10.5, fill=CONS, bg=WORK_T, weight=600)
+        s.arrow([(138, 274), (148, 274), (148, 246), (xs[3] + 36, 246), (xs[3] + 36, 256)], stroke=CONS, sw=1.8)
+        s.label(300, 250, "confirm 7", size=10.5, fill=CONS, bg=WORK_T, weight=600)
     if step == 5:
-        s.arrow([(xs[0] + 36, 258), (xs[0] + 36, 244), (690, 244), (690, 378), (700, 378)], stroke=CONF, sw=2.2)
-        s.text(620, 240, "Δ_{10} into Δ^{*}", size=10.5, fill=CONF, anchor="middle", weight=600)
+        s.arrow([(xs[3] + 60, 320), (xs[3] + 60, 352), (700, 352)], stroke=CONF, sw=2.2)
+        s.text(xs[3] + 54, 372, "Δ_{7} into Δ^{*}", size=10.5, fill=CONF, anchor="end", weight=600)
     if step == 6:
         s.arrow([(684, 430), (930, 430), (930, 352)], stroke=INK, sw=1.8)
     if step == 0:
@@ -424,9 +417,8 @@ def crud_x2(out, step, mix=False):
         s.arrow([(138, 244), (148, 244), (148, 190), (182, 190)], stroke=CONS)
     clients(s, 916, 326)
     if step == 6:
-        for i, r in enumerate(REPLIES):
-            hot = i == 2
-            chip(s, 902, 446 + i * 22, f"o{i + 1} → {r}", CONF if hot else MUTED, CONF_T if hot else WHITE)
+        for i, (op, r) in enumerate(REPLIES7):
+            chip(s, 890, 446 + i * 22, f"{op} → {r}", CONF, CONF_T)
     s.save(os.path.join(out, f"{PFX[ex]}-{style}-step{step}"))
 
 
@@ -460,10 +452,10 @@ def dual_x1(out, step):
     if "Sp" not in USED[ex][step]:
         fade(s, 46, sp.y - 30, 400, 38)
     ss = Sheet(690, 600, slot=40, dx=36, dy=-24)
-    ss.draw(s, CONF, CONF_T, S0 if step <= 3 else (S6 if step in (4, 5) else S7), size=12)
+    ss.draw(s, CONF, CONF_T, S7 if step == 6 else S0, size=12)
     s.text(676, ss.y - 2, "Δ^{*}", size=20, weight=600, fill=CONF, anchor="end")
     if step == 6:
-        for k in ("c", "e"):
+        for k in ("a", "d"):
             s.poly(ss.tile(KEYS.index(k)), fill="none", stroke=INK, sw=2)
     if "S" not in USED[ex][step]:
         fade(s, 662, ss.y - 30, 300, 38)
@@ -488,19 +480,18 @@ def dual_x1(out, step):
         panel(s, 46, 430, 568, 96, step, t, rows)
     if step == 6:
         t, rows = PANELS[ex][step]
-        panel(s, 662, 300, 296, 96, step, t, [[(rows[0][0][0], CONF, 600)], [("its replies are dropped", MUTED, 400)],
-                                             [("Δ^{*} agrees with Ω^{*} again", MUTED, 400)]])
+        panel(s, 662, 300, 296, 96, step, t, rows)
     if step in (0, 1):
         s.arrow([(330, 130), (330, 156)], stroke=CONS)
         s.label(384, 143, "batch 10", size=11, fill=CONS, bg=WHITE)
         s.arrow([(330, 214), (330, 266)], stroke=WORK)
     if step == 4:
-        s.arrow([(xs[0] + 29, 130), (xs[0] + 29, 156)], stroke=CONS, sw=1.8)
-        s.label(xs[0] + 88, 143, "confirm 10", size=11, fill=CONS, bg=WHITE, weight=600)
-        s.arrow([(xs[0] + 29, 214), (xs[0] + 29, 262)], stroke=WORK, sw=1.8)
+        s.arrow([(xs[3] + 29, 130), (xs[3] + 29, 156)], stroke=CONS, sw=1.8)
+        s.label(xs[3] - 30, 143, "confirm 7", size=11, fill=CONS, bg=WHITE, weight=600)
+        s.arrow([(xs[3] + 29, 214), (xs[3] + 29, 262)], stroke=WORK, sw=1.8)
     if step == 5:
         s.arrow([(614, 478), (660, 478)], stroke=CONF, sw=2)
-        s.text(664, 468, "batch 10", size=10.5, fill=CONF, weight=600)
+        s.text(664, 468, "batch 7", size=10.5, fill=CONF, weight=600)
         s.arrow([(330, 526), (330, 646)], stroke=INK, sw=1.8)
     if step == 0:
         s.arrow([(614, 478), (660, 478)], stroke=CONF, sw=2)
@@ -549,8 +540,8 @@ def dual_x2(out, step, mix=False):
     s.rect(172, 480, 712, 110, r=14, fill=WORK_T)
     thread_badge(s, 184, 498, "confirmed worker", WORK)
     s.text(320, 502, "owns Δ^{*}" if mix else "", size=11, fill=MUTED)
-    kv_box(s, 702, 500, 168, 76, "Δ^{*}", S0 if step <= 3 else (S6 if step in (4, 5) else S7), CONF, CONF_T,
-           "confirmed", rings={"c", "e"} if step == 6 else ())
+    kv_box(s, 702, 500, 168, 76, "Δ^{*}", S7 if step == 6 else S0, CONF, CONF_T,
+           "confirmed", rings={"a", "d"} if step == 6 else ())
     if "S" not in USED[ex][step]:
         fade(s, 696, 494, 180, 88)
 
@@ -580,15 +571,14 @@ def dual_x2(out, step, mix=False):
         s.arrow([(410, 156), (410, 202)], stroke=WORK)
         s.label(410, 176, "batch 10", size=10.5, fill=CONS, bg=PANEL)
     if step == 4:
-        s.arrow([(xs[0] + 29, 156), (xs[0] + 29, 200)], stroke=WORK, sw=1.8)
-        s.label(xs[0] + 29, 176, "confirm 10", size=10.5, fill=CONS, bg=PANEL, weight=600)
+        s.arrow([(xs[3] + 29, 156), (xs[3] + 29, 200)], stroke=WORK, sw=1.8)
+        s.label(xs[3] + 29, 176, "confirm 7", size=10.5, fill=CONS, bg=PANEL, weight=600)
     if step == 5:
         s.arrow([(560, 458), (560, 494)], stroke=CONF, sw=2)
-        s.label(616, 476, "batch 10", size=10.5, fill=CONF, bg=PANEL, weight=600)
+        s.label(612, 476, "batch 7", size=10.5, fill=CONF, bg=PANEL, weight=600)
         s.arrow([(684, 420), (930, 420), (930, 352)], stroke=INK, sw=1.8)
-        for i, r in enumerate(REPLIES):
-            hot = i == 2
-            chip(s, 902, 436 + i * 22, f"o{i + 1} → {r}", CONF if hot else MUTED, CONF_T if hot else WHITE)
+        for i, (op, r) in enumerate(REPLIES7):
+            chip(s, 890, 436 + i * 22, f"{op} → {r}", CONF, CONF_T)
     if step == 0:
         s.arrow([(560, 458), (560, 494)], stroke=CONF, sw=2)
         for n, (bx, by) in enumerate([(420, 214), (420, 262), (xs[0] - 8, 198), (xs[3] + 29, 176),
