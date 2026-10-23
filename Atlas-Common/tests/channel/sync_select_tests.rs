@@ -9,6 +9,7 @@
 
 use atlas_common::channel::RecvError;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx, new_bounded_sync};
+use std::ops::ControlFlow;
 use std::time::Duration;
 
 /// Stands in for the real call sites: channels reached both as fields and
@@ -38,6 +39,17 @@ impl Harness {
     fn on_c(&mut self, v: u32) -> Result<(), RecvError> {
         self.log.push(format!("c{v}"));
         Ok(())
+    }
+
+    /// Like `on_a`, but `0` stands for a message that changes how the ones behind
+    /// it must be handled — a run-mode switch — so the round has to stop there.
+    fn on_a_stopping_at_zero(&mut self, v: u32) -> Result<ControlFlow<()>, RecvError> {
+        self.log.push(format!("a{v}"));
+        Ok(if v == 0 {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        })
     }
 
     /// Component 1 alone: one bounded round, no parking.
@@ -175,6 +187,49 @@ fn an_erroring_body_ends_the_round_without_taking_from_later_arms() {
         2,
         "the second arm's message must still be queued"
     );
+}
+
+#[test]
+fn a_breaking_body_ends_the_round_successfully_and_leaves_the_rest_queued() {
+    let (ta, tb, _tc, mut h) = harness();
+    for v in [1, 0, 2] {
+        ta.send(v).unwrap();
+    }
+    tb.send(9).unwrap();
+
+    // Bodies of both shapes in one round: `Result<ControlFlow<()>, _>` and
+    // `Result<(), _>`.
+    let result = atlas_common::sync_drain! {
+        recv(h.a) -> v => h.on_a_stopping_at_zero(v),
+        recv(h.b) -> v => h.on_b(v),
+    };
+
+    assert!(result.is_ok(), "a break is not a failure");
+    assert_eq!(h.log, vec!["a1", "a0"], "nothing after the break may run");
+    assert_eq!(
+        h.a.try_recv().unwrap(),
+        2,
+        "the rest of the arm stays queued"
+    );
+    assert_eq!(h.b.try_recv().unwrap(), 9, "later arms are not reached");
+}
+
+#[test]
+fn a_breaking_body_makes_select_return_without_parking() {
+    let (ta, _tb, _tc, mut h) = harness();
+    ta.send(0).unwrap();
+    ta.send(1).unwrap();
+
+    let started = std::time::Instant::now();
+    let result: Result<(), RecvError> = atlas_common::sync_select! {
+        recv(h.a) -> v => h.on_a_stopping_at_zero(v),
+        default(Duration::from_secs(5)) => Ok(())
+    };
+
+    assert!(result.is_ok());
+    assert!(started.elapsed() < Duration::from_secs(1), "must not park");
+    assert_eq!(h.log, vec!["a0"]);
+    assert_eq!(h.a.try_recv().unwrap(), 1);
 }
 
 #[test]

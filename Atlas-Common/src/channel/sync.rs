@@ -266,6 +266,7 @@ pub const DEFAULT_DRAIN_LIMIT: usize = 128;
 pub mod __select {
     use super::ChannelSyncRx;
     use crate::channel::RecvError;
+    use std::ops::ControlFlow;
     use std::time::Instant;
 
     /// Identity, but its `&ChannelSyncRx<T>` parameter makes deref coercion do
@@ -274,6 +275,42 @@ pub mod __select {
     #[inline]
     pub fn as_rx<T>(rx: &ChannelSyncRx<T>) -> &ChannelSyncRx<T> {
         rx
+    }
+
+    /// What an arm body's result means for the round it runs in.
+    ///
+    /// A body may return either of two shapes:
+    ///
+    /// * `Result<(), E>` — `Ok(())` means "handled, take the next message". Every
+    ///   existing call site returns this, and keeps doing so unchanged.
+    /// * `Result<ControlFlow<()>, E>` — `Ok(Continue(()))` means the same, while
+    ///   `Ok(Break(()))` ends the round *successfully* after this message, leaving
+    ///   everything not yet taken queued: the rest of this arm and every arm the
+    ///   round has not reached.
+    ///
+    /// `Break` is for a body whose message changes what the next one means — a
+    /// switch of run mode, a barrier — so that the loop around the select can act
+    /// on it before anything else is taken. An `Err` still ends the round as a
+    /// failure.
+    ///
+    /// Both impls are resolved at compile time and inline to the branch the
+    /// round already took on `Err`, so the per-message path costs nothing extra.
+    pub trait RoundStep<E> {
+        fn into_step(self) -> Result<ControlFlow<()>, E>;
+    }
+
+    impl<E> RoundStep<E> for Result<(), E> {
+        #[inline(always)]
+        fn into_step(self) -> Result<ControlFlow<()>, E> {
+            self.map(|()| ControlFlow::Continue(()))
+        }
+    }
+
+    impl<E> RoundStep<E> for Result<ControlFlow<()>, E> {
+        #[inline(always)]
+        fn into_step(self) -> Result<ControlFlow<()>, E> {
+            self
+        }
     }
 
     #[cfg(not(feature = "channel_sync_flume"))]
@@ -465,6 +502,12 @@ pub mod __select {
 /// the round applies `?` for you. A disconnected channel surfaces as an `Err`
 /// already carrying the channel's name, so `E` must be `From<RecvError>`.
 ///
+/// A body may instead return `Result<ControlFlow<()>, E>`. `Ok(Break(()))` ends
+/// the round successfully right after that message, leaving everything not yet
+/// taken queued. Use it when a message changes how the ones behind it must be
+/// handled (a run-mode switch, say): a round otherwise keeps taking messages, up
+/// to `limit` per arm, and a flag the body sets does not stop it.
+///
 /// Evaluates to `Ok(())` whether or not anything was ready. The first body to
 /// return `Err` ends the round, leaving every message it has not reached still
 /// queued — nothing is taken from a channel until its body is about to run.
@@ -501,9 +544,10 @@ macro_rules! sync_drain {
 /// }
 /// ```
 ///
-/// Arms bind the message and bodies return `Result<(), E>`, as in [`sync_drain!`]
-/// — `recv` and `recv_exhaust` mean the same thing, since a round always drains
-/// what it visits. Commas between arms are optional after a block body, matching
+/// Arms bind the message and bodies return `Result<(), E>` or
+/// `Result<ControlFlow<()>, E>`, as in [`sync_drain!`] — `recv` and `recv_exhaust`
+/// mean the same thing, since a round always drains what it visits. A body that
+/// returns `Ok(Break(()))` ends the call after its message. Commas between arms are optional after a block body, matching
 /// `crossbeam_channel::select!`.
 ///
 /// # Ordering
@@ -668,11 +712,18 @@ macro_rules! __atlas_drain_round {
                     __atlas_serviced = true;
                     __atlas_budget -= 1;
 
-                    // A body failing *is* terminal for the round. Nothing has
-                    // been taken from the arms it did not reach, so their
-                    // messages stay queued.
-                    if let ::core::result::Result::Err(__atlas_e) = $body {
-                        break '__atlas_round ::core::result::Result::Err(__atlas_e);
+                    // A body failing *is* terminal for the round, and so is one
+                    // that asks to stop (`Ok(Break(()))`, see `RoundStep`). Either
+                    // way nothing has been taken from what the round did not
+                    // reach, so those messages stay queued.
+                    match $crate::channel::sync::__select::RoundStep::into_step($body) {
+                        ::core::result::Result::Ok(::core::ops::ControlFlow::Continue(())) => {}
+                        ::core::result::Result::Ok(::core::ops::ControlFlow::Break(())) => {
+                            break '__atlas_round ::core::result::Result::Ok(true);
+                        }
+                        ::core::result::Result::Err(__atlas_e) => {
+                            break '__atlas_round ::core::result::Result::Err(__atlas_e);
+                        }
                     }
                 }
             })*
