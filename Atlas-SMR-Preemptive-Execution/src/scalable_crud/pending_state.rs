@@ -8,10 +8,12 @@ use crate::scalable_crud::execution_unit::{
     CollisionState, ParallelExecutionUnit, progress_collision_state,
 };
 use crate::single_threaded_crud::caching_state::{
-    AccumulatedCache, CachingState, apply_delta_to_state, merge_delta_into,
+    AccumulatedCache, CachingState, apply_delta_to_state, cache_entry_count, merge_delta_into,
     rebuild_accumulated_cache,
 };
-use crate::single_threaded_crud::pending_state::{MAX_STAGED_BATCHES, PreemptiveOutcome};
+use crate::single_threaded_crud::pending_state::{
+    CACHE_COMPACTION_FACTOR, MAX_STAGED_BATCHES, PreemptiveOutcome,
+};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::execution::requests::{
     IncrementableUpdateBatch, ReplyBatch, UpdateBatch, UpdateInfo,
@@ -81,8 +83,12 @@ where
     next_confirmed: SeqNo,
     /// Sequence number the next preemptive update is expected to carry.
     next_preemptive: SeqNo,
+    /// Merge of all pending deltas, possibly plus entries of already-confirmed deltas (which
+    /// read the same as the confirmed state). Always empty while `pending` is empty.
     accumulated_cache: AccumulatedCache,
     pending: VecDeque<PendingCachedUpdate<A, S>>,
+    /// Total entries across the deltas in `pending`; the compaction threshold's yardstick.
+    pending_entries: usize,
     /// Batches that arrived ahead of `next_preemptive`, held until the gap closes.
     staged: BTreeMap<SeqNo, UpdateBatch<Request<A, S>>>,
     thread_pool: ThreadPool,
@@ -101,6 +107,7 @@ where
             next_preemptive: initial_state.0,
             accumulated_cache: AccumulatedCache::default(),
             pending: VecDeque::new(),
+            pending_entries: 0,
             staged: BTreeMap::new(),
             thread_pool,
         }
@@ -293,6 +300,7 @@ where
 
         // Merge batch_delta into the upper accumulated cache.
         merge_delta_into(&mut self.accumulated_cache, &batch_delta);
+        self.pending_entries += cache_entry_count(&batch_delta);
         self.next_preemptive = seq.next();
         self.pending.push_back(PendingCachedUpdate {
             batch: batch_copy,
@@ -385,17 +393,35 @@ where
             update.speculated_at.elapsed(),
         );
 
+        self.pending_entries -= cache_entry_count(&update.delta);
+
         let confirm_start = Instant::now();
         apply_delta_to_state(&mut self.confirmed_state, &update.delta);
-        self.accumulated_cache = rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
         metric_duration(
             SCALABLE_CONFIRM_APPLICATION_TIME_ID,
             confirm_start.elapsed(),
         );
 
+        // No refold: entries left over from the applied delta read the same as the confirmed
+        // state, or are overridden by a newer pending delta. See the sequential executor.
+        self.compact_after_confirm();
+
         self.next_confirmed = sequence_no.next();
 
         Ok(update.replies)
+    }
+
+    /// Clear the cache once the pending queue has drained, and refold it from the pending
+    /// deltas once it has grown past `CACHE_COMPACTION_FACTOR` times their size.
+    fn compact_after_confirm(&mut self) {
+        if self.pending.is_empty() {
+            self.accumulated_cache.clear();
+        } else if cache_entry_count(&self.accumulated_cache)
+            > CACHE_COMPACTION_FACTOR * self.pending_entries
+        {
+            self.accumulated_cache =
+                rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
+        }
     }
 
     /// Execute a batch straight against the confirmed state, bypassing speculation, and
@@ -405,6 +431,10 @@ where
         application: &A,
         update_batch: UpdateBatch<Request<A, S>>,
     ) -> ReplyBatch<Reply<A, S>> {
+        // Only reached right after `discard_speculation`, which empties the cache. A leftover
+        // entry would shadow the write made here.
+        debug_assert!(self.accumulated_cache.is_empty());
+
         let seq = update_batch.sequence_number();
         let replies = application.update_batch(&mut self.confirmed_state, update_batch);
 
@@ -427,6 +457,7 @@ where
                 .insert(update.batch.sequence_number(), update.batch);
         }
         self.accumulated_cache = AccumulatedCache::default();
+        self.pending_entries = 0;
         self.next_preemptive = self.next_confirmed;
         metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
     }
@@ -444,6 +475,10 @@ where
             });
         }
 
+        // Writes the confirmed state without a pending delta; a leftover cache entry would
+        // shadow the new value for later speculation.
+        self.accumulated_cache.clear();
+
         let seq = update_batch.sequence_number();
         let replies = application.update_batch(&mut self.confirmed_state, update_batch);
 
@@ -459,6 +494,7 @@ where
         batches: impl IntoIterator<Item = UpdateBatch<Request<A, S>>>,
     ) -> Vec<(SeqNo, ReplyBatch<Reply<A, S>>)> {
         self.pending.clear();
+        self.pending_entries = 0;
         self.staged.clear();
         self.accumulated_cache = AccumulatedCache::default();
 
@@ -479,6 +515,7 @@ where
         self.next_preemptive = seq.next();
         self.accumulated_cache = AccumulatedCache::default();
         self.pending.clear();
+        self.pending_entries = 0;
         self.staged.clear();
     }
 
@@ -504,10 +541,32 @@ where
             .map(|p| p.sequence_number().next())
             .unwrap_or(self.next_confirmed);
 
+        // Dropping entries is the one case that needs a refold.
         self.accumulated_cache = rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
+        self.pending_entries = self
+            .pending
+            .iter()
+            .map(|p| cache_entry_count(&p.delta))
+            .sum();
         metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
 
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn accumulated_cache(&self) -> &AccumulatedCache {
+        &self.accumulated_cache
+    }
+
+    /// The cache as a full refold of the pending deltas would build it.
+    #[cfg(test)]
+    pub(super) fn pending_fold(&self) -> AccumulatedCache {
+        rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta))
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_entries(&self) -> usize {
+        self.pending_entries
     }
 }
 

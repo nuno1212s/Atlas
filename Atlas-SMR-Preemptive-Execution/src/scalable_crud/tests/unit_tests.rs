@@ -12,6 +12,8 @@ use rayon::ThreadPoolBuilder;
 
 use super::test_fixtures::{MapApp, MapState, make_batch};
 use crate::scalable_crud::pending_state::{BacktrackError, ScalableCachingPreemptiveState};
+use crate::single_threaded_crud::caching_state::{CachingState, cache_entry_count};
+use crate::single_threaded_crud::pending_state::CACHE_COMPACTION_FACTOR;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -105,7 +107,7 @@ fn test_confirmation_applies_delta_to_real_state() {
 }
 
 #[test]
-fn test_accumulated_cache_rebuilt_after_confirmation() {
+fn test_confirmation_keeps_later_pending_writes_pending() {
     let app = MapApp;
     let mut s = new_state_expecting(SeqNo::ONE);
     s.handle_preemptive_update(
@@ -528,4 +530,150 @@ fn test_backtrack_after_collision_batch() {
 
     assert_eq!(read_confirmed(&s, b"k1"), Some(b"v1_b".to_vec()));
     assert_eq!(read_confirmed(&s, b"k2"), Some(b"v2_corrected".to_vec()));
+}
+
+// ---------------------------------------------------------------------------
+// The cache is not refolded on confirmation
+// ---------------------------------------------------------------------------
+
+fn write(key: &[u8], value: &[u8]) -> (Vec<u8>, Option<Vec<u8>>) {
+    (key.to_vec(), Some(value.to_vec()))
+}
+
+fn delete(key: &[u8]) -> (Vec<u8>, Option<Vec<u8>>) {
+    (key.to_vec(), None)
+}
+
+/// For every key, reading through the cache and then the confirmed state gives the same
+/// answer as reading through a full refold of the pending deltas and then the confirmed state.
+/// This is the invariant that replaces `cache == fold(pending)`.
+fn assert_read_equivalent(s: &ScalableCachingPreemptiveState<MapState, MapApp>, keys: &[&[u8]]) {
+    let fold = s.pending_fold();
+    for key in keys {
+        let via_cache =
+            CachingState::new(s.confirmed_state(), s.accumulated_cache()).read("default", key);
+        let via_fold = CachingState::new(s.confirmed_state(), &fold).read("default", key);
+        assert_eq!(
+            via_cache,
+            via_fold,
+            "key {:?} reads differently through the cache",
+            String::from_utf8_lossy(key)
+        );
+    }
+}
+
+#[test]
+fn test_cache_read_equivalent_to_pending_fold_after_confirms() {
+    let app = MapApp;
+    let mut s = new_state_expecting(SeqNo::ONE);
+    let keys: &[&[u8]] = &[b"a", b"b", b"c"];
+
+    fn speculate(
+        s: &mut ScalableCachingPreemptiveState<MapState, MapApp>,
+        seq: u32,
+        ops: &[(Vec<u8>, Option<Vec<u8>>)],
+    ) {
+        s.handle_preemptive_update(&MapApp, make_batch(seq, ops))
+            .unwrap();
+        assert_read_equivalent(s, &[b"a", b"b", b"c"]);
+    }
+
+    speculate(&mut s, 1, &[write(b"a", b"1"), write(b"b", b"1")]);
+    speculate(&mut s, 2, &[write(b"a", b"2"), write(b"c", b"2")]);
+
+    // a=1 and b=1 stay in the cache: a is overridden by seq 2, b equals the confirmed value.
+    s.handle_update_confirmed(&app, SeqNo::from(1u32)).unwrap();
+    assert_read_equivalent(&s, keys);
+
+    speculate(&mut s, 3, &[delete(b"b"), write(b"c", b"3")]);
+    s.handle_update_confirmed(&app, SeqNo::from(2u32)).unwrap();
+    assert_read_equivalent(&s, keys);
+
+    // A backtrack drops pending entries and has to refold.
+    speculate(&mut s, 4, &[write(b"a", b"wrong")]);
+    s.backtrack(SeqNo::from(4u32)).unwrap();
+    assert_read_equivalent(&s, keys);
+
+    // Re-create b after its pending delete, and delete a.
+    speculate(&mut s, 4, &[write(b"b", b"4"), delete(b"a")]);
+    // Confirming the delete leaves a tombstone in the cache and removes b from the state.
+    s.handle_update_confirmed(&app, SeqNo::from(3u32)).unwrap();
+    assert!(read_confirmed(&s, b"b").is_none());
+    assert_read_equivalent(&s, keys);
+
+    speculate(&mut s, 5, &[delete(b"c")]);
+    s.handle_update_confirmed(&app, SeqNo::from(4u32)).unwrap();
+    assert_read_equivalent(&s, keys);
+
+    s.handle_update_confirmed(&app, SeqNo::from(5u32)).unwrap();
+    assert_read_equivalent(&s, keys);
+
+    // The log drained, so the cache must be empty rather than full of confirmed entries.
+    assert_eq!(s.pending_count(), 0);
+    assert!(s.accumulated_cache().is_empty());
+
+    assert!(read_confirmed(&s, b"a").is_none());
+    assert_eq!(read_confirmed(&s, b"b"), Some(b"4".to_vec()));
+    assert!(read_confirmed(&s, b"c").is_none());
+}
+
+/// A write that reaches the confirmed state without a pending delta must not be shadowed by
+/// cache entries left over from earlier confirmations.
+#[test]
+fn test_direct_update_after_drain_is_not_shadowed() {
+    let app = MapApp;
+    let mut s = new_state_expecting(SeqNo::ONE);
+
+    s.handle_preemptive_update(&app, make_batch(1, &[write(b"k", b"v1")]))
+        .unwrap();
+    s.handle_update_confirmed(&app, SeqNo::ONE).unwrap();
+    assert!(s.accumulated_cache().is_empty());
+
+    s.handle_confirmed_update(&app, make_batch(2, &[write(b"k", b"v2")]))
+        .unwrap();
+    assert_eq!(read_confirmed(&s, b"k"), Some(b"v2".to_vec()));
+
+    // MapApp replies with the previous value, so this reply is what speculation read for k.
+    s.handle_preemptive_update(&app, make_batch(3, &[write(b"k", b"v3")]))
+        .unwrap();
+    let replies = s.handle_update_confirmed(&app, SeqNo::from(3u32)).unwrap();
+    let replies = replies.into_inner();
+    assert_eq!(replies.len(), 1);
+    assert_eq!(replies[0].reply(), &Some(b"v2".to_vec()));
+    assert_eq!(read_confirmed(&s, b"k"), Some(b"v3".to_vec()));
+}
+
+/// With the log never draining, confirmed entries must not pile up in the cache forever.
+#[test]
+fn test_cache_compaction_bounds_growth() {
+    let app = MapApp;
+    let mut s = new_state_expecting(SeqNo::ONE);
+    let keys: Vec<Vec<u8>> = (0..=50u32).map(|i| format!("k{i}").into_bytes()).collect();
+    let key_refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
+
+    s.handle_preemptive_update(&app, make_batch(1, &[write(&keys[0], b"v")]))
+        .unwrap();
+
+    let mut kept_confirmed_entries = false;
+    for i in 1..=50u32 {
+        s.handle_preemptive_update(&app, make_batch(i + 1, &[write(&keys[i as usize], b"v")]))
+            .unwrap();
+        s.handle_update_confirmed(&app, SeqNo::from(i)).unwrap();
+
+        assert_eq!(s.pending_count(), 1);
+        assert_eq!(s.pending_entries(), cache_entry_count(&s.pending_fold()));
+
+        let cached = cache_entry_count(s.accumulated_cache());
+        assert!(
+            cached <= CACHE_COMPACTION_FACTOR * s.pending_entries(),
+            "cache holds {cached} entries for {} pending",
+            s.pending_entries()
+        );
+        kept_confirmed_entries |= cached > s.pending_entries();
+
+        assert_read_equivalent(&s, &key_refs);
+    }
+
+    // Not every confirmation refolds: some of them leave confirmed entries behind.
+    assert!(kept_confirmed_entries);
 }

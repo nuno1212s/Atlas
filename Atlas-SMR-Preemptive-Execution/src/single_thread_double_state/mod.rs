@@ -17,7 +17,9 @@ use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::executors::monolithic_state::MonStateInstallHandle;
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_execution::repliers::ExecutorReplier;
+use std::ops::ControlFlow;
 use std::sync::Arc;
+use tracing::error;
 
 mod comm_handles;
 mod confirmed_worker;
@@ -39,6 +41,21 @@ const STATE_BUFFER: usize = 128;
 enum RunMode {
     Normal,
     StateTransfer,
+}
+
+impl RunMode {
+    /// How a `sync_select!` arm body ends, given the run mode after its message.
+    ///
+    /// A round drains every channel it visits, so a body that switched the mode would
+    /// otherwise keep being handed the messages queued behind it, and handle them in
+    /// Normal mode before the state transfer they must follow. Breaking leaves them
+    /// queued for the mode the loop switches to.
+    fn round_step(&self) -> ControlFlow<()> {
+        match self {
+            RunMode::Normal => ControlFlow::Continue(()),
+            RunMode::StateTransfer => ControlFlow::Break(()),
+        }
+    }
 }
 
 pub struct PreemptiveDuplicateStateMonolithicExecutor<S, A, NT>
@@ -157,7 +174,9 @@ where
                         recv(self.work_rx) -> exec_req => {
                             self.handle_preemptive_execution_request(exec_req);
 
-                            Ok::<(), RecvError>(())
+                            // Stop at a `PollStateChannel`: what is queued behind it
+                            // must not reach the workers before the state does.
+                            Ok::<_, RecvError>(self.run_mode.round_step())
                         }
                     };
 
@@ -175,10 +194,10 @@ where
                     let seq = message.sequence_number();
                     let state = message.into_state();
 
-                    // when we receive a state message, we can immediately
-                    // Send it to both the confirmed worker and the preemptive worker.
-                    quiet_unwrap!(self.send_state_to_preemptive_worker(seq, state.clone()));
-                    quiet_unwrap!(self.send_state_to_confirmed_worker(seq, state));
+                    // The confirmed worker installs first, and the preemptive worker only
+                    // once that has finished. See `send_state_to_confirmed_worker`.
+                    quiet_unwrap!(self.send_state_to_confirmed_worker(seq, state.clone()));
+                    quiet_unwrap!(self.send_state_to_preemptive_worker(seq, state));
 
                     self.set_run_mode(RunMode::Normal);
                 }
@@ -186,6 +205,7 @@ where
         }
     }
 
+    /// Install `state` on the confirmed worker and wait until it has done so.
     fn send_state_to_confirmed_worker(
         &mut self,
         seq: SeqNo,
@@ -196,7 +216,31 @@ where
             .send(ConfirmedUpdateMessage::StateTransferAvailable)?;
         self.confirmed_worker
             .state_message_tx()
-            .send(StateMessage::ConfirmedStateReceived(seq, state.clone()))?;
+            .send(StateMessage::ConfirmedStateReceived(seq, state))?;
+
+        self.await_confirmed_baseline(Some(seq))
+    }
+
+    /// Wait until the confirmed worker has finished a state install or a catch-up.
+    ///
+    /// Both move the confirmed worker to a new baseline. The confirmed worker gets that
+    /// baseline from here, but the confirmations that follow it from the preemptive worker,
+    /// on a different channel and from a different thread, and nothing orders the two. If
+    /// the preemptive worker were given the state or batches first, it could confirm the
+    /// next batch before the confirmed worker had applied them. A fresh confirmed worker
+    /// would then adopt that batch as its baseline and apply it to the old state, diverging
+    /// and emitting a wrong checkpoint. So the preemptive worker is only told once this
+    /// returns: until then, no such confirmation can exist.
+    ///
+    /// `expected` is the sequence number the confirmed worker should report, when known.
+    fn await_confirmed_baseline(&self, expected: Option<SeqNo>) -> Result<(), NoRetChannelErr> {
+        let acked = self.confirmed_worker.baseline_ack_rx().recv()?;
+
+        if let Some(expected) = expected
+            && acked != expected
+        {
+            error!("Confirmed worker acknowledged baseline {acked:?}, expected {expected:?}");
+        }
 
         Ok(())
     }
@@ -227,11 +271,17 @@ where
                 self.set_run_mode(RunMode::StateTransfer);
             }
             PreemptiveExecutionRequest::CatchUp(confirmed_batches) => {
+                let last_seq = confirmed_batches.iter().last().map(|batch| batch.seq_no());
+
                 quiet_unwrap!(
                     self.confirmed_worker
                         .update_messages()
                         .send(ConfirmedUpdateMessage::CatchUp(confirmed_batches.clone()))
                 );
+
+                // The confirmed worker applies the batches first, and the preemptive worker
+                // gets them only once it has. See `await_confirmed_baseline`.
+                quiet_unwrap!(self.await_confirmed_baseline(last_seq));
 
                 quiet_unwrap!(
                     self.preemptive_worker

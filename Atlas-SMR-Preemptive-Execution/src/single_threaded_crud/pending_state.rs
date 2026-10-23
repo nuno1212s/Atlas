@@ -6,7 +6,7 @@ use crate::metric::{
     SPECULATION_FALLBACK_COUNT_ID,
 };
 use crate::single_threaded_crud::caching_state::{
-    AccumulatedCache, CachingState, apply_delta_to_state, merge_delta_into,
+    AccumulatedCache, CachingState, apply_delta_to_state, cache_entry_count, merge_delta_into,
     rebuild_accumulated_cache,
 };
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -29,6 +29,17 @@ use thiserror::Error;
 /// than two orders of magnitude of headroom: hitting it means a batch was genuinely lost,
 /// not merely late.
 pub(crate) const MAX_STAGED_BATCHES: usize = 4096;
+
+/// How far the accumulated cache may outgrow the pending log before a confirmation compacts it.
+///
+/// A confirmation no longer refolds the cache, so it keeps entries from deltas that have
+/// already been applied to the confirmed state. Those entries are harmless to reads (see
+/// `handle_update_confirmed`) but would accumulate for as long as the pending log never
+/// drains. A confirmation therefore rebuilds the cache only when it holds more than this
+/// factor times the entries of the remaining pending deltas. A rebuild leaves at most `P`
+/// entries (the pending total) and the next one needs the cache to pass `2P` again, i.e. at
+/// least `P` freshly merged entries, so its `O(P)` cost amortizes to `O(1)` per merged entry.
+pub(crate) const CACHE_COMPACTION_FACTOR: usize = 2;
 
 pub(crate) struct PendingCachedUpdate<A, S>
 where
@@ -65,8 +76,9 @@ pub(crate) enum PreemptiveOutcome {
 ///
 /// The real (confirmed) state is only mutated on confirmation.
 /// Preemptive updates write into per-update deltas kept in an in-memory pending queue.
-/// The accumulated cache (merge of all pending deltas) answers reads that fall through
-/// from the current update's local delta.
+/// The accumulated cache (merge of all pending deltas, plus possibly entries of deltas that
+/// were already confirmed) answers reads that fall through from the current update's local
+/// delta.
 ///
 /// Sequence tracking is expressed as the *next expected* sequence number rather than the
 /// last applied one. That distinction matters: `SeqNo::ZERO` is both the initial value and
@@ -83,10 +95,14 @@ where
     next_confirmed: SeqNo,
     /// Sequence number the next preemptive update is expected to carry.
     next_preemptive: SeqNo,
-    /// Merge of all pending deltas; checked on reads before the real state.
+    /// Merge of all pending deltas; checked on reads before the real state. May also hold
+    /// entries of already-confirmed deltas, which read the same as the confirmed state does —
+    /// see `handle_update_confirmed`. Always empty while `pending` is empty.
     accumulated_cache: AccumulatedCache,
     /// FIFO queue of pending updates awaiting confirmation.
     pending: VecDeque<PendingCachedUpdate<A, S>>,
+    /// Total entries across the deltas in `pending`; the compaction threshold's yardstick.
+    pending_entries: usize,
     /// Batches that arrived ahead of `next_preemptive`, keyed by sequence number and held
     /// until the gap in front of them closes. Draining is strictly in order, so a batch
     /// only ever leaves this buffer once every sequence number below it has been executed.
@@ -105,6 +121,7 @@ where
             next_preemptive: initial_state.0,
             accumulated_cache: AccumulatedCache::default(),
             pending: VecDeque::new(),
+            pending_entries: 0,
             staged: BTreeMap::new(),
         }
     }
@@ -215,6 +232,7 @@ where
 
         let delta = caching_state.into_delta();
         merge_delta_into(&mut self.accumulated_cache, &delta);
+        self.pending_entries += cache_entry_count(&delta);
         self.next_preemptive = seq.next();
         self.pending.push_back(PendingCachedUpdate {
             batch: batch_copy,
@@ -226,8 +244,9 @@ where
 
     /// Confirm the head pending update (must be at `sequence_no`).
     ///
-    /// Applies its delta to the real state, rebuilds the accumulated cache from the
-    /// remaining pending deltas, and returns the pre-computed replies.
+    /// Applies its delta to the real state and returns the pre-computed replies. The
+    /// accumulated cache is left as it is, except that it is cleared once the pending queue
+    /// drains and compacted when it has outgrown the pending deltas.
     ///
     /// If the batch was never speculated because it was still waiting in the reorder
     /// buffer, it is executed directly against the confirmed state instead: the decision
@@ -305,20 +324,39 @@ where
         );
         metric_store_count(CACHE_PENDING_QUEUE_SIZE_ID, self.pending.len() + 1);
 
-        let delta_size: usize = update.delta.values().map(|col| col.len()).sum();
+        let delta_size = cache_entry_count(&update.delta);
         metric_store_count(CACHE_DELTA_SIZE_ID, delta_size);
+        self.pending_entries -= delta_size;
 
         let confirm_start = Instant::now();
         apply_delta_to_state(&mut self.confirmed_state, &update.delta);
         metric_duration(CACHE_CONFIRM_APPLICATION_TIME_ID, confirm_start.elapsed());
 
-        let rebuild_start = Instant::now();
-        self.accumulated_cache = rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
-        metric_duration(CACHE_REBUILD_TIME_ID, rebuild_start.elapsed());
+        // The cache is not refolded here. Every entry it still holds from the delta just
+        // applied either equals the confirmed state's value for that key (a tombstone and an
+        // absent key both read as "absent") or has been overridden by a newer pending delta,
+        // so reads through local delta → cache → confirmed state are unchanged.
+        self.compact_after_confirm();
 
         self.next_confirmed = sequence_no.next();
 
         Ok(update.replies)
+    }
+
+    /// Keep the accumulated cache from holding confirmed entries indefinitely: clear it once
+    /// the pending queue has drained, and refold it from the pending deltas once it has grown
+    /// past `CACHE_COMPACTION_FACTOR` times their size.
+    fn compact_after_confirm(&mut self) {
+        if self.pending.is_empty() {
+            self.accumulated_cache.clear();
+        } else if cache_entry_count(&self.accumulated_cache)
+            > CACHE_COMPACTION_FACTOR * self.pending_entries
+        {
+            let rebuild_start = Instant::now();
+            self.accumulated_cache =
+                rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
+            metric_duration(CACHE_REBUILD_TIME_ID, rebuild_start.elapsed());
+        }
     }
 
     /// Execute a batch straight against the confirmed state, bypassing speculation, and
@@ -328,6 +366,10 @@ where
         application: &A,
         update_batch: UpdateBatch<Request<A, S>>,
     ) -> ReplyBatch<Reply<A, S>> {
+        // Only reached right after `discard_speculation`, which empties the cache. A leftover
+        // entry would shadow the write made here.
+        debug_assert!(self.accumulated_cache.is_empty());
+
         let seq = update_batch.sequence_number();
         let replies = application.update_batch(&mut self.confirmed_state, update_batch);
 
@@ -351,6 +393,7 @@ where
                 .insert(update.batch.sequence_number(), update.batch);
         }
         self.accumulated_cache = AccumulatedCache::default();
+        self.pending_entries = 0;
         self.next_preemptive = self.next_confirmed;
         metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
     }
@@ -371,6 +414,11 @@ where
             });
         }
 
+        // This writes the confirmed state without going through a pending delta. Any entry
+        // left in the cache would shadow the new value for later speculation, so make sure
+        // there is none (it should already be empty, since `pending` is).
+        self.accumulated_cache.clear();
+
         let seq = update_batch.sequence_number();
         let replies = application.update_batch(&mut self.confirmed_state, update_batch);
 
@@ -389,6 +437,7 @@ where
         batches: impl IntoIterator<Item = UpdateBatch<Request<A, S>>>,
     ) -> Vec<(SeqNo, ReplyBatch<Reply<A, S>>)> {
         self.pending.clear();
+        self.pending_entries = 0;
         self.staged.clear();
         self.accumulated_cache = AccumulatedCache::default();
 
@@ -412,6 +461,7 @@ where
         self.next_preemptive = seq.next();
         self.accumulated_cache = AccumulatedCache::default();
         self.pending.clear();
+        self.pending_entries = 0;
         self.staged.clear();
     }
 
@@ -443,12 +493,35 @@ where
             .map(|p| p.sequence_number().next())
             .unwrap_or(self.next_confirmed);
 
+        // Dropping entries is the one case that needs a refold: the cache may hold writes of
+        // the discarded deltas, and nothing else would remove them.
         let rebuild_start = Instant::now();
         self.accumulated_cache = rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
+        self.pending_entries = self
+            .pending
+            .iter()
+            .map(|p| cache_entry_count(&p.delta))
+            .sum();
         metric_duration(CACHE_REBUILD_TIME_ID, rebuild_start.elapsed());
         metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
 
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn accumulated_cache(&self) -> &AccumulatedCache {
+        &self.accumulated_cache
+    }
+
+    /// The cache as a full refold of the pending deltas would build it.
+    #[cfg(test)]
+    pub(crate) fn pending_fold(&self) -> AccumulatedCache {
+        rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_entries(&self) -> usize {
+        self.pending_entries
     }
 }
 

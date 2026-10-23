@@ -70,8 +70,8 @@ Added in this session. Lives in `src/single_threaded_crud/`. Single worker threa
 Instead of maintaining two full state copies and re-executing on confirmation, this design:
 - Keeps **one confirmed state** (real state, only mutated on confirmation)
 - Each preemptive update executes through a `CachingState` proxy — writes go into a per-update **delta** (RAM cache), the real state is never touched
-- An **accumulated cache** = ordered merge of all pending deltas; answers reads that fall through from the current update's local delta
-- On **confirmation**: apply the pre-computed delta to the real state — no re-execution
+- An **accumulated cache** = ordered merge of all pending deltas (plus, until compaction, entries of already-confirmed ones); answers reads that fall through from the current update's local delta
+- On **confirmation**: apply the pre-computed delta to the real state — no re-execution, and no cache refold: leftover entries of the applied delta read the same as the real state. The cache is cleared when the pending queue drains and refolded only when it exceeds `CACHE_COMPACTION_FACTOR` (2) × the pending deltas' entries (amortized compaction). Any path that writes the real state without a pending delta (`handle_confirmed_update`, the fallback's `execute_directly`) must run over an empty cache, or stale entries would shadow its writes
 - On **backtrack**: discard pending deltas from the bad point forward, rebuild the accumulated cache — no state clone
 
 ```
@@ -82,9 +82,10 @@ PreemptiveUpdate  ────► execute via CachingState proxy
                          store (batch, replies, delta) in pending queue
 
 PreemptiveUpdateFinalized(seq) ──► pop head, apply delta to real state,
-                                    rebuild accumulated_cache, send replies
+                                    clear cache if pending drained, else compact
+                                    if oversized; send replies
 
-UpdateBatch (direct) ──► execute directly on confirmed_state (no pending allowed)
+UpdateBatch (direct) ──► clear cache, execute directly on confirmed_state (no pending allowed)
 
 CatchUp ──────────────► clear pending + cache, apply directly, advance seq_nos
 
@@ -276,14 +277,45 @@ Use the dual-state design when `S` does not implement `CRUDState`. Use the CRUD 
 
 ## Known Incomplete Areas
 
-Several `todo!()` placeholders remain in the dual-state design (this crate is under active development on the `preemptive_execution` branch):
-- `UpdateFinalizedAndGetAppstate` path in orchestrator (`mod.rs` ~line 234)
-- `PollStateChannel` handling in preemptive worker (`preemptive_worker/mod.rs`)
-- `ConfirmedToPreemptiveMsg` state resync in preemptive worker
+No `todo!()` placeholders remain. The dual-state design has two known gaps, each pinned by an
+`#[ignore]`d test in `single_thread_double_state/tests/execution.rs` that says what the fix needs:
+- a `ConfirmedUpdate` for an already-speculated seq (deferred persistence) kills the preemptive worker;
+- an out-of-order finalize kills the preemptive worker with `SeqMismatch`.
+
+**State transfer and catch-up reach the confirmed worker first, and the orchestrator waits.**
+Both move the confirmed worker to a new baseline. It gets that baseline from the orchestrator,
+but the confirmations that follow it come from the preemptive worker, on another channel and from
+another thread. If the preemptive worker were told first, it could confirm the next batch before
+the confirmed worker had applied the baseline. A *fresh* confirmed worker would then adopt that
+batch as its baseline (`awaiting_first_confirmed`) and apply it to the old state, so the state
+diverges and a wrong checkpoint goes out.
+
+So the orchestrator (`await_confirmed_baseline`) waits for the confirmed worker's `baseline_ack`
+before passing the state or the catch-up batches to the preemptive worker.
+- The ack carries the confirmed worker's resulting sequence number, which is checked against
+  the installed seq or the last caught-up batch.
+- The cost: the two workers apply a catch-up one after the other, not in parallel.
+- `test_fresh_confirmed_worker_acks_{install_before_preemptive_gets_state,catch_up_before_preemptive_gets_batches}`
+  pin the worker side.
+- Under the old order the failure needed a thread descheduled inside one `sync_select!` round,
+  so no executor-level test reproduces it deterministically. The `test_executor_*_on_fresh_executor`
+  tests are smoke tests.
 
 The CRUD cache executor (`single_threaded_crud`) is fully implemented and tested.
 
-**Pre-existing flaky tests:** `single_thread_double_state::tests::execution::test_state_transfer_*`
-and `test_calc_*_states_converge` fail intermittently (roughly half the time) on the `todo!()`
-paths above, timing out after 5s on a channel `recv`. This predates the reorder-buffer work —
-verify against a stashed baseline before attributing a failure in that family to a change.
+**`sync_select!` drains — end the round when a body switches run mode.**
+Since the selector rewrite (2026-08-31), one `sync_select!` round takes up to
+`DEFAULT_DRAIN_LIMIT` (128) messages from *every* arm and runs the body for each. Setting a
+flag in a body does not stop the round. Before the fix, an arm that switched to
+`RunMode::StateTransfer` let the messages queued behind it run in Normal mode, before the state
+they must follow had been installed. The dual-state state-transfer and catch-up tests failed
+most of the time (5s `recv` timeouts), which was long misread as flakiness on the old `todo!()`
+paths.
+
+The fix keeps `sync_select!`:
+- An arm body may return `Result<ControlFlow<()>, E>`, and `Ok(Break(()))` ends the round
+  successfully, leaving everything not yet taken queued (Atlas-Common `__select::RoundStep`).
+- All three dual-state loops return `self.run_mode.round_step()`, which is `Break` once the mode
+  has left Normal. The preemptive worker's state-transfer select breaks after its one install.
+- The confirmed worker's install uses `advance_to_seq` rather than `reset_with_seq`, so a
+  confirmation for a later batch that was queued before the install survives it.

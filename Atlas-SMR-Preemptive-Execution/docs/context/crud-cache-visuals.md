@@ -38,9 +38,9 @@ How your description of the design maps to the code, and where the code differs 
 | Your term | Code | What it actually holds |
 |---|---|---|
 | confirmed state | `confirmed_state: S` | The one authoritative copy. Written only by a commit (apply a delta), direct execution, catch-up and state install. Speculation never writes it. |
-| a smaller cache holding only pending information | `accumulated_cache: AccumulatedCache` | `column → key → Option<value>`, where `None` (drawn **⊥**) is a tombstone for a deleted key. It holds **only keys written by pending batches**. It is never filled from reads of `S`, so it is not a read cache. Its size is the union of the pending write sets. |
+| a smaller cache holding only pending information | `accumulated_cache: AccumulatedCache` | `column → key → Option<value>`, where `None` (drawn **⊥**) is a tombstone for a deleted key. It holds **only keys written by speculated batches**: the pending ones, plus entries of already-committed ones, which read the same as `S` (finding 9). It is cleared when the log drains and refolded when it outgrows the pending write sets by 2×. It is never filled from reads of `S`, so it is not a read cache. |
 | write log | `pending: VecDeque<PendingCachedUpdate>` | One entry per speculated batch, oldest at the front. Each entry holds: **the batch itself**, its **held replies**, **Ω** (the write set) and a timestamp. Ω is the batch's *net* write set: the last value per key, with tombstones for deletes. The log is per batch, not per operation. Reads, and the order of writes inside a batch, are not recorded. |
-| replay | two different mechanisms | **(a) Refold.** On every commit and every backtrack, `C` is rebuilt by folding the surviving Ωs oldest first. Nothing is re-executed. **(b) Re-execution.** The stored batch copies are sent back to the reorder buffer and speculated again. This happens only on the fallback route. |
+| replay | two different mechanisms | **(a) Refold.** On every backtrack, and on a commit only as a compaction (finding 9), `C` is rebuilt by folding the surviving Ωs oldest first. Nothing is re-executed. **(b) Re-execution.** The stored batch copies are sent back to the reorder buffer and speculated again. This happens only on the fallback route. |
 | *(not in your description)* | `CachingState.delta` (**ω**) | The write set of the batch *currently executing*, private to it. It becomes that batch's Ω when the batch ends. |
 | *(not in your description)* | `staged: BTreeMap<SeqNo, batch>` | The reorder buffer. It holds batches that arrived ahead of their turn, as inputs only: nothing has been executed and there is no Ω. |
 
@@ -51,7 +51,7 @@ What each operation does to the structure:
 | read (in a batch) | checked first | checked second | — | checked last; a ⊥ in ω or C stops the read before `S` |
 | create / update / delete (in a batch) | receives the write (`delete` writes ⊥) | — | — | — |
 | batch ends | becomes Ω | `C ⊕= Ω` (merge, newer wins) | append `(batch, replies, Ω)` | — |
-| commit of the head | — | refold from the remaining Ωs | pop the head; release its replies | `S ⊕= Δhead`: `Some(v)` becomes `update`, ⊥ becomes `delete` |
+| commit of the head | — | kept as is; cleared if the log drained, refolded if larger than 2× the remaining Ωs (finding 9) | pop the head; release its replies | `S ⊕= Δhead`: `Some(v)` becomes `update`, ⊥ becomes `delete` |
 | backtrack to *k* | — | refold from the Ωs that survive | drop entries ≥ *k*; staged ≥ *k* is also evicted | — |
 | fallback (commit of a batch still in `staged`) | — | cleared | every entry's batch goes back to `staged` | the batch runs directly with `update_batch` |
 | state install / catch-up | — | cleared | cleared, and `staged` cleared too | replaced / batches applied directly |
@@ -59,7 +59,7 @@ What each operation does to the structure:
 
 **Invariants the figures rely on:**
 
-1. `C ≡ fold(Ω in log order)` at all times. This is stated in `02` §3.5, and every mutation path either merges, refolds or clears.
+1. Reading through `C` then `S` gives the same value as reading through `fold(Ω in log order)` then `S`, for every key; `C` is empty when the log is. This is stated in `02` §3.5, and every mutation path either merges, refolds or clears. *(Before finding 9 was resolved, the stronger `C ≡ fold(Ω in log order)` held; the figures still draw that.)*
 2. *(Inferred from the code paths, not asserted in code.)* The log covers exactly the sequence
    numbers `[next_confirmed, next_preemptive)`, contiguous and ascending.
 3. *(Inferred from the code paths, not asserted in code.)* Every key in `staged` is
@@ -79,7 +79,7 @@ What each operation does to the structure:
   - fields: `:81-93`
   - speculate: merge `:217`, append `:219-224`
   - commit route: `:248-253`
-  - apply `:312`, refold `:316`
+  - apply `:332`, then no refold: `compact_after_confirm` `:339`, `:349-360` (finding 9)
   - fallback: `:257-276`, `:326-356`
   - direct commit: `:361-381`
   - catch-up: `:386-404`
@@ -563,6 +563,7 @@ is drawn as fact in the figures.
    - The refold costs O(Σ|Ω|) on every commit (`pending_state.rs:316`).
    - This refines `02` §7. That section is right that *removing* the head's contribution needs per-key provenance, but it does not say that the removal is optional for correctness.
    - It is recorded here, not as a contradiction.
+   - **Now implemented** — see finding 9.
 
 2. **A commit turns a `create` into an `update`.**
    - `apply_delta_to_state` writes every `Some(v)` with `state.update` (`caching_state.rs:93-95`). A key created speculatively therefore reaches `S` only if `update` inserts missing keys.
@@ -606,7 +607,15 @@ is drawn as fact in the figures.
    - The dual-state figures therefore say nothing about batch 12 on a backtrack.
 
 9. **A confirm rebuilds the cache, but only a backtrack needs to.** (The intended design, drawn from
-   figure iteration 15 on.)
+   figure iteration 15 on.) **Resolved:** the code now matches. Both executors keep the cache on a
+   confirm (`single_threaded_crud/pending_state.rs` `compact_after_confirm`, and the same in
+   `scalable_crud/pending_state.rs`). They clear it when the log drains, and refold it only when it
+   holds more than `CACHE_COMPACTION_FACTOR` (2) × the remaining Ωs' entries, so a log that never
+   drains cannot grow it without bound. `handle_confirmed_update` clears it before writing Δ\*.
+   The `Staged` fallback runs right after `discard_speculation`, which already clears it, and a
+   `debug_assert!` in `execute_directly` checks that. Unit tests cover read-equivalence, the shadowing
+   hazard and the compaction bound in both executors. The text below describes the change as
+   proposed.
    - The code rebuilds the cache from the remaining log on every confirm:
      `single_threaded_crud/pending_state.rs:316` and `scalable_crud/pending_state.rs:390` call
      `rebuild_accumulated_cache(self.pending…)` after `apply_delta_to_state`.

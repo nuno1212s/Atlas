@@ -38,7 +38,9 @@ pub const DS_OPS_PER_BATCH_ID: usize = 807;
 pub const CACHE_PREEMPTIVE_EXECUTION_TIME: &str = "CACHE_PREEMPTIVE_EXECUTION_TIME";
 pub const CACHE_PREEMPTIVE_EXECUTION_TIME_ID: usize = 802;
 
-/// Time to apply a pre-computed delta to the confirmed state on confirmation.
+/// Time to apply a pre-computed delta to the confirmed state on confirmation. Covers the
+/// apply only: a confirmation no longer refolds the accumulated cache, and an occasional
+/// compaction is timed separately under `CACHE_REBUILD_TIME`.
 pub const CACHE_CONFIRM_APPLICATION_TIME: &str = "CACHE_CONFIRM_APPLICATION_TIME";
 pub const CACHE_CONFIRM_APPLICATION_TIME_ID: usize = 803;
 
@@ -66,7 +68,9 @@ pub const CACHE_OPS_PER_BATCH_ID: usize = 813;
 pub const CACHE_UNORDERED_EXECUTION_TIME: &str = "CACHE_UNORDERED_EXECUTION_TIME";
 pub const CACHE_UNORDERED_EXECUTION_TIME_ID: usize = 814;
 
-/// Time to rebuild the accumulated cache after a confirmation or backtrack.
+/// Time to rebuild the accumulated cache after a backtrack, or when a confirmation compacts a
+/// cache that has outgrown the pending deltas (`CACHE_COMPACTION_FACTOR`). A confirmation does
+/// not rebuild otherwise.
 pub const CACHE_REBUILD_TIME: &str = "CACHE_REBUILD_TIME";
 pub const CACHE_REBUILD_TIME_ID: usize = 815;
 
@@ -105,7 +109,8 @@ pub const SCALABLE_SPECULATION_TO_CONFIRM_LATENCY_ID: usize = 826;
 
 /// Time to apply a pre-computed delta to the confirmed state on confirmation
 /// (scalable CRUD executor). Counterpart of `CACHE_CONFIRM_APPLICATION_TIME`, and the
-/// other half of what the confirmation costs once speculation has paid off.
+/// other half of what the confirmation costs once speculation has paid off. Covers the apply
+/// only; the occasional cache compaction after it is not timed.
 pub const SCALABLE_CONFIRM_APPLICATION_TIME: &str = "SCALABLE_CONFIRM_APPLICATION_TIME";
 pub const SCALABLE_CONFIRM_APPLICATION_TIME_ID: usize = 827;
 

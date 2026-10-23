@@ -633,6 +633,191 @@ fn test_state_transfer_preemptive_worker_then_confirm() {
     assert_eq!(msg.state().0, 55u32); // 50 + 5
 }
 
+/// Drive the two workers' installs in the order the orchestrator used to: the preemptive
+/// worker installs the transferred state (seq 5, value 50) and confirms seq 6 before the
+/// confirmed worker has seen its own install, so that confirmation is already queued there
+/// when the install lands. The orchestrator now waits for the confirmed worker's install
+/// acknowledgement first, so it no longer produces this order. The `warm` case still
+/// guards the confirmed worker on its own: one with an established baseline must keep the
+/// queued confirmation across the install.
+fn confirmation_queued_before_confirmed_install(warm: bool) -> AppStateMessage<Counter> {
+    let (preemptive, confirmed, state_rx) = spawn_workers();
+
+    if warm {
+        preemptive
+            .preemptive_exec_handle()
+            .send(PreemptiveWorkMessage::PreemptiveUpdate(make_batch(1, &[1])))
+            .unwrap();
+        preemptive
+            .preemptive_exec_handle()
+            .send(
+                PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                    SeqNo::from(1u32),
+                    Instant::now(),
+                ),
+            )
+            .unwrap();
+        let msg = state_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
+        assert_eq!(msg.seq(), SeqNo::from(1u32));
+    }
+
+    preemptive
+        .preemptive_exec_handle()
+        .send(PreemptiveWorkMessage::PollStateChannel)
+        .unwrap();
+    preemptive
+        .preemptive_state_handle()
+        .send(StateMessage::ConfirmedStateReceived(
+            SeqNo::from(5u32),
+            Counter(50),
+        ))
+        .unwrap();
+    preemptive
+        .preemptive_exec_handle()
+        .send(PreemptiveWorkMessage::PreemptiveUpdate(make_batch(6, &[5])))
+        .unwrap();
+    preemptive
+        .preemptive_exec_handle()
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(6u32),
+                Instant::now(),
+            ),
+        )
+        .unwrap();
+
+    // Give the preemptive worker time to forward the confirmation of seq 6, so it reaches
+    // the confirmed worker before the install does.
+    std::thread::sleep(Duration::from_millis(100));
+
+    confirmed
+        .update_messages()
+        .send(ConfirmedUpdateMessage::StateTransferAvailable)
+        .unwrap();
+    confirmed
+        .state_message_tx()
+        .send(StateMessage::ConfirmedStateReceived(
+            SeqNo::from(5u32),
+            Counter(50),
+        ))
+        .unwrap();
+
+    state_rx.recv_timeout(RECV_TIMEOUT).expect("timed out")
+}
+
+/// The install must not discard a confirmation for a later batch that was already queued.
+#[test]
+fn test_confirmation_queued_before_confirmed_worker_install_survives() {
+    let msg = confirmation_queued_before_confirmed_install(true);
+    assert_eq!(msg.seq(), SeqNo::from(6u32));
+    assert_eq!(msg.state().0, 55u32); // 50 + 5
+}
+
+/// The ordering the orchestrator relies on (`send_state_to_confirmed_worker`): the confirmed
+/// worker acknowledges an install only once it has happened. Only then does the preemptive
+/// worker get the state, so even a fresh confirmed worker, which would otherwise adopt the
+/// first confirmation it sees as its baseline, cannot apply the next batch to its
+/// pre-transfer state.
+#[test]
+fn test_fresh_confirmed_worker_acks_install_before_preemptive_gets_state() {
+    let (preemptive, confirmed, state_rx) = spawn_workers();
+
+    confirmed
+        .update_messages()
+        .send(ConfirmedUpdateMessage::StateTransferAvailable)
+        .unwrap();
+    confirmed
+        .state_message_tx()
+        .send(StateMessage::ConfirmedStateReceived(
+            SeqNo::from(5u32),
+            Counter(50),
+        ))
+        .unwrap();
+
+    let acked = confirmed
+        .baseline_ack_rx()
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("the confirmed worker never acknowledged its install");
+    assert_eq!(acked, SeqNo::from(5u32));
+
+    preemptive
+        .preemptive_exec_handle()
+        .send(PreemptiveWorkMessage::PollStateChannel)
+        .unwrap();
+    preemptive
+        .preemptive_state_handle()
+        .send(StateMessage::ConfirmedStateReceived(
+            SeqNo::from(5u32),
+            Counter(50),
+        ))
+        .unwrap();
+    preemptive
+        .preemptive_exec_handle()
+        .send(PreemptiveWorkMessage::PreemptiveUpdate(make_batch(6, &[5])))
+        .unwrap();
+    preemptive
+        .preemptive_exec_handle()
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(6u32),
+                Instant::now(),
+            ),
+        )
+        .unwrap();
+
+    let msg = state_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
+    assert_eq!(msg.seq(), SeqNo::from(6u32));
+    assert_eq!(msg.state().0, 55u32); // 50 + 5, not 0 + 5
+}
+
+/// The same contract for catch-up: the confirmed worker acknowledges once it has applied
+/// the batches, reporting the last one's sequence number, and only then does the preemptive
+/// worker get them.
+#[test]
+fn test_fresh_confirmed_worker_acks_catch_up_before_preemptive_gets_batches() {
+    let (preemptive, confirmed, state_rx) = spawn_workers();
+    let batches = || {
+        MaybeVec::from_many(vec![
+            make_batch(1, &[10]),
+            make_batch(2, &[20]),
+            make_batch(3, &[30]),
+        ])
+    };
+
+    confirmed
+        .update_messages()
+        .send(ConfirmedUpdateMessage::CatchUp(batches()))
+        .unwrap();
+
+    let acked = confirmed
+        .baseline_ack_rx()
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("the confirmed worker never acknowledged its catch-up");
+    assert_eq!(acked, SeqNo::from(3u32));
+
+    preemptive
+        .preemptive_exec_handle()
+        .send(PreemptiveWorkMessage::CatchUp(batches()))
+        .unwrap();
+    preemptive
+        .preemptive_exec_handle()
+        .send(PreemptiveWorkMessage::PreemptiveUpdate(make_batch(4, &[5])))
+        .unwrap();
+    preemptive
+        .preemptive_exec_handle()
+        .send(
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                SeqNo::from(4u32),
+                Instant::now(),
+            ),
+        )
+        .unwrap();
+
+    let msg = state_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
+    assert_eq!(msg.seq(), SeqNo::from(4u32));
+    assert_eq!(msg.state().0, 65u32); // 10 + 20 + 30 + 5
+}
+
 // ---------------------------------------------------------------------------
 // State transfer + CatchUp
 // ---------------------------------------------------------------------------
@@ -1758,6 +1943,57 @@ fn test_executor_state_transfer_then_resume() {
         .expect("timed out after state transfer — orchestrator did not resume");
     assert_eq!(msg.seq(), SeqNo::from(6u32));
     assert_eq!(msg.state().0, 110);
+}
+
+/// A fresh executor's first activity is a catch-up, followed at once by a speculated batch.
+/// The confirmed worker must have applied the caught-up batches before that batch's
+/// confirmation reaches it.
+#[test]
+fn test_executor_catch_up_then_speculated_batch_on_fresh_executor() {
+    let (handle, _state_tx, checkpoint_rx) = spawn_executor();
+
+    handle
+        .catch_up_to_quorum(MaybeVec::from_many(vec![
+            make_batch(1, &[10]),
+            make_batch(2, &[20]),
+            make_batch(3, &[30]),
+        ]))
+        .unwrap();
+
+    handle.queue_preemptive_update(make_batch(4, &[5])).unwrap();
+    handle
+        .queue_update_finalized_and_get_appstate(SeqNo::from(4u32))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("timed out after catch-up");
+    assert_eq!(msg.seq(), SeqNo::from(4u32));
+    assert_eq!(msg.state().0, 65); // 10 + 20 + 30 + 5
+}
+
+/// A fresh executor's first activity is a state transfer, followed at once by a speculated
+/// batch. The confirmed worker must have installed the state before that batch's
+/// confirmation reaches it, or it applies the batch to its initial state instead.
+#[test]
+fn test_executor_state_transfer_then_speculated_batch_on_fresh_executor() {
+    let (handle, state_tx, checkpoint_rx) = spawn_executor();
+
+    handle.poll_state_channel().unwrap();
+    state_tx
+        .send(InstallStateMessage::new(SeqNo::from(5u32), Counter(50)))
+        .unwrap();
+
+    handle.queue_preemptive_update(make_batch(6, &[5])).unwrap();
+    handle
+        .queue_update_finalized_and_get_appstate(SeqNo::from(6u32))
+        .unwrap();
+
+    let msg = checkpoint_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("timed out after state transfer");
+    assert_eq!(msg.seq(), SeqNo::from(6u32));
+    assert_eq!(msg.state().0, 55); // 50 + 5, not 0 + 5
 }
 
 /// Regression test for the 0-indexed first batch (febft numbers ordered
