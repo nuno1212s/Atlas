@@ -1,5 +1,6 @@
 use crate::metric::{
-    OPERATIONS_EXECUTED_PER_SECOND_ID, REORDER_BUFFER_SIZE_ID, REORDER_STAGED_COUNT_ID,
+    CACHE_BACKTRACK_COUNT_ID, CACHE_REBUILD_TIME_ID, OPERATIONS_EXECUTED_PER_SECOND_ID,
+    REORDER_BUFFER_SIZE_ID, REORDER_STAGED_COUNT_ID,
     SCALABLE_COLLISION_COUNT_ID, SCALABLE_COLLISION_RATE_ID, SCALABLE_CONFIRM_APPLICATION_TIME_ID,
     SCALABLE_OPS_PER_BATCH_ID, SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID,
     SCALABLE_SPECULATION_TO_CONFIRM_LATENCY_ID, SPECULATION_FALLBACK_COUNT_ID,
@@ -527,6 +528,11 @@ where
             });
         }
 
+        // Counted under the cache executors' shared name, as `single_threaded_crud` does. This
+        // executor used to backtrack without recording it, which made every "no backtracks
+        // happened" check pass vacuously for it.
+        metric_increment(CACHE_BACKTRACK_COUNT_ID, Some(1));
+
         self.pending
             .retain(|p| p.sequence_number().cmp(&backtrack_seq) == Ordering::Less);
 
@@ -542,12 +548,14 @@ where
             .unwrap_or(self.next_confirmed);
 
         // Dropping entries is the one case that needs a refold.
+        let rebuild_start = Instant::now();
         self.accumulated_cache = rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
         self.pending_entries = self
             .pending
             .iter()
             .map(|p| cache_entry_count(&p.delta))
             .sum();
+        metric_duration(CACHE_REBUILD_TIME_ID, rebuild_start.elapsed());
         metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
 
         Ok(())
