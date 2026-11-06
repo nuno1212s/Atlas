@@ -97,6 +97,29 @@ impl Application<Counter> for CounterApp {
     }
 }
 
+/// As [`CounterApp`], but each update takes `UPDATE_TIME`, keeping the confirmed worker busy.
+struct SlowCounterApp;
+
+const UPDATE_TIME: Duration = Duration::from_millis(15);
+
+impl Application<Counter> for SlowCounterApp {
+    type AppData = TestData;
+
+    fn initial_state() -> atlas_common::error::Result<Counter> {
+        Ok(Counter(0))
+    }
+
+    fn unordered_execution(&self, state: &Counter, _: u32) -> u32 {
+        state.0
+    }
+
+    fn update(&self, state: &mut Counter, req: u32) -> u32 {
+        std::thread::sleep(UPDATE_TIME);
+        state.0 += req;
+        state.0
+    }
+}
+
 /// No-op network node — workers using `FollowerReplier` never actually call it for
 /// ordered requests, so a unit struct is sufficient.
 struct NoopNode;
@@ -152,7 +175,22 @@ fn spawn_workers() -> (
     ConfirmedWorkerHandle<u32, Counter>,
     ChannelSyncRx<AppStateMessage<Counter>>,
 ) {
-    let app = Arc::new(CounterApp);
+    spawn_workers_with(CounterApp)
+}
+
+/// As [`spawn_workers`], with a caller-chosen application.
+#[allow(clippy::type_complexity)]
+fn spawn_workers_with<A>(
+    app: A,
+) -> (
+    PreemptiveWorkerHandle<u32, Counter>,
+    ConfirmedWorkerHandle<u32, Counter>,
+    ChannelSyncRx<AppStateMessage<Counter>>,
+)
+where
+    A: Application<Counter, AppData = TestData> + Send + Sync + 'static,
+{
+    let app = Arc::new(app);
     let node = Arc::new(NoopNode);
 
     let (state_emission_tx, state_emission_rx) =
@@ -160,20 +198,19 @@ fn spawn_workers() -> (
 
     let (confirmed_shared, preemptive_shared) = initialize_shared_channels(state_emission_tx);
 
-    let confirmed_handle = init_confirmed_worker::<CounterApp, Counter, NoopNode, FollowerReplier>(
+    let confirmed_handle = init_confirmed_worker::<A, Counter, NoopNode, FollowerReplier>(
         (SeqNo::ZERO, Counter(0)),
         app.clone(),
         node.clone(),
         confirmed_shared,
     );
 
-    let preemptive_handle =
-        initialize_preemptive_execution::<CounterApp, Counter, NoopNode, FollowerReplier>(
-            (SeqNo::ZERO, Counter(0)),
-            app.clone(),
-            node.clone(),
-            preemptive_shared,
-        );
+    let preemptive_handle = initialize_preemptive_execution::<A, Counter, NoopNode, FollowerReplier>(
+        (SeqNo::ZERO, Counter(0)),
+        app.clone(),
+        node.clone(),
+        preemptive_shared,
+    );
 
     (preemptive_handle, confirmed_handle, state_emission_rx)
 }
@@ -935,6 +972,42 @@ fn test_backtrack_reexecutes_on_fresh_confirmed_state() {
     let msg = state_rx.recv_timeout(RECV_TIMEOUT).expect("timed out");
     assert_eq!(msg.seq(), SeqNo::from(1u32));
     assert_eq!(msg.state().0, 5u32);
+}
+
+/// Regression: a backtrack arriving while confirmations are queued at the confirmed worker
+/// used to get a stale state copy and kill the preemptive worker.
+#[test]
+fn test_backtrack_while_confirmations_are_queued_at_the_confirmed_worker() {
+    let (preemptive, _confirmed, state_rx) = spawn_workers_with(SlowCounterApp);
+    let send = |m| preemptive.preemptive_exec_handle().send(m).unwrap();
+
+    for seq in 1..=6u32 {
+        send(PreemptiveWorkMessage::PreemptiveUpdate(make_batch(seq, &[1])));
+    }
+
+    // The confirmed worker is busy on batch 1 with 2-4 queued behind it.
+    for seq in 1..=4u32 {
+        send(PreemptiveWorkMessage::PreemptiveUpdateConfirmed(
+            SeqNo::from(seq),
+            Instant::now(),
+        ));
+    }
+
+    // Re-propose slot 5, behind the speculative head: triggers the backtrack.
+    send(PreemptiveWorkMessage::PreemptiveUpdate(make_batch(5, &[100])));
+    send(
+        PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+            SeqNo::from(5u32),
+            Instant::now(),
+        ),
+    );
+
+    let msg = state_rx
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("the executor stopped answering after a backtrack with confirmations in flight");
+    assert_eq!(msg.seq(), SeqNo::from(5u32));
+    // 4 confirmed batches of +1, then the re-proposed slot 5 (+100).
+    assert_eq!(msg.state().0, 104u32);
 }
 
 // ---------------------------------------------------------------------------

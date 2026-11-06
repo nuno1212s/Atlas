@@ -333,25 +333,18 @@ pub fn metric_thread_loop(influx_args: InfluxDBArgs, metric_level: MetricLevel) 
         );
 
         if let Err(e) = &result {
-            // Not fatal -- this cycle's readings are lost and we carry on -- but silence
-            // here used to make a dead metrics pipeline indistinguishable from an idle one.
             error!(
                 "Failed to write {} metrics to influxdb in {:?}: {:?}",
                 readings_to_write, time_taken, e
             );
         }
 
-        // `saturating_sub`, NOT `1000 - elapsed`. This is u64 arithmetic and the release
-        // profile sets `overflow-checks = false`, so a write cycle that took longer than a
-        // second used to wrap to ~2^64 ms and park this thread for ~584 million years --
-        // every metric on the node stopping dead, permanently, after one slow write, while
-        // the separate os_mon thread kept reporting and made the node look alive.
+        // Saturating: `1000 - elapsed` wraps in release builds (overflow-checks off).
         let remaining = 1000u64.saturating_sub(time_taken.as_millis() as u64);
 
         if remaining == 0 {
             warn!(
-                "Metrics write cycle overran its 1s budget: {:?} for {} readings. \
-                 Metrics are being produced faster than they can be written.",
+                "Metrics write cycle overran its 1s budget: {:?} for {} readings",
                 time_taken, readings_to_write
             );
         }

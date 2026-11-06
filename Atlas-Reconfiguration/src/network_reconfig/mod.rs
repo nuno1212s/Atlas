@@ -434,6 +434,41 @@ pub struct GeneralNodeInfo {
     confirmed_nodes: BTreeSet<NodeId>,
     /// Per-bootstrap-node retry schedule for `retry_unconfirmed_bootstrap_nodes`.
     introduction_backoff: BTreeMap<NodeId, Backoff>,
+    /// Set while a client waits for stragglers after a quorum confirmed it.
+    join_quorum_reached_at: Option<Instant>,
+}
+
+/// How long a client, once confirmed by a quorum, waits for the remaining bootstrap nodes.
+///
+/// Clients never retransmit, so requests sent before a node (e.g. the leader) has authenticated
+/// them are lost for good. The bound lets a replica that is really down go unwaited-for.
+const CLIENT_STRAGGLER_GRACE: Duration = Duration::from_secs(10);
+
+/// Whether a quorum-confirmed client should keep waiting for the other bootstrap nodes.
+/// `quorum_reached_at` is `None` until the wait starts.
+fn client_should_wait_for_stragglers(
+    is_client: bool,
+    own_id: NodeId,
+    bootstrap_nodes: &[NodeId],
+    confirmed: &BTreeSet<NodeId>,
+    quorum_reached_at: Option<Instant>,
+    now: Instant,
+    grace: Duration,
+) -> bool {
+    if !is_client {
+        return false;
+    }
+
+    let everyone_confirmed = bootstrap_nodes
+        .iter()
+        .filter(|node| **node != own_id)
+        .all(|node| confirmed.contains(node));
+
+    if everyone_confirmed {
+        return false;
+    }
+
+    quorum_reached_at.is_none_or(|reached| now.saturating_duration_since(reached) < grace)
 }
 
 /// Re-introduction schedule for bootstrap nodes that have not confirmed us yet.
@@ -540,6 +575,11 @@ impl GeneralNodeInfo {
             }
             NetworkNodeState::IntroductionPhase { .. } => {
                 self.retry_unconfirmed_bootstrap_nodes(seq, network_node);
+
+                // Deferred client join: re-check for stragglers or an expired grace.
+                if self.join_quorum_reached_at.is_some() {
+                    return Ok(self.finish_join());
+                }
             }
             NetworkNodeState::JoiningNetwork { .. } => {
                 self.retry_unconfirmed_bootstrap_nodes(seq, network_node);
@@ -636,7 +676,8 @@ impl GeneralNodeInfo {
         // Deliberately the same set `retry_unconfirmed_bootstrap_nodes` walks. If this
         // reported a node that retry would not act on, it would report zero forever and
         // spin the loop, because nothing would ever advance that node's backoff.
-        self.network_view
+        let next_retry = self
+            .network_view
             .bootstrap_nodes()
             .iter()
             .filter(|node| **node != self.network_view.node_id())
@@ -646,7 +687,17 @@ impl GeneralNodeInfo {
                     .get(node)
                     .map_or(Duration::ZERO, |backoff| backoff.time_until_ready_at(now))
             })
-            .min()
+            .min();
+
+        // Also wake when the straggler grace expires.
+        let grace_left = self
+            .join_quorum_reached_at
+            .map(|reached| CLIENT_STRAGGLER_GRACE.saturating_sub(now.saturating_duration_since(reached)));
+
+        match (next_retry, grace_left) {
+            (Some(retry), Some(grace)) => Some(retry.min(grace)),
+            (retry, grace) => retry.or(grace),
+        }
     }
 
     pub(super) fn handle_timeout<NT>(
@@ -940,8 +991,11 @@ impl GeneralNodeInfo {
                             join_request,
                         );
                     }
-                    NetworkReconfigMessageType::NetworkJoinResponse(_) => {
-                        // Ignored, we are already a stable member of the network
+                    NetworkReconfigMessageType::NetworkJoinResponse(join_response) => {
+                        // A slow-starting node answers our retried join this way.
+                        if matches!(join_response, NetworkJoinResponseMessage::Successful(..)) {
+                            self.confirmed_nodes.insert(header.from());
+                        }
                     }
                     NetworkReconfigMessageType::NetworkHelloRequest(sender_info, confirmations) => {
                         self.handle_hello_request(
@@ -986,9 +1040,7 @@ impl GeneralNodeInfo {
                         }
 
                         if responded.len() > (*contacted * 2 / 3) {
-                            self.move_to_stable();
-
-                            return NetworkProtocolResponse::Done;
+                            return self.finish_join();
                         }
                     }
                 }
@@ -1194,6 +1246,64 @@ impl GeneralNodeInfo {
         NetworkProtocolResponse::Nil
     }
 
+    /// A quorum has confirmed us: complete the join, unless a client is still waiting on others.
+    fn finish_join(&mut self) -> NetworkProtocolResponse {
+        let now = Instant::now();
+
+        let wait = client_should_wait_for_stragglers(
+            matches!(self.network_view.own_node_info().node_type(), NodeType::Client),
+            self.network_view.node_id(),
+            self.network_view.bootstrap_nodes(),
+            &self.confirmed_nodes,
+            self.join_quorum_reached_at,
+            now,
+            CLIENT_STRAGGLER_GRACE,
+        );
+
+        if wait {
+            if self.join_quorum_reached_at.is_none() {
+                self.join_quorum_reached_at = Some(now);
+
+                info!(
+                    "{:?} // Quorum reached; waiting up to {:?} for the other bootstrap nodes",
+                    self.network_view.node_id(),
+                    CLIENT_STRAGGLER_GRACE
+                );
+            }
+
+            return NetworkProtocolResponse::Nil;
+        }
+
+        if self.join_quorum_reached_at.take().is_some() {
+            let missing: Vec<NodeId> = self
+                .network_view
+                .bootstrap_nodes()
+                .iter()
+                .copied()
+                .filter(|node| *node != self.network_view.node_id())
+                .filter(|node| !self.confirmed_nodes.contains(node))
+                .collect();
+
+            if missing.is_empty() {
+                info!(
+                    "{:?} // Every bootstrap node has confirmed us",
+                    self.network_view.node_id()
+                );
+            } else {
+                warn!(
+                    "{:?} // Proceeding without {:?} after {:?}; treating them as down",
+                    self.network_view.node_id(),
+                    missing,
+                    CLIENT_STRAGGLER_GRACE
+                );
+            }
+        }
+
+        self.move_to_stable();
+
+        NetworkProtocolResponse::Done
+    }
+
     fn move_to_joining(&mut self, contacted: usize) {
         self.current_state = NetworkNodeState::JoiningNetwork {
             contacted,
@@ -1224,6 +1334,7 @@ impl GeneralNodeInfo {
             network_update,
             confirmed_nodes: Default::default(),
             introduction_backoff: Default::default(),
+            join_quorum_reached_at: None,
         }
     }
 }
@@ -1236,4 +1347,77 @@ pub enum ValidNetworkHelloError {
     NonBootstrapCertificate,
     #[error("Not enough certificates {required:?} vs provided {provided:?}")]
     NotEnoughCertificates { required: usize, provided: usize },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GRACE: Duration = Duration::from_secs(10);
+
+    fn ids(xs: &[u32]) -> Vec<NodeId> {
+        xs.iter().map(|x| NodeId(*x)).collect()
+    }
+
+    fn confirmed(xs: &[u32]) -> BTreeSet<NodeId> {
+        ids(xs).into_iter().collect()
+    }
+
+    fn wait(is_client: bool, confirmed_by: &[u32], reached_ago: Option<Duration>) -> bool {
+        let now = Instant::now();
+        client_should_wait_for_stragglers(
+            is_client,
+            NodeId(1000),
+            &ids(&[0, 1, 2, 3]),
+            &confirmed(confirmed_by),
+            reached_ago.map(|ago| now - ago),
+            now,
+            GRACE,
+        )
+    }
+
+    #[test]
+    fn a_client_waits_for_the_leader_that_has_not_confirmed_it() {
+        // A quorum (1, 2, 3) but not the leader.
+        assert!(wait(true, &[1, 2, 3], None));
+        assert!(wait(true, &[1, 2, 3], Some(Duration::from_secs(3))));
+    }
+
+    #[test]
+    fn a_client_proceeds_once_everyone_has_confirmed() {
+        assert!(!wait(true, &[0, 1, 2, 3], None));
+        assert!(!wait(true, &[0, 1, 2, 3], Some(Duration::from_secs(3))));
+    }
+
+    #[test]
+    fn the_wait_is_bounded_so_a_dead_replica_cannot_block_clients() {
+        assert!(wait(true, &[1, 2, 3], Some(GRACE - Duration::from_millis(1))));
+        assert!(!wait(true, &[1, 2, 3], Some(GRACE)));
+        assert!(!wait(true, &[1, 2, 3], Some(GRACE * 3)));
+    }
+
+    #[test]
+    fn replicas_never_wait() {
+        assert!(!wait(false, &[], None));
+        assert!(!wait(false, &[1, 2, 3], Some(Duration::ZERO)));
+    }
+
+    #[test]
+    fn a_node_does_not_wait_for_its_own_confirmation() {
+        let now = Instant::now();
+        assert!(!client_should_wait_for_stragglers(
+            true,
+            NodeId(3),
+            &ids(&[0, 1, 2, 3]),
+            &confirmed(&[0, 1, 2]),
+            None,
+            now,
+            GRACE,
+        ));
+    }
+
+    #[test]
+    fn confirmations_from_non_bootstrap_nodes_do_not_count() {
+        assert!(wait(true, &[1, 2, 3, 7, 1001], None));
+    }
 }

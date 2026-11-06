@@ -528,9 +528,6 @@ where
             });
         }
 
-        // Counted under the cache executors' shared name, as `single_threaded_crud` does. This
-        // executor used to backtrack without recording it, which made every "no backtracks
-        // happened" check pass vacuously for it.
         metric_increment(CACHE_BACKTRACK_COUNT_ID, Some(1));
 
         self.pending

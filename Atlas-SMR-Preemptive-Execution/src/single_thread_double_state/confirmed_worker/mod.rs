@@ -290,6 +290,8 @@ where
                 }
             }
             PreemptiveToConfirmedMsg::RequestStateCopy => {
+                // Earlier confirmations are queued, not executed; the copy must include them.
+                self.execute_updates();
                 let (seq_no, state) = self.confirmed_state.take_state_snapshot();
 
                 self.confirmed_channels

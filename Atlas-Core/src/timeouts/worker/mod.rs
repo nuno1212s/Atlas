@@ -1,6 +1,6 @@
 use getset::{CopyGetters, Getters};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::Add;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -16,6 +16,9 @@ use atlas_common::node_id::NodeId;
 use atlas_common::quiet_opt_unwrap;
 use thiserror::Error;
 use tracing::error;
+
+/// How long an ack that arrives before its timeout is registered is kept.
+const EARLY_ACK_TTL: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub enum WorkerMessage {
@@ -69,6 +72,11 @@ pub struct TimeoutWorker<WR> {
         BTreeMap<u64, HashMap<TimeoutIdentification, Rc<RefCell<RegisteredTimeout>>>>,
     // The notifier to send timeouts to
     timeout_notifier: WR,
+
+    // Acks that arrived before their timeout was registered, with when the first one did.
+    early_acks: HashMap<TimeoutIdentification, BTreeSet<NodeId>>,
+    early_ack_order: VecDeque<(u64, TimeoutIdentification)>,
+    early_ack_ttl: Duration,
 }
 
 pub(super) fn initialize_worker_thread<WR>(
@@ -84,12 +92,15 @@ pub(super) fn initialize_worker_thread<WR>(
         .spawn(move || {
             let mut worker = TimeoutWorker {
                 our_node_id: our_id,
-                worker_id: worker_id as u32,
-                default_timeout_duration: Default::default(),
+                worker_id: u32::try_from(worker_id).expect("Failed to convert worker id to unsigned integer"),
+                default_timeout_duration: Duration::default(),
                 work_rx_channel: work_receiver,
-                watched_requests: Default::default(),
-                pending_timeout_heap: Default::default(),
+                watched_requests: HashMap::default(),
+                pending_timeout_heap: BTreeMap::default(),
                 timeout_notifier: notifier,
+                early_acks: HashMap::default(),
+                early_ack_order: VecDeque::default(),
+                early_ack_ttl: EARLY_ACK_TTL,
             };
 
             loop {
@@ -120,6 +131,9 @@ where
             watched_requests: Default::default(),
             pending_timeout_heap: Default::default(),
             timeout_notifier,
+            early_acks: Default::default(),
+            early_ack_order: Default::default(),
+            early_ack_ttl: EARLY_ACK_TTL,
         }
     }
 
@@ -191,6 +205,16 @@ where
 
         let request_id = registered_rq.borrow().request().id().clone();
 
+        if let Some(acks) = self.early_acks.remove(&request_id) {
+            let mut rq = registered_rq.borrow_mut();
+
+            rq.acks_received.extend(acks);
+
+            if rq.acks_received.len() >= rq.request().needed_acks() {
+                return Ok(());
+            }
+        }
+
         self.watched_requests
             .entry(request_id.clone())
             .or_insert(registered_rq.clone());
@@ -234,6 +258,8 @@ where
 
             mut_guard.acks_received().len() >= mut_guard.request().needed_acks()
         } else {
+            self.record_early_ack(timeout_ack.id().clone(), timeout_ack.from())?;
+
             false
         };
 
@@ -242,6 +268,40 @@ where
         }
 
         Ok(())
+    }
+
+    fn record_early_ack(
+        &mut self,
+        id: TimeoutIdentification,
+        from: NodeId,
+    ) -> Result<(), AcceptAckError> {
+        let now = now_millis()?;
+
+        match self.early_acks.get_mut(&id) {
+            Some(acks) => {
+                acks.insert(from);
+            }
+            None => {
+                self.early_ack_order.push_back((now, id.clone()));
+                self.early_acks.insert(id, BTreeSet::from([from]));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn purge_early_acks(&mut self, now: u64) {
+        let ttl = self.early_ack_ttl.as_millis() as u64;
+
+        while let Some((at, _)) = self.early_ack_order.front() {
+            if at + ttl > now {
+                break;
+            }
+
+            if let Some((_, id)) = self.early_ack_order.pop_front() {
+                self.early_acks.remove(&id);
+            }
+        }
     }
 
     //#[instrument(skip(self), level = Level::DEBUG)]
@@ -272,6 +332,8 @@ where
         let now = current_sys_time
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_millis() as u64;
+
+        self.purge_early_acks(now);
 
         let mut timeouts = Vec::new();
 
@@ -434,6 +496,12 @@ impl RegisteredTimeout {
     }
 }
 
+fn now_millis() -> Result<u64, SystemTimeError> {
+    Ok(SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)?
+        .as_millis() as u64)
+}
+
 fn cmp_mod_name(mod_name_1: impl AsRef<str>, mod_name_2: impl AsRef<str>) -> bool {
     mod_name_1.as_ref() == mod_name_2.as_ref()
 }
@@ -463,6 +531,8 @@ pub enum ResetTimeoutError {
 pub enum AcceptAckError {
     #[error("Node already ACKed {0:?}")]
     NodeAlreadyAcked(NodeId),
+    #[error("Failed to calculate system time? {0}")]
+    SystemTime(#[from] SystemTimeError),
 }
 
 #[derive(Error, Debug)]
@@ -483,4 +553,98 @@ pub enum TimeoutError {
     Notifier(#[from] anyhow::Error),
     #[error("Failed to obtain timeouts from map")]
     MapPopFailed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::timeouts::TimeoutID;
+    use atlas_common::channel::sync::new_bounded_sync;
+    use atlas_common::ordering::SeqNo;
+
+    #[derive(Clone)]
+    struct Discard;
+
+    impl TimeoutWorkerResponder for Discard {
+        fn report_timeouts(&self, _: Vec<Timeout>) -> atlas_common::error::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn worker() -> TimeoutWorker<Discard> {
+        let (_tx, rx) = new_bounded_sync(8, Some("test"));
+
+        TimeoutWorker::new(NodeId(0), 0, Duration::from_secs(1), rx, Discard)
+    }
+
+    fn id() -> TimeoutIdentification {
+        TimeoutIdentification {
+            mod_id: Arc::from("TestMod"),
+            timeout_id: TimeoutID::SessionBased {
+                session: SeqNo::ZERO,
+                seq_no: SeqNo::ZERO,
+                from: NodeId(7),
+            },
+        }
+    }
+
+    fn request(needed_acks: usize) -> TimeoutRequest {
+        TimeoutRequest {
+            id: id(),
+            duration: Duration::from_secs(1),
+            needed_acks,
+            is_cumulative: true,
+            extra_info: None,
+        }
+    }
+
+    fn ack(from: u32) -> TimeoutAck {
+        TimeoutAck {
+            id: id(),
+            from: NodeId(from),
+        }
+    }
+
+    fn pending(w: &TimeoutWorker<Discard>) -> usize {
+        w.pending_timeout_heap.values().map(|m| m.len()).sum()
+    }
+
+    #[test]
+    fn an_ack_that_arrives_first_completes_the_timeout() {
+        let mut w = worker();
+
+        w.handle_timeout_ack(ack(1)).unwrap();
+        w.handle_timeout_request(request(1)).unwrap();
+
+        assert_eq!(pending(&w), 0);
+        assert!(w.watched_requests.is_empty());
+        assert!(w.early_acks.is_empty());
+    }
+
+    #[test]
+    fn an_early_ack_below_the_needed_count_still_counts_towards_it() {
+        let mut w = worker();
+
+        w.handle_timeout_ack(ack(1)).unwrap();
+        w.handle_timeout_request(request(2)).unwrap();
+        assert_eq!(pending(&w), 1);
+
+        w.handle_timeout_ack(ack(2)).unwrap();
+        assert_eq!(pending(&w), 0);
+    }
+
+    #[test]
+    fn early_acks_expire_and_do_not_complete_a_later_timeout() {
+        let mut w = worker();
+
+        w.handle_timeout_ack(ack(1)).unwrap();
+
+        let ttl = w.early_ack_ttl.as_millis() as u64;
+        w.purge_early_acks(now_millis().unwrap() + ttl + 1);
+
+        assert!(w.early_acks.is_empty() && w.early_ack_order.is_empty());
+
+        w.handle_timeout_request(request(1)).unwrap();
+        assert_eq!(pending(&w), 1);
+    }
 }

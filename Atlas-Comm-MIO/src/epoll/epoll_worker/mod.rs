@@ -463,7 +463,14 @@ where
                         continue;
                     }
 
-                    self.delete_connection(token, false)?;
+                    if let Err(err) = self.delete_connection(token, false) {
+                        error!(
+                            "{:?} // Error closing connection {:?}: {:?}",
+                            self.global_conns.own_id(),
+                            token,
+                            err
+                        );
+                    }
                 }
             }
         }
@@ -501,9 +508,23 @@ where
 
         peer_conn.register_peer_conn(handle.clone());
 
-        self.poll
+        if let Err(err) = self
+            .poll
             .registry()
-            .register(&mut socket, token, Interest::READABLE)?;
+            .register(&mut socket, token, Interest::READABLE)
+        {
+            error!(
+                "{:?} // Failed to register connection to node {:?}: {:?}",
+                self.global_conns.own_id(),
+                peer_id,
+                err
+            );
+
+            self.global_conns
+                .handle_connection_failed(handle.peer_id(), handle.id());
+
+            return Ok(());
+        }
 
         let socket_conn = SocketConnection::PeerConn {
             handle: handle.clone(),
@@ -523,8 +544,44 @@ where
             self.worker_id
         );
 
-        self.read_until_block(token)?;
-        self.try_write_until_block(token)?;
+        // A connection that breaks while being set up must only lose itself, not the worker.
+        let setup = self
+            .read_until_block(token)
+            .map_err(CreateConnectionError::from)
+            .and_then(|read| match read {
+                ConnectionWorkResult::Working => self
+                    .try_write_until_block(token)
+                    .map_err(CreateConnectionError::from),
+                broken => Ok(broken),
+            });
+
+        let failure = match setup {
+            Ok(ConnectionWorkResult::Working) => None,
+            Ok(ConnectionWorkResult::ConnectionBroken(_, _)) => {
+                Some("connection broken".to_string())
+            }
+            Err(err) => Some(format!("{err:?}")),
+        };
+
+        if let Some(reason) = failure {
+            error!(
+                "{:?} // Dropping connection {:?} to node {:?} that failed during setup: {}",
+                self.global_conns.own_id(),
+                token,
+                peer_id,
+                reason
+            );
+
+            if let Err(err) = self.delete_connection(token, true) {
+                error!(
+                    "{:?} // Error deleting connection {:?} to node {:?}: {:?}",
+                    self.global_conns.own_id(),
+                    token,
+                    peer_id,
+                    err
+                );
+            }
+        }
 
         Ok(())
     }

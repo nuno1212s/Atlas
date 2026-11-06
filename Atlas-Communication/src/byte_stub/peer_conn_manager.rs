@@ -307,11 +307,11 @@ where
 impl<NI, CN, R, O, S, A, L> PendingConnectionManagement
     for PeerConnectionManager<NI, CN, R, O, S, A, L>
 where
-    R: Serializable,
-    O: Serializable,
-    S: Serializable,
-    A: Serializable,
-    L: LookupTable<R, O, S, A>,
+    R: Serializable + 'static,
+    O: Serializable + 'static,
+    S: Serializable + 'static,
+    A: Serializable + 'static,
+    L: LookupTable<R, O, S, A> + 'static,
     NI: NetworkInformationProvider,
     CN: Send + Clone + Sync,
 {
@@ -326,8 +326,7 @@ where
         _key: PublicKey,
     ) -> atlas_common::error::Result<()> {
         if let Some(c) = self.connections().get_connection(node) {
-            c.authenticated
-                .store(true, std::sync::atomic::Ordering::Relaxed)
+            c.incoming_connection.authenticate();
         }
 
         Ok(())
