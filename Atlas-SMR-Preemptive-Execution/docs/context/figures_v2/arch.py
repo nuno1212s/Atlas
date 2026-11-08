@@ -157,9 +157,96 @@ def room(s, x, y, w, h, name, colour=WORK, tint=WORK_T):
     thread_badge(s, x + 12, y + 18, name, colour)
 
 
+def num(s, x, y, n, colour):
+    """A numbered flow badge: 1 propose, 2 confirm, 3 backtrack."""
+    s.circle(x, y, 8.5, fill=colour)
+    s.text(x, y + 3.8, str(n), size=10.5, weight=600, fill=WHITE, anchor="middle")
+
+
+def a2_dual(out):
+    """Dual-state rooms, drawn on its own canvas so the three flows read without crossing.
+
+    Two rules are the point of this figure: a pending batch moves to the confirmed room only when
+    consensus confirms it, and the copy of Δ* moves to the preemptive room only after a backtrack.
+    """
+    s = Svg(660, 906)
+    s.title("Dual-state", "Architecture · A2 · threads as rooms")
+    X0, X1 = 30, 600                       # rooms span X0..X1; the replies line runs just outside
+    XP, XC, XR = 172, 524, 618             # propose, confirm and replies lines
+
+    s.rect(X0, 100, X1 - X0, 36, r=18, fill=CONS_T, stroke=CONS, sw=1.3)
+    s.text((X0 + X1) / 2, 123, "consensus", size=13, weight=600, fill=CONS, anchor="middle")
+
+    # main: routes the two consensus messages to the preemptive worker
+    room(s, X0, 192, X1 - X0, 52, "main")
+    s.text(X0 + 100, 222, "routes each message to a worker", size=11.5, fill=MUTED)
+    s.arrow([(XP, 136), (XP, 190)], stroke=CONS)
+    s.arrow([(XC, 136), (XC, 190)], stroke=CONS, sw=2.2)
+    num(s, XP + 18, 163, 1, SPEC)
+    s.text(XP + 32, 160, "propose k:", size=11, fill=MUTED)
+    s.text(XP + 32, 174, "the order is known", size=11, fill=MUTED)
+    num(s, XC - 18, 163, 2, CONF)
+    s.text(XC - 32, 160, "confirm 7:", size=11, fill=MUTED, anchor="end")
+    s.text(XC - 32, 174, "consensus decided", size=11, fill=MUTED, anchor="end")
+
+    # preemptive room: owns Ω* and the log of pending batches
+    room(s, X0, 272, X1 - X0, 248, "preemptive worker")
+    s.text(X0 + 170, 294, "owns Ω^{*} and the log", size=11.5, fill=MUTED)
+    block(s, 54, 340, 120, 100, SPEC, SPEC_T, "Ω^{*}", size=22, sub="speculative state", shadow=False)
+    s.arrow([(XP, 244), (XP, 338)], stroke=CONS)
+    s.text(XP + 10, 322, "run batch k in place on Ω^{*}", size=11, fill=SPEC)
+
+    # the pending log: Ω9 newest next to Ω*, Ω7 oldest at the head
+    stack(s, 388, 340, ["Ω_{9}", "Ω_{8}", "Ω_{7}"], SPEC, SPEC_T, w=48, h=32, gap=8)
+    s.rect(494, 335, 58, 42, r=9, fill="none", stroke=INK, sw=2)             # the head: the one being confirmed
+    s.text(412, 332, "newest", size=10, fill=MUTED, anchor="middle")
+    s.text(XC + 12, 332, "head", size=10, fill=MUTED)
+    s.text(388, 398, "**pending log**", size=11, fill=SPEC)
+    s.text(388, 412, "waiting for consensus", size=10.5, fill=MUTED)
+    s.arrow([(174, 356), (386, 356)], stroke=SPEC)
+    s.label(280, 352, "park batch k + replies", size=10.5, fill=SPEC, bg=WORK_T)
+    s.arrow([(XC, 244), (XC, 333)], stroke=CONS, sw=2.2)                       # the confirm lands on the head
+
+    num(s, 190, 490, 3, DROP)
+    s.text(204, 494, "after a backtrack: drop the log's tail, replay the rest on Ω^{*}", size=10.5, fill=MUTED)
+
+    # confirmed room: owns Δ*, written only by confirmed batches
+    room(s, X0, 586, X1 - X0, 180, "confirmed worker")
+    s.text(X0 + 176, 608, "owns Δ^{*}, written only by confirmed batches", size=11.5, fill=MUTED)
+    block(s, 54, 632, 120, 100, CONF, CONF_T, "Δ^{*}", size=22, sub="confirmed state", shadow=False)
+
+    # 2: the only way a batch reaches the confirmed room
+    s.arrow([(XC, 377), (XC, 682), (176, 682)], stroke=CONF, sw=2.4)
+    s.text(XC - 14, 662, "runs batch 7 again on Δ^{*}", size=11, fill=CONF, anchor="end")
+    s.text(XC - 14, 704, "its replies are dropped", size=10.5, fill=MUTED, anchor="end")
+    num(s, 372, 560, 2, CONF)
+    s.text(388, 557, "confirm only:", size=11, fill=CONF)
+    s.text(388, 571, "batch 7 goes down", size=11, fill=CONF)
+
+    # 3: the only way state reaches the preemptive room
+    s.arrow([(164, 632), (164, 442)], stroke=DROP, sw=2, dash="5 4")
+    num(s, 182, 537, 3, DROP)
+    s.text(196, 541, "backtrack only: Δ^{*} copy goes up", size=11, fill=DROP)
+
+    # replies: sent by the preemptive worker the moment the confirm arrives
+    s.arrow([(552, 356), (XR, 356), (XR, 794)], stroke=INK)
+    s.label(XR, 549, "replies", size=10.5, bg=WHITE)
+    s.label(XR, 563, "of batch 7", size=10.5, bg=WHITE)
+
+    s.rect(X0, 796, XR + 12 - X0, 40, r=20, fill="#eef0f3")
+    for i in range(5):
+        person(s, 250 + i * 30, 818, colour="#9aa1af", scale=0.65)
+
+    legend(s, 32, 872, [("block", CONF, CONF_T, "confirmed"), ("block", SPEC, SPEC_T, "speculated"),
+                        ("badge", WORK, None, "thread"), ("dash", DROP, None, "only after a backtrack")])
+    s.save(os.path.join(out, f"{PFX}-a2-rooms-dual"))
+
+
 def a2_rooms(out, ex):
     """Each thread is a room; the state drawn inside a room is owned by that thread."""
-    x0 = {"crud": 30, "dual": 350, "scal": 670}[ex]
+    if ex == "dual":
+        return a2_dual(out)
+    x0 = {"crud": 30, "scal": 670}[ex]
     s = Svg(340, 700, ox=x0 - 10)
     s.title(EXECUTORS[ex], "Architecture · A2 · threads as rooms")
     s.rect(x0 + 10, 96, 280, 36, r=18, fill=CONS_T, stroke=CONS, sw=1.3)
@@ -167,7 +254,7 @@ def a2_rooms(out, ex):
     s.rect(x0 + 10, 600, 280, 36, r=18, fill="#eef0f3")
     for i in range(5):
         person(s, x0 + 90 + i * 30, 622, colour="#9aa1af", scale=0.65)
-    sub = {"crud": "1 thread", "dual": "3 threads", "scal": "worker + exec pool"}[ex]
+    sub = {"crud": "1 thread", "scal": "worker + exec pool"}[ex]
     s.text(x0 + 150, 172, sub, size=12, fill=MUTED, anchor="middle")
 
     if ex == "crud":
@@ -190,26 +277,6 @@ def a2_rooms(out, ex):
         s.arrow([(x + 40, 132), (x + 40, 196)], stroke=CONS)
         s.arrow([(x + 280, 330), (x + 300, 330), (x + 300, 598)], stroke=INK)
         s.label(x + 300, 574, "replies", size=10.5, bg=WHITE)
-
-    if ex == "dual":
-        # dual-state: three rooms, two full copies
-        x = 350
-        room(s, x + 10, 198, 280, 56, "main")
-        s.text(x + 200, 231, "routes", size=11.5, fill=MUTED, anchor="middle")
-        room(s, x + 10, 272, 280, 150, "preemptive")
-        stack(s, x + 26, 318, ["Ω_{7}", "Ω_{8}", "Ω_{9}"], SPEC, SPEC_T, w=34, gap=5)
-        s.text(x + 82, 364, "log of batches", size=10.5, fill=MUTED, anchor="middle")
-        block(s, x + 176, 300, 96, 108, SPEC, SPEC_T, "Ω^{*}", size=17)
-        room(s, x + 10, 440, 280, 128, "confirmed")
-        block(s, x + 176, 452, 96, 108, CONF, CONF_T, "Δ^{*}", size=17)
-        s.arrow([(x + 40, 132), (x + 40, 196)], stroke=CONS)
-        s.arrow([(x + 40, 254), (x + 40, 270)], stroke=CONS)
-        s.arrow([(x + 122, 350), (x + 122, 506), (x + 174, 506)], stroke=CONF, sw=2)
-        s.text(x + 114, 530, "run k again", size=10.5, fill=CONF, anchor="end")
-        s.arrow([(x + 210, 452), (x + 210, 410)], stroke=DROP, dash="4 3")
-        s.label(x + 150, 433, "copy of Δ^{*}", size=10.5, fill=DROP, bg=WHITE)
-        s.arrow([(x + 290, 346), (x + 304, 346), (x + 304, 598)], stroke=INK)
-        s.label(x + 304, 574, "replies", size=10.5, bg=WHITE)
 
     if ex == "scal":
         # scalable: the worker holds the speculative cache; Δ* is drawn apart; the pool borrows both
