@@ -1,0 +1,88 @@
+@startuml preemptive-context-cache-snapshot
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+skinparam map {
+  BackgroundColor white
+}
+top to bottom direction
+skinparam nodesep 20
+skinparam ranksep 22
+
+package "before commit Ω7" as B {
+  map "C · accumulated_cache" as C0 {
+    a => 6
+    b => ⊥
+    c => 4
+    d => 9
+  }
+  package "pending log" as L0 {
+    map "Ω7 · head" as D7 {
+      a => 5
+      d => 9
+    }
+    map "Ω8" as D8 {
+      b => ⊥
+    }
+    map "Ω9 · tail" as D9 {
+      a => 6
+      c => 4
+    }
+  }
+  map "S · confirmed_state" as S0 {
+    a => 1
+    b => 2
+    c => 3
+    e => 7
+  }
+}
+
+package "after commit Ω7 (now Δ7)" as A {
+  map "C · refolded" as C1 {
+    a => 6
+    b => ⊥
+    c => 4
+  }
+  package "pending log " as L1 {
+    map "Ω8 · head" as E8 {
+      b => ⊥
+    }
+    map "Ω9 · tail" as E9 {
+      a => 6
+      c => 4
+    }
+  }
+  map "S ⊕ Δ7 · confirmed_state" as S1 {
+    a => 5
+    b => 2
+    c => 3
+    d => 9
+    e => 7
+  }
+}
+
+C0 -[hidden]d- L0
+L0 -[hidden]d- S0
+C0 ..> S0 : read miss
+C1 -[hidden]d- L1
+L1 -[hidden]d- S1
+C1 ..> S1 : read miss
+D7 -r-> D8 : next
+D8 -r-> D9 : next
+E8 -r-> E9 : next
+L0 -u-> C0 : fold ⊕,\noldest first
+L1 -u-> C1 : fold ⊕,\noldest first
+B -[hidden]r- A
+@enduml

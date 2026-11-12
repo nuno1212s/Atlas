@@ -436,8 +436,12 @@ where
         &self.data
     }
 
-    pub(super) fn get_quorum_view(&self) -> Vec<NodeId> {
+    pub fn get_quorum_view(&self) -> Vec<NodeId> {
         self.data.reconfig_protocol.get_quorum_members()
+    }
+
+    pub fn current_f(&self) -> usize {
+        self.data.reconfig_protocol.get_current_f()
     }
 
     pub(super) fn update_inner<T>(

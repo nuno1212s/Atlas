@@ -1,0 +1,102 @@
+@startuml preemptive-context-module-dual-state
+title M1 — Dual-state executor: types, threads and channels
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+
+rectangle "PreemptiveExecutorHandle<RQ>\n(sender side, Decision Log Thread)" as handle
+rectangle "MonStateTransfer\n(State transfer thread)" as stt
+
+frame "Executor thread" as t_orc {
+  rectangle "PreemptiveDuplicateState-\nMonolithicExecutor<S,A,NT>\nrun_mode: RunMode" as orc
+  rectangle "PreemptiveWorker-\nHandle<R,S>" as pwh
+  rectangle "ConfirmedWorker-\nHandle<R,S>" as cwh
+}
+
+frame "Preemptive Worker Thread" as t_pw {
+  rectangle "PreemptiveWorker<A,S,NT>" as pw
+  rectangle "PreemptiveWorker-\nChannels<R,S>" as pwc
+  rectangle "PreemptiveState<S,A>" as ps
+  database "preemptive_state: S" as ps_s
+  rectangle "VSingleTBOQueue<\nPendingPermanentUpdate>" as tbo
+  rectangle "staged: BTreeMap\n<SeqNo, UpdateBatch>" as staged
+}
+
+frame "Confirmed Worker Thread" as t_cw {
+  rectangle "ConfirmedUpdateExecutor\n<S,A,NT,T>" as cw
+  rectangle "ConfirmedChannels<R,S>" as cwc
+  rectangle "VTboQueue<Update<R>>" as vtbo
+  rectangle "ConfirmedRequest-\nPipeline<S>" as cp
+  database "confirmed_state: S" as cp_s
+}
+collections "rayon read pool ×4" as rp
+
+hexagon "«trait»\nApplication<S>" as app
+hexagon "«trait»\nExecutorReplier" as rep_t
+rectangle "ReplicaReplier" as rep
+
+handle -down-> orc : work · 16384\nPreemptiveExecutionRequest<O>\nS1 C1 D1 U1 T1
+stt -down-> orc : install · 128\nInstallStateMessage<S>\nT2
+orc ..> pwh
+orc ..> cwh
+pwh -down-> pw : preemptive work · 100\nPreemptiveWorkMessage<R>\nS2 C2 D2 T3
+pwh -down-> pwc : preemptive state · 100\nStateMessage<S>\nT4
+cwh -down-> cw : confirmed update · 256\nConfirmedUpdateMessage<R>\nU2 T3
+cwh -down-> cwc : confirmed state · 256\nStateMessage<S>\nT4
+
+pw ..> ps : S3 C3 D3
+pw ..> pwc
+ps -[bold]-> ps_s
+ps -[bold]-> tbo
+ps -[bold]-> staged
+ps ..> app : update_batch
+
+pw -left-> rep : C4 D4
+pwc -down-> cwc : P→C · 16384\nPreemptiveToConfirmedMsg<R>\nC5 D5 B1
+cwc -up-> pwc : C→P · 128\nConfirmedToPreemptiveMsg<S>\nB2 (blocking recv)
+cwc -[dotted]up-> pw : C→P while in state-transfer\nmode: todo!()
+
+cw ..> cwc
+cw -[bold]-> vtbo : C6
+cw ..> cp
+cp -[bold]-> cp_s : re-execute
+cp ..> app
+cw .right.> rp : U3 fork-join
+cw -up-> rep : U4 K
+cw -up-> stt : checkpoint · 128\nAppStateMessage<S>\nC7
+
+rep .up.|> rep_t
+
+tbo -[hidden]down- cw
+staged -[hidden]down- cwc
+
+legend bottom
+  S speculate: S1 PreemptiveUpdate → S2 → S3 execute on preemptive_state, push to the TBO queue
+    (or stage if early); drain staged
+  C commit: C1 PreemptiveUpdateFinalized → C2 PreemptiveUpdateConfirmed → C3 pop head
+    → C4 client replies → C5 UpdateConfirmed[EmitAppState](batch) → C6 reorder, re-execute on
+    confirmed_state, replies discarded → C7 checkpoint if requested
+  B backtrack: B1 RequestStateCopy → B2 (seq, clone of S); the preemptive worker blocks
+  D never-speculated commit: D1 UpdateBatch → D2 ConfirmedUpdate → D5 forward a clone first,
+    D3 execute locally, D4 reply
+  U read: U1 ExecuteUnordered → U2 → U3 on confirmed_state → U4 reply
+  T state transfer: T1 PollStateChannel → T2 install → T3 StateTransferAvailable / PollStateChannel
+    → T4 StateMessage to both workers
+  K CatchUp (to both workers; the confirmed worker replies): implemented, no production caller
+  ReplicaReplier sends on atlas_common::threadpool
+end legend
+
+@enduml

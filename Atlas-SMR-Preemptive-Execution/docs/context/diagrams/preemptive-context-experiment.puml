@@ -1,0 +1,71 @@
+@startuml preemptive-context-experiment
+title D6 — Experimental context: how the variants are compared
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+
+rectangle "bench/bench.env\nEXECUTOR_VARIANT" as env
+rectangle "make crud_perf\nlocal · build-binary · remote-bare" as make
+
+rectangle "crud_perf_exec (one binary, one variant)" as bin {
+  rectangle "executor_variant/mod.rs\ncompile_error! unless\nexactly one feature" as sel
+  rectangle "baseline.rs" as v1
+  rectangle "dual_state.rs" as v2
+  rectangle "crud_single.rs\n(default)" as v3
+  rectangle "crud_scalable.rs" as v4
+  rectangle "Shared by construction" as shared {
+    rectangle "Microbenchmark\n«Application + CRUDApplication»" as appl
+    rectangle "State\n«CRUDState + MonolithicState»" as state
+    rectangle "common.rs type aliases\nOrderProtocol «round-based BFT» ·\nDecisionLog · Logging · MonReplica" as aliases
+    rectangle "WorkloadGenerator (client side)\nWORKLOAD_TYPE · KEY_SPACE_SIZE ·\nKEY_DISTRIBUTION · op mix" as wl
+  }
+  rectangle "replica.rs setup_metrics\ninflux extra = NAME" as setup
+}
+
+rectangle "atlas-metrics registry\n(ID-indexed, per-second Welford)" as reg
+database "InfluxDB\ntag extra = variant" as influx
+rectangle "Grafana\nsuite-crud-perf.json\n(build-dashboards.py)" as graf
+rectangle "analysis/\ncompare_variants.py" as cmp
+rectangle "ReplicaReplier\nREPLY_SENT_TIME, ID 802" as replier
+rectangle "preemptive_execution/\npreemptive_exec\n«earlier harness,\ndual-state only»" as old
+
+env -down-> make
+make -down-> sel : --features <variant>\n(CARGO_FEATURES)
+sel ..> v1
+sel ..> v2
+sel ..> v3 : exactly one compiled
+sel ..> v4
+v3 ..> aliases : Executor
+v3 ..> setup : NAME, metrics()
+setup -down-> reg
+reg -down-> influx : metrics thread,\nonce a second
+influx -down-> graf
+influx -down-> cmp
+replier -[dotted]-> reg : lands in preemptive ID 802,\ni.e. CACHE_PREEMPTIVE_EXECUTION_TIME
+
+legend bottom
+  Each variant module exports Executor, NAME and metrics(); only one is compiled (drawn for crud_single).
+  Variants: baseline → SingleThreadedMonExecutor · dual_state → MonolithicPreemptiveExecutor ·
+  crud_single (default) → CRUDMonolithicPreemptiveExecutor ·
+  crud_scalable → ScalableCRUDMonolithicPreemptiveExecutor
+  remote-docker builds nothing and ignores EXECUTOR_VARIANT; the variant must be baked into
+  the pulled image tag. COLLISION_CALC=1 turns the binary into an offline collision-rate
+  calculator (collision.rs), not part of a run.
+  Dotted: every reply-send duration is recorded under ID 802, which a preemptive binary registers
+  as CACHE_PREEMPTIVE_EXECUTION_TIME (Info); both the dashboard and compare_variants.py read it.
+end legend
+
+@enduml

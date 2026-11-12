@@ -24,12 +24,14 @@ pub enum PreemptiveExecutionRequest<O> {
     PreemptiveUpdate(UpdateBatch<O>, Instant),
     /// A preemptive update that has been finalized. We can now
     /// Send the replies to the clients and permanently apply the update
-    /// to our state
-    PreemptiveUpdateFinalized(SeqNo),
+    /// to our state.
+    /// The Instant represents the time at which the confirmation was queued, and is what
+    /// the confirmation-path metrics (`CONFIRM_*`) measure from.
+    PreemptiveUpdateFinalized(SeqNo, Instant),
     /// Similarly to the [PreemptiveUpdateFinalized(_)] branch
     /// But with the added action of also taking a snapshot of the app state
     /// (After the update has been performed) and
-    PreemptiveUpdateFinalizedAndGetAppstate(SeqNo),
+    PreemptiveUpdateFinalizedAndGetAppstate(SeqNo, Instant),
     /// Execute an unordered update on the confirmed state (this will not
     /// take into account any pending preemptive updates, only updates which
     /// have been effectivized)
@@ -126,7 +128,10 @@ where
 
     fn queue_update_finalized(&self, seq: SeqNo) -> atlas_common::error::Result<()> {
         self.e_tx
-            .send(PreemptiveExecutionRequest::PreemptiveUpdateFinalized(seq))
+            .send(PreemptiveExecutionRequest::PreemptiveUpdateFinalized(
+                seq,
+                Instant::now(),
+            ))
             .context("Failed to send UpdateFinalized request to executor")
     }
 
@@ -135,7 +140,12 @@ where
         seq: SeqNo,
     ) -> atlas_common::error::Result<()> {
         self.e_tx
-            .send(PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(seq))
+            .send(
+                PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(
+                    seq,
+                    Instant::now(),
+                ),
+            )
             .context("Failed to send UpdateFinalizedAndGetAppstate request to executor")
     }
 }
@@ -146,5 +156,32 @@ impl<RQ> Clone for PreemptiveExecutorHandle<RQ> {
             e_tx: self.e_tx.clone(),
             request_rx: self.request_rx.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod specialization_guard {
+    use super::PreemptiveExecutorHandle;
+    use atlas_core::execution::TPreemptiveExecutorDecisionHandle;
+    use atlas_smr_core::SMRRawReq;
+    use atlas_smr_core::execution::SMRExecWrapper;
+    use atlas_smr_core::execution::state_management::TPreemptiveExecutorStateHandle;
+
+    /// Guards the wiring that makes preemptive execution actually happen.
+    ///
+    /// `atlas-smr-replica`'s decision log picks its preemptive code path via Rust
+    /// specialization, bounded on these two traits. Specialization fails *silently*: if
+    /// `SMRExecWrapper<PreemptiveExecutorHandle<_>>` stops satisfying them, the replica
+    /// quietly falls back to the deterministic post-commit path and every executor in this
+    /// crate stops executing speculatively -- while still building, running, and producing
+    /// plausible-looking benchmark numbers.
+    ///
+    /// These assertions turn that silent regression into a compile error.
+    fn _assert_preemptive_path_is_reachable<RQ: Send + 'static>() {
+        fn requires_decision_handle<RQ, T: TPreemptiveExecutorDecisionHandle<SMRRawReq<RQ>>>() {}
+        fn requires_state_handle<RQ, T: TPreemptiveExecutorStateHandle<SMRRawReq<RQ>>>() {}
+
+        requires_decision_handle::<RQ, SMRExecWrapper<PreemptiveExecutorHandle<RQ>>>();
+        requires_state_handle::<RQ, SMRExecWrapper<PreemptiveExecutorHandle<RQ>>>();
     }
 }

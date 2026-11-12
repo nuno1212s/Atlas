@@ -1,14 +1,19 @@
 #![allow(dead_code)]
 
 use crate::exec_handle::{PreemptiveExecutionRequest, PreemptiveExecutorHandle};
-use crate::metric::{CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID, CACHE_UNORDERED_EXECUTION_TIME_ID};
-use crate::single_threaded_crud::pending_state::{CachingPreemptiveState, PreemptiveError};
+use crate::metric::{
+    CACHE_ENQUEUE_TO_EXECUTE_LATENCY_ID, CACHE_UNORDERED_EXECUTION_TIME_ID,
+    CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, UNORDERED_OPS_PER_SECOND_ID, record_confirmation,
+};
+use crate::single_threaded_crud::pending_state::{
+    CachingPreemptiveState, PreemptiveError, PreemptiveOutcome,
+};
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::quiet_unwrap;
 use atlas_core::execution::requests::{ReplyBatch, UpdateBatch, UpdateReply};
-use atlas_metrics::metrics::metric_duration;
+use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_smr_application::app::{Reply, Request};
 use atlas_smr_application::state::monolithic_state::{
     AppStateMessage, InstallStateMessage, MonolithicState,
@@ -21,17 +26,10 @@ use atlas_smr_execution::repliers::ExecutorReplier;
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
-use tracing::error;
+use tracing::{debug, error};
 
 pub(crate) mod caching_state;
 pub(crate) mod pending_state;
-
-#[cfg(test)]
-pub mod tests {
-    mod integration_tests;
-    pub mod test_fixtures;
-    mod unit_tests;
-}
 
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
@@ -207,10 +205,14 @@ where
                 }
             }
 
-            PreemptiveExecutionRequest::UpdateBatch(batch, _instant) => {
+            // A directly-finalized batch: never speculated, so its execution runs here on
+            // the confirmation path and `speculated` is false by construction.
+            PreemptiveExecutionRequest::UpdateBatch(batch, instant) => {
+                metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, instant.elapsed());
                 let seq = batch.sequence_number();
                 match self.state.handle_confirmed_update(&self.application, batch) {
                     Ok(replies) => {
+                        record_confirmation(instant, false);
                         T::execution_finished::<A::AppData, NT>(
                             self.node.clone(),
                             Some(seq),
@@ -221,10 +223,12 @@ where
                 }
             }
 
-            PreemptiveExecutionRequest::UpdateBatchAndGetAppstate(batch, _instant) => {
+            PreemptiveExecutionRequest::UpdateBatchAndGetAppstate(batch, instant) => {
+                metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, instant.elapsed());
                 let seq = batch.sequence_number();
                 match self.state.handle_confirmed_update(&self.application, batch) {
                     Ok(replies) => {
+                        record_confirmation(instant, false);
                         T::execution_finished::<A::AppData, NT>(
                             self.node.clone(),
                             Some(seq),
@@ -241,9 +245,15 @@ where
                 self.handle_preemptive_update(batch);
             }
 
-            PreemptiveExecutionRequest::PreemptiveUpdateFinalized(seq) => {
-                match self.state.handle_update_confirmed(seq) {
+            PreemptiveExecutionRequest::PreemptiveUpdateFinalized(seq, instant) => {
+                metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, instant.elapsed());
+                // Read before confirming, which consumes the entry: a pending head at this
+                // seq is exactly the condition under which `handle_update_confirmed` serves
+                // pre-computed replies rather than falling back to inline execution.
+                let speculated = self.state.pending_front_seq() == Some(seq);
+                match self.state.handle_update_confirmed(&self.application, seq) {
                     Ok(replies) => {
+                        record_confirmation(instant, speculated);
                         T::execution_finished::<A::AppData, NT>(
                             self.node.clone(),
                             Some(seq),
@@ -254,9 +264,12 @@ where
                 }
             }
 
-            PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(seq) => {
-                match self.state.handle_update_confirmed(seq) {
+            PreemptiveExecutionRequest::PreemptiveUpdateFinalizedAndGetAppstate(seq, instant) => {
+                metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, instant.elapsed());
+                let speculated = self.state.pending_front_seq() == Some(seq);
+                match self.state.handle_update_confirmed(&self.application, seq) {
                     Ok(replies) => {
+                        record_confirmation(instant, speculated);
                         T::execution_finished::<A::AppData, NT>(
                             self.node.clone(),
                             Some(seq),
@@ -274,6 +287,8 @@ where
                 let application = self.application.clone();
                 let state: &S = self.state.confirmed_state();
                 let exec_start = std::time::Instant::now();
+                // Read before into_inner() consumes the batch.
+                let operations = unordered_batch.len() as u64;
                 let replies: ReplyBatch<Reply<A, S>> = {
                     let pool: &ThreadPool = &self.read_thread_pool;
                     pool.install(|| {
@@ -290,18 +305,28 @@ where
                     })
                 };
                 metric_duration(CACHE_UNORDERED_EXECUTION_TIME_ID, exec_start.elapsed());
+                metric_increment(UNORDERED_OPS_PER_SECOND_ID, Some(operations));
                 T::execution_finished::<A::AppData, NT>(self.node.clone(), None, replies);
             }
         }
     }
 
-    /// Run a preemptive update, automatically backtracking if the seq has fallen behind.
+    /// Run a preemptive update, buffering it if it arrived early and backtracking if the
+    /// seq has fallen behind.
     fn handle_preemptive_update(&mut self, batch: UpdateBatch<Request<A, S>>) {
         match self
             .state
             .handle_preemptive_update(&self.application, batch)
         {
-            Ok(()) => {}
+            Ok(PreemptiveOutcome::Executed { .. }) => {}
+            Ok(PreemptiveOutcome::Staged { awaiting, buffered }) => {
+                // Routine: the ordering protocol decides several instances concurrently, so
+                // batches regularly arrive ahead of their turn. They replay automatically
+                // once the batch they are waiting on shows up.
+                debug!(
+                    "Preemptive update arrived ahead of {awaiting:?}; buffered ({buffered} held)"
+                );
+            }
             Err(PreemptiveError::Backtracking(seq, batch)) => {
                 if let Err(e) = self.state.backtrack(seq) {
                     error!("Backtrack failed: {:?}", e);
@@ -314,10 +339,12 @@ where
                     error!("Preemptive re-execution after backtrack failed: {:?}", e);
                 }
             }
-            Err(PreemptiveError::FutureRequest(seq, current)) => {
-                error!(
-                    "Preemptive update at {seq:?} is ahead of current head {current:?}; dropping"
-                );
+            Err(e @ PreemptiveError::ReorderBufferFull { .. }) => {
+                // The decision log sends every batch exactly once over a blocking channel,
+                // so filling the buffer means a batch was genuinely lost rather than
+                // delayed. Speculation cannot advance past the gap; the confirmation path
+                // falls back to direct execution for whatever it can still find.
+                error!("{e:?}");
             }
         }
     }
@@ -326,4 +353,11 @@ where
         let state = self.state.confirmed_state().clone();
         quiet_unwrap!(self.checkpoint_tx.send(AppStateMessage::new(seq, state)));
     }
+}
+
+#[cfg(test)]
+pub mod tests {
+    mod integration_tests;
+    pub mod test_fixtures;
+    mod unit_tests;
 }

@@ -5,6 +5,7 @@ use crate::single_thread_double_state::state_management::{
 use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::maybe_vec::MaybeVec;
+use atlas_common::ordering::SeqNo;
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_smr_application::state::monolithic_state::AppStateMessage;
 use getset::Getters;
@@ -24,7 +25,13 @@ pub(super) fn initialize_handles<R, S>(
         Some("Confirmed worker state message channel"),
     );
 
-    let confirmed_worker_handle = ConfirmedWorkerHandle::new(update_message_tx, state_message_tx);
+    let (baseline_ack_tx, baseline_ack_rx) = channel::sync::new_bounded_sync(
+        CONFIRMED_WORKER_SIZE,
+        Some("Confirmed worker baseline ack channel"),
+    );
+
+    let confirmed_worker_handle =
+        ConfirmedWorkerHandle::new(update_message_tx, state_message_tx, baseline_ack_rx);
 
     let (confirmed_to_preemptive_tx, preemptive_to_confirmed_rx, state_emission_channel) =
         shared_channels.into();
@@ -35,6 +42,7 @@ pub(super) fn initialize_handles<R, S>(
         update_message_rx,
         state_message_rx,
         state_emission_channel,
+        baseline_ack_tx,
     );
 
     (confirmed_worker_handle, confirmed_worker_channels)
@@ -47,16 +55,23 @@ pub struct ConfirmedWorkerHandle<R, S> {
     update_messages: ChannelSyncTx<ConfirmedUpdateMessage<R>>,
     #[get = "pub"]
     state_message_tx: ChannelSyncTx<StateMessage<S>>,
+    /// The confirmed worker's sequence number after each state install or catch-up, sent
+    /// once it has finished. The orchestrator waits on this before handing the same state
+    /// or batches to the preemptive worker. See `await_confirmed_baseline`.
+    #[get = "pub"]
+    baseline_ack_rx: ChannelSyncRx<SeqNo>,
 }
 
 impl<R, S> ConfirmedWorkerHandle<R, S> {
     pub fn new(
         update_messages: ChannelSyncTx<ConfirmedUpdateMessage<R>>,
         state_message_tx: ChannelSyncTx<StateMessage<S>>,
+        baseline_ack_rx: ChannelSyncRx<SeqNo>,
     ) -> Self {
         Self {
             update_messages,
             state_message_tx,
+            baseline_ack_rx,
         }
     }
 }
@@ -66,6 +81,7 @@ impl<R, S> Clone for ConfirmedWorkerHandle<R, S> {
         Self {
             update_messages: self.update_messages.clone(),
             state_message_tx: self.state_message_tx.clone(),
+            baseline_ack_rx: self.baseline_ack_rx.clone(),
         }
     }
 }
@@ -82,6 +98,8 @@ pub(super) struct ConfirmedChannels<R, S> {
     state_messages: ChannelSyncRx<StateMessage<S>>,
     #[get = "pub"]
     state_emission_channel: ChannelSyncTx<AppStateMessage<S>>,
+    #[get = "pub"]
+    baseline_ack: ChannelSyncTx<SeqNo>,
 }
 
 impl<R, S> ConfirmedChannels<R, S> {
@@ -91,6 +109,7 @@ impl<R, S> ConfirmedChannels<R, S> {
         update_messages: ChannelSyncRx<ConfirmedUpdateMessage<R>>,
         state_messages: ChannelSyncRx<StateMessage<S>>,
         state_emission_channel: ChannelSyncTx<AppStateMessage<S>>,
+        baseline_ack: ChannelSyncTx<SeqNo>,
     ) -> Self {
         Self {
             incoming_preemptive_msg,
@@ -98,18 +117,21 @@ impl<R, S> ConfirmedChannels<R, S> {
             update_messages,
             state_messages,
             state_emission_channel,
+            baseline_ack,
         }
     }
 }
 
 pub enum ConfirmedUpdateMessage<R> {
     /// Instruct the executor to catch up to a quorum of updates.
+    /// The worker acknowledges on `baseline_ack` once it has applied them.
     CatchUp(MaybeVec<UpdateBatch<R>>),
     /// Execute an unordered update on the confirmed state (this will not
     /// take into account any pending preemptive updates, only updates which
     /// have been effectivized)
     ExecuteUnordered(UnorderedUpdateBatch<R>),
     /// Notify the executor that there we have received a state transfer
-    /// and we should poll the state channel to get a consistent state
+    /// and we should poll the state channel to get a consistent state.
+    /// The worker acknowledges the install on `baseline_ack`.
     StateTransferAvailable,
 }

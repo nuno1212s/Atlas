@@ -1,4 +1,5 @@
 use crate::byte_stub::incoming::pooled_stub::{ConnectedPeersGroup, PooledStubOutput};
+use crate::byte_stub::incoming::pre_auth::{Admission, PreAuthGate};
 use crate::byte_stub::peer_conn_manager::ModuleStubEndPoint;
 use crate::byte_stub::peer_conn_manager::PeerStubEndpoints;
 use crate::byte_stub::stub_endpoint::StubEndpoint;
@@ -16,11 +17,12 @@ use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::{channel, quiet_unwrap};
 use enum_map::EnumMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use strum::IntoEnumIterator;
-use tracing::info;
+use tracing::{info, warn};
 
 pub(crate) mod pooled_stub;
+mod pre_auth;
 pub(crate) mod unpooled_stub;
 
 const MODULES: usize = enum_map::enum_len::<MessageModule>();
@@ -81,7 +83,7 @@ where
     S: Serializable,
     A: Serializable,
 {
-    authenticated: Arc<AtomicBool>,
+    gate: Arc<PreAuthGate<WireMessage>>,
     lookup_table: L,
     stub_lookup: PeerStubLookupTable<R, O, S, A>,
 }
@@ -127,10 +129,53 @@ where
         peer_stub: PeerStubLookupTable<R, O, S, A>,
     ) -> Self {
         Self {
-            authenticated,
+            gate: Arc::new(PreAuthGate::new(authenticated)),
             lookup_table,
             stub_lookup: peer_stub,
         }
+    }
+
+    /// Mark this connection authenticated and deliver what arrived before that.
+    pub(crate) fn authenticate(&self)
+    where
+        L: 'static,
+        R: 'static,
+        O: 'static,
+        S: 'static,
+        A: 'static,
+    {
+        let held = self.gate.authenticate();
+
+        if !held.is_empty() {
+            info!(
+                "Delivering {} messages held until authentication",
+                held.len()
+            );
+        }
+
+        for message in held {
+            self.dispatch(message);
+        }
+    }
+
+    fn dispatch(&self, message: WireMessage)
+    where
+        L: 'static,
+        R: 'static,
+        O: 'static,
+        S: 'static,
+        A: 'static,
+    {
+        let peer_stub_lookup = self.stub_lookup.clone();
+        let authenticated = self.gate.is_authenticated();
+
+        atlas_common::threadpool::execute(move || {
+            quiet_unwrap!(message_ingestion::process_wire_message_message(
+                message,
+                authenticated,
+                &peer_stub_lookup
+            ));
+        });
     }
 }
 
@@ -154,20 +199,16 @@ where
     where
         NI: NetworkInformationProvider + 'static,
     {
-        let peer_stub_lookup = self.stub_lookup.clone();
-        //let lookup_table = self.lookup_table.clone();
-        //let network_info = network_info.clone();
-        let authenticated = self.authenticated.load(Ordering::Relaxed);
+        let holdable = !matches!(message.message_mod, MessageModule::Reconfiguration);
+        let size = message.payload.len();
 
-        atlas_common::threadpool::execute(move || {
-            quiet_unwrap!(message_ingestion::process_wire_message_message(
-                message,
-                authenticated,
-                //&*network_info,
-                //&lookup_table,
-                &peer_stub_lookup
-            ));
-        });
+        match self.gate.admit(message, holdable, size) {
+            Admission::Deliver(message) => self.dispatch(message),
+            Admission::Held => {}
+            Admission::Full(_) => {
+                warn!("Dropped a message from an unauthenticated peer: hold buffer is full");
+            }
+        }
 
         Ok(())
     }
@@ -329,7 +370,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            authenticated: self.authenticated.clone(),
+            gate: self.gate.clone(),
             lookup_table: self.lookup_table.clone(),
             stub_lookup: self.stub_lookup.clone(),
         }

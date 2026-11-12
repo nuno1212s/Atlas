@@ -4,13 +4,13 @@
 use serde::de::{Error, SeqAccess};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+#[cfg(feature = "serialize_serde")]
 use std::cmp;
 use std::fmt::{Debug, Formatter};
 use thiserror::Error;
 
 use crate::error::*;
 
-#[cfg(feature = "crypto_signature_ring_ed25519")]
 mod ring_ed25519;
 
 #[derive(Error, Debug)]
@@ -40,7 +40,6 @@ pub enum VerifyError {
 /// A `KeyPair` holds both the private and public key components
 /// that form a digital identity.
 pub struct KeyPair {
-    #[cfg(feature = "crypto_signature_ring_ed25519")]
     inner: ring_ed25519::KeyPair,
 
     pub_key_bytes: Vec<u8>,
@@ -49,7 +48,6 @@ pub struct KeyPair {
 /// The public component of a `KeyPair`.
 #[derive(Clone)]
 pub struct PublicKey {
-    #[cfg(feature = "crypto_signature_ring_ed25519")]
     inner: ring_ed25519::PublicKey,
 
     pk_bytes: Vec<u8>,
@@ -57,7 +55,6 @@ pub struct PublicKey {
 
 /// Reference to a `PublicKey`.
 pub struct PublicKeyRef<'a> {
-    #[cfg(feature = "crypto_signature_ring_ed25519")]
     inner: &'a ring_ed25519::PublicKey,
 
     byte_repr: &'a Vec<u8>,
@@ -75,18 +72,12 @@ pub struct PublicKeyRef<'a> {
 #[repr(transparent)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct Signature {
-    #[cfg(feature = "crypto_signature_ring_ed25519")]
     inner: ring_ed25519::Signature,
 }
 
 impl KeyPair {
     pub fn generate_key_pair() -> Result<Self> {
-        let (inner, public_key) = {
-            #[cfg(feature = "crypto_signature_ring_ed25519")]
-            {
-                ring_ed25519::KeyPair::generate()?
-            }
-        };
+        let (inner, public_key) = ring_ed25519::KeyPair::generate()?;
 
         Ok(KeyPair {
             inner,
@@ -95,12 +86,7 @@ impl KeyPair {
     }
 
     pub fn from_pkcs8(bytes: &[u8]) -> Result<Self> {
-        let (inner, public_key) = {
-            #[cfg(feature = "crypto_signature_ring_ed25519")]
-            {
-                ring_ed25519::KeyPair::from_pkcs8(bytes)?
-            }
-        };
+        let (inner, public_key) = ring_ed25519::KeyPair::from_pkcs8(bytes)?;
 
         Ok(KeyPair {
             inner,
@@ -110,12 +96,7 @@ impl KeyPair {
 
     /// Constructs a `KeyPair` from a byte buffer of appropriate size.
     pub fn from_bytes(raw_bytes: &[u8]) -> Result<Self> {
-        let (inner, pk_bytes) = {
-            #[cfg(feature = "crypto_signature_ring_ed25519")]
-            {
-                ring_ed25519::KeyPair::from_bytes(raw_bytes)?
-            }
-        };
+        let (inner, pk_bytes) = ring_ed25519::KeyPair::from_bytes(raw_bytes)?;
         Ok(KeyPair {
             inner,
             pub_key_bytes: pk_bytes,
@@ -174,12 +155,7 @@ impl<'a> PublicKeyRef<'a> {
 impl PublicKey {
     /// Constructs a `PublicKey` from a byte buffer of appropriate size.
     pub fn from_bytes(raw_bytes: &[u8]) -> Result<Self> {
-        let inner = {
-            #[cfg(feature = "crypto_signature_ring_ed25519")]
-            {
-                ring_ed25519::PublicKey::from_bytes(raw_bytes)?
-            }
-        };
+        let inner = ring_ed25519::PublicKey::from_bytes(raw_bytes)?;
 
         Ok(PublicKey {
             inner,
@@ -206,21 +182,11 @@ impl PublicKey {
 
 impl Signature {
     /// Length in bytes required to represent a `Signature` in memory.
-    pub const LENGTH: usize = {
-        #[cfg(feature = "crypto_signature_ring_ed25519")]
-        {
-            ring_ed25519::Signature::LENGTH
-        }
-    };
+    pub const LENGTH: usize = ring_ed25519::Signature::LENGTH;
 
     /// Constructs a `Signature` from a byte buffer of appropriate size.
     pub fn from_bytes(raw_bytes: &[u8]) -> Result<Self> {
-        let inner = {
-            #[cfg(feature = "crypto_signature_ring_ed25519")]
-            {
-                ring_ed25519::Signature::from_bytes(raw_bytes)?
-            }
-        };
+        let inner = ring_ed25519::Signature::from_bytes(raw_bytes)?;
         Ok(Signature { inner })
     }
 }
@@ -237,6 +203,7 @@ impl AsRef<[u8]> for Signature {
     }
 }
 
+#[cfg(feature = "serialize_serde")]
 impl Serialize for PublicKey {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
@@ -246,6 +213,7 @@ impl Serialize for PublicKey {
     }
 }
 
+#[cfg(feature = "serialize_serde")]
 impl<'de> Deserialize<'de> for PublicKey {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where

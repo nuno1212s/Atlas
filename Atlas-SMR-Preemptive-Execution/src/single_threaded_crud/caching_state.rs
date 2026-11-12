@@ -101,6 +101,12 @@ pub(crate) fn apply_delta_to_state<S: CRUDState>(state: &mut S, delta: &Accumula
     }
 }
 
+/// Number of (column, key) entries held in a cache or delta, tombstones included.
+/// O(columns), not O(entries).
+pub(crate) fn cache_entry_count(cache: &AccumulatedCache) -> usize {
+    cache.values().map(|col| col.len()).sum()
+}
+
 /// Rebuild an accumulated cache by merging deltas in order (later deltas override earlier ones).
 pub(crate) fn rebuild_accumulated_cache<'a>(
     deltas: impl Iterator<Item = &'a AccumulatedCache>,

@@ -34,7 +34,7 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::phantom::FPhantom;
-use atlas_common::{Err, channel, exhaust_and_consume, unwrap_channel};
+use atlas_common::{Err, channel};
 use atlas_communication::message::StoredMessage;
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkReconfigurationCommunication,
@@ -743,7 +743,9 @@ where
             SystemMessage::ViewTransferMessage(view_transfer) => {
                 let strd_msg = StoredMessage::new(header, view_transfer.into_inner());
 
-                self.handle_view_transfer_msg(strd_msg)?;
+                <Self as PermissionedProtocolHandling<D, VT, OP, NT>>::handle_view_transfer_msg(
+                    self, strd_msg,
+                )?;
             }
             SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
                 // Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
@@ -1125,65 +1127,16 @@ where
     where
         EX: TExecutorStateHandle<SMRReq<D>>,
     {
-        channel::sync::sync_select_biased! {
-            recv(unwrap_channel!(self.node.protocol_node().incoming_stub().as_ref())) -> network_msg => exhaust_and_consume!(network_msg?, self.node.protocol_node().incoming_stub().as_ref(), self, handle_network_message_received),
-            recv(unwrap_channel!(self.decision_log_handle.status_rx())) -> status_msg => exhaust_and_consume!(status_msg?, self.decision_log_handle.status_rx(), self, handle_decision_log_work_message),
-            recv(unwrap_channel!(self.state_transfer_handle.response_rx())) -> state_msg => exhaust_and_consume!(state_msg?, self.state_transfer_handle.response_rx(), self, handle_state_transfer_progress_message),
-            recv(unwrap_channel!(self.network_update_listener)) -> network_update => exhaust_and_consume!(network_update?, self.network_update_listener, self, handle_network_update_message),
-            recv(unwrap_channel!(self.reconf_receive)) -> reconf_msg => exhaust_and_consume!(reconf_msg?, self.reconf_receive, self, handle_reconfiguration_protocol_message),
-            recv(unwrap_channel!(self.timeout_rx)) -> timeout => exhaust_and_consume!(timeout?, self.timeout_rx, self, timeout_received),
-            recv(unwrap_channel!(self.processed_timeout.1)) -> timeout_msg => match timeout_msg {
-                Ok((timeouts, deleted)) => self.processed_timeout_recvd(timeouts, deleted),
-                Err(err) => Err!(err),
-            },
+        channel::sync::sync_select! {
+            recv_exhaust(self.node.protocol_node().incoming_stub().as_ref()) -> network_msg => self.handle_network_message_received(network_msg),
+            recv_exhaust(self.decision_log_handle.status_rx()) -> status_msg => self.handle_decision_log_work_message(status_msg),
+            recv_exhaust(self.state_transfer_handle.response_rx()) -> state_msg => self.handle_state_transfer_progress_message(state_msg),
+            recv_exhaust(self.network_update_listener) -> network_update => self.handle_network_update_message(network_update),
+            recv_exhaust(self.reconf_receive) -> reconf_msg => self.handle_reconfiguration_protocol_message(reconf_msg),
+            recv_exhaust(self.timeout_rx) -> timeout => self.timeout_received(timeout),
+            recv(self.processed_timeout.1) -> (timeouts, deleted) => self.processed_timeout_recvd(timeouts, deleted),
             default(Duration::from_millis(1)) => Ok(()),
         }
-    }
-
-    #[allow(dead_code)]
-    fn receive_internal_exhaust(&mut self) -> Result<()>
-    where
-        EX: TExecutorStateHandle<SMRReq<D>>,
-    {
-        exhaust_and_consume!(
-            self.node.protocol_node().incoming_stub().as_ref(),
-            self,
-            handle_network_message_received
-        );
-
-        //if self.current_count.wrapping_add(1) % 100 == 0 {
-        exhaust_and_consume!(
-            self.network_update_listener,
-            self,
-            handle_network_update_message
-        );
-        exhaust_and_consume!(
-            self.decision_log_handle.status_rx(),
-            self,
-            handle_decision_log_work_message
-        );
-        exhaust_and_consume!(
-            self.state_transfer_handle.response_rx(),
-            self,
-            handle_state_transfer_progress_message
-        );
-        exhaust_and_consume!(
-            self.reconf_receive,
-            self,
-            handle_reconfiguration_protocol_message
-        );
-        exhaust_and_consume!(self.timeout_rx, self, timeout_received);
-        exhaust_and_consume!(self.processed_timeout.1, self, process_timeout_message);
-        //}
-
-        Ok(())
-    }
-
-    fn process_timeout_message(
-        &mut self,
-        (message, to_delete): (Vec<ModTimeout>, Vec<ModTimeout>),
-    ) -> Result<()> {
-        self.processed_timeout_recvd(message, to_delete)
     }
 
     #[instrument(skip_all, fields(timeout_len = timeouts.len()))]
@@ -1641,7 +1594,9 @@ where
         match self.view_transfer_protocol.poll()? {
             VTPollResult::RePoll => {}
             VTPollResult::Exec(msg) => {
-                self.handle_view_transfer_msg(msg)?;
+                <Self as PermissionedProtocolHandling<D, VT, OP, NT>>::handle_view_transfer_msg(
+                    self, msg,
+                )?;
             }
             VTPollResult::ReceiveMsg => {
                 return Ok(IterableProtocolRes::Receive);

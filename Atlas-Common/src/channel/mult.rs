@@ -2,12 +2,10 @@ use crate::channel::{SendReturnError, custom_dump};
 
 /// Channel with capability of dumping multiple members in a couple of CAS operations
 pub struct ChannelMultTx<T> {
-    #[cfg(feature = "channel_mult_custom_dump")]
     inner: custom_dump::ChannelTx<T>,
 }
 
 pub struct ChannelMultRx<T> {
-    #[cfg(feature = "channel_mult_custom_dump")]
     inner: custom_dump::ChannelRxMult<T>,
 }
 

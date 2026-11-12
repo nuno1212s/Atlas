@@ -1,0 +1,48 @@
+@startuml preemptive-context-cache-seq-window
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+left to right direction
+skinparam legendBackgroundColor white
+skinparam legendFontSize 10
+skinparam nodesep 12
+skinparam ranksep 18
+skinparam rectangle {
+  BackgroundColor white
+}
+rectangle "S\n≤ 6" as s6 #lightgray
+package "pending log · VecDeque<PendingCachedUpdate>" as log {
+  rectangle "Ω7 · head\nbatch, replies, Ω\n▲ next_confirmed" as p7
+  rectangle "Ω8\nbatch, replies, Ω" as p8
+  rectangle "Ω9 · tail\nbatch, replies, Ω" as p9
+}
+rectangle "batch 10 → ω10\nexecuting\n▲ next_preemptive" as x10 #line.dashed
+rectangle "batch 11\nmissing" as g11 #line.dotted
+package "staged · BTreeMap" as stg {
+  rectangle "batch 12\nnot executed" as s12
+}
+s6 -[hidden]- p7
+p7 -[hidden]- p8
+p8 -[hidden]- p9
+p9 -[hidden]- x10
+x10 -[hidden]- g11
+g11 -[hidden]- s12
+legend bottom left
+  commit Ω7:  pop the head, which becomes Δ7; S ⊕= Δ7, refold C from Ω8 and Ω9, release its replies
+  speculate Ω10:  execute batch 10 through ω10, C ⊕= ω10, append it as Ω10
+  backtrack to Ωk:  drop Ωk and every later entry, evict all staged batches, refold C
+  batch 11 arrives:  speculate it into Ω11, then drain batch 12 from staged into Ω12
+endlegend
+@enduml

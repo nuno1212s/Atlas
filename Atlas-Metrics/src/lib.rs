@@ -106,6 +106,44 @@ pub fn initialize_metrics(config: Vec<MetricsArgsFunc>, influxdb: InfluxDBArgs) 
     metrics::os_mon::launch_os_mon(influxdb);
 }
 
+impl MetricRegistryInfo {
+    /// The registry slot this metric occupies.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns this registration with its level replaced.
+    ///
+    /// Useful for raising a metric that a crate registers as `MetricLevel::Disabled` by
+    /// default (so it emits nothing) without re-registering its ID, which would leave the
+    /// same slot listed twice in the collection loop.
+    pub fn with_level(mut self, level: MetricLevel) -> Self {
+        self.level = level;
+        self
+    }
+}
+
+/// Raise the level of specific metric IDs within a registry list.
+///
+/// Metrics registered below the process-wide level are silently inert, so a benchmark that
+/// needs a normally-disabled metric has to opt it in explicitly.
+pub fn override_metric_levels(
+    metrics: Vec<MetricRegistry>,
+    ids: &[usize],
+    level: MetricLevel,
+) -> Vec<MetricRegistry> {
+    metrics
+        .into_iter()
+        .map(|metric| {
+            if ids.contains(&metric.index()) {
+                metric.with_level(level)
+            } else {
+                metric
+            }
+        })
+        .collect()
+}
+
 impl From<(usize, String, MetricKind)> for MetricRegistryInfo {
     fn from((index, name, kind): (usize, String, MetricKind)) -> Self {
         Self {

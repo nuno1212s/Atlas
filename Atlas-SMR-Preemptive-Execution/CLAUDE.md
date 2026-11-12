@@ -70,8 +70,8 @@ Added in this session. Lives in `src/single_threaded_crud/`. Single worker threa
 Instead of maintaining two full state copies and re-executing on confirmation, this design:
 - Keeps **one confirmed state** (real state, only mutated on confirmation)
 - Each preemptive update executes through a `CachingState` proxy — writes go into a per-update **delta** (RAM cache), the real state is never touched
-- An **accumulated cache** = ordered merge of all pending deltas; answers reads that fall through from the current update's local delta
-- On **confirmation**: apply the pre-computed delta to the real state — no re-execution
+- An **accumulated cache** = ordered merge of all pending deltas (plus, until compaction, entries of already-confirmed ones); answers reads that fall through from the current update's local delta
+- On **confirmation**: apply the pre-computed delta to the real state — no re-execution, and no cache refold: leftover entries of the applied delta read the same as the real state. The cache is cleared when the pending queue drains and refolded only when it exceeds `CACHE_COMPACTION_FACTOR` (2) × the pending deltas' entries (amortized compaction). Any path that writes the real state without a pending delta (`handle_confirmed_update`, the fallback's `execute_directly`) must run over an empty cache, or stale entries would shadow its writes
 - On **backtrack**: discard pending deltas from the bad point forward, rebuild the accumulated cache — no state clone
 
 ```
@@ -82,9 +82,10 @@ PreemptiveUpdate  ────► execute via CachingState proxy
                          store (batch, replies, delta) in pending queue
 
 PreemptiveUpdateFinalized(seq) ──► pop head, apply delta to real state,
-                                    rebuild accumulated_cache, send replies
+                                    clear cache if pending drained, else compact
+                                    if oversized; send replies
 
-UpdateBatch (direct) ──► execute directly on confirmed_state (no pending allowed)
+UpdateBatch (direct) ──► clear cache, execute directly on confirmed_state (no pending allowed)
 
 CatchUp ──────────────► clear pending + cache, apply directly, advance seq_nos
 
@@ -130,16 +131,86 @@ The `Application` trait provides a default `update_batch` that calls `update` in
 - `atlas-smr-preemptive-execution` and `atlas-smr-execution` are **mutually exclusive** alternatives — their ID spaces never coexist in the same binary, so overlap is harmless.
 - Dual-state metrics: IDs 800–801 (original), 804–807 (added).
 - CRUD cache metrics: IDs 802–803 (original), 809–816 (added).
-- IDs 808 is reserved/unused.
+- Scalable CRUD metrics: IDs 817–820.
+- Reorder buffer metrics: IDs 821–823, shared by **all three** executors (821 `REORDER_BUFFER_SIZE`, 822 `REORDER_STAGED_COUNT`, 823 `SPECULATION_FALLBACK_COUNT`).
+- Shared throughput counters: IDs 824–825, emitted by **all three** executors.
+- Scalable CRUD, second wave: IDs 826–827 (`SCALABLE_SPECULATION_TO_CONFIRM_LATENCY`,
+  `SCALABLE_CONFIRM_APPLICATION_TIME`). The scalable executor stored `speculated_at` from
+  the start but never recorded it, and had no confirm-apply timing at all, so it was the
+  one variant whose confirmation cost could not be compared against the other two.
+- Confirmation path: IDs 828–831, emitted by **all three** executors under one name each
+  (`CONFIRM_ENQUEUE_TO_APPLY_LATENCY`, `CONFIRM_TO_REPLY_TIME`,
+  `CONFIRM_BLOCKED_ON_EXEC_TIME`, `SPECULATION_HIT_RATE`). Recorded through
+  `metric::record_confirmation(confirmed_at, speculated)`, called once per confirmed batch
+  immediately before the replies are handed to the replier.
+- ID 808 is reserved/unused.
 - All IDs are in `src/metric.rs`. All metrics are fully wired up — no unconnected constants remain.
+
+**824/825 deliberately duplicate `atlas-smr-execution`'s names, not its IDs:**
+`OPERATIONS_EXECUTED_PER_SECOND` (824) and `UNORDERED_OPERATIONS_EXECUTED_PER_SECOND` (825)
+carry the same *names* as IDs 804/805 in `atlas-smr-execution`. Only one execution crate is
+linked into any binary, so the names cannot collide at runtime — and sharing them is the point:
+that pair is the headline throughput series every suite dashboard plots, so before this existed
+a preemptive run left the panel blank and crud_perf could not be compared with
+microbenchmarks-async. The IDs differ only because 804/805 were already taken here by
+`DS_PREEMPTIVE_EXECUTION_TIME` and `DS_SPECULATION_TO_CONFIRM_LATENCY`; the ID is a registry
+slot, the name is what reaches InfluxDB.
+
+Both are registered as three-tuples, so they default to `MetricLevel::Info` — matching
+`atlas-smr-execution` and surviving any `with_metric_level` a suite configures (a metric is kept
+when its own level is at or above the binary's, and Info is the highest).
+
+**Throughput is counted on the confirmation path, never on speculation.** A speculatively
+executed batch can be discarded and re-run after a backtrack, and the scalable executor
+re-executes colliding operations *within* a batch. Counting either would report work that never
+reached a client and would stop meaning what the identically-named baseline counter means:
+operations whose results were actually delivered. The `SPECULATION_FALLBACK_COUNT` path counts
+too — it commits the batch just as the speculated path does, only without the speculation.
 
 **Metric wiring locations:**
 - `confirmed_worker/mod.rs` — 800 `CONFIRMED_WORKER_LATENCY` (recorded per `execute_and_advance` call, using `Instant` stored in `Update` enum and `PreemptiveToConfirmedMsg`)
-- `confirmed_requests.rs` — 801 `CONFIRM_EXECUTION_TIME` (wraps `application.update_batch` in `execute_update`)
-- `pending_state.rs` — 802, 803, 809, 810, 811, 812, 813, 815 (all CRUD cache state-machine metrics)
-- `single_threaded_crud/mod.rs` — 814, 816 (unordered execution time and enqueue-to-execute latency)
+- `confirmed_requests.rs` — 801 `CONFIRM_EXECUTION_TIME` (wraps `application.update_batch` in `execute_update`), plus 824 in `execute_update` and 825 in `execute_read` (dual-state)
+- `pending_state.rs` — 802, 803, 809, 810, 811, 812, 813, 815 (all CRUD cache state-machine metrics), plus 824 on both confirmation routes: the speculated one (`update.batch.len()` after the pop) and the `SPECULATION_FALLBACK_COUNT` one (`batch.len()`, read before `execute_directly` consumes it)
+- `scalable_crud/pending_state.rs` — 817–820 and the same two 824 sites
+- `single_threaded_crud/mod.rs` — 814, 816 (unordered execution time and enqueue-to-execute latency), plus 825 in the `ExecuteUnordered` arm and 828–831 on all four confirmation arms
+- `scalable_crud/mod.rs` — 825 in the `ExecuteUnordered` arm, plus 828–831 on all four confirmation arms
+- `scalable_crud/pending_state.rs` — 826, 827 in `handle_update_confirmed`
+- `single_thread_double_state/preemptive_worker/mod.rs` — 828–831 in `handle_preemptive_update_confirmed` (speculated) and `handle_confirmed_update` (not speculated)
 - `preemptive_requests.rs` — 804, 805, 807 (dual-state preemptive execution, speculation-to-confirm latency, ops per batch)
 - `preemptive_worker/mod.rs` — 806 `DS_BACKTRACK_COUNT` (in `handle_backtracking_request`)
+
+Each 824/825 site reads the batch length *before* handing the batch to the application or to
+`into_inner()`, since both consume it.
+
+**828–831 are the counterpart to the `*_SPECULATION_TO_CONFIRM_LATENCY` family:**
+that family measures the *reply waiting on consensus* — speculation finished first, so the
+wait is latency the client never paid. These four measure the other direction, *consensus
+waiting on the reply*, which is what is still on the critical path. `CONFIRM_TO_REPLY_TIME`
+spans the same two points as `EXECUTION_LATENCY + EXECUTION_TIME_TAKEN` in
+`atlas-smr-execution`, which is what makes a preemptive run comparable with `baseline`
+rather than merely adjacent to it.
+
+`SPECULATION_HIT_RATE` is stored as permille (×1000) so the `Count` kind can average
+integers — same convention as `SCALABLE_COLLISION_RATE` — and is registered at
+`MetricLevel::Info` despite being a `Count`, because it is the metric that says whether
+speculation engaged at all and so has to survive any `with_metric_level` a suite sets.
+
+`speculated` is derived at the call site, never inside the state machine: the cache and
+scalable workers test `state.pending_front_seq() == Some(seq)` *before* confirming (that is
+exactly the `ConfirmRoute::Pending` condition, and confirming consumes the entry), while
+the dual-state worker knows it structurally — `handle_update_confirmed` only returns `Ok`
+when the queue head matches, and `ConfirmedUpdate` is by definition a batch that was never
+speculated. Doing it this way kept the `handle_*_confirmed` signatures untouched and so
+avoided churning ~50 unit-test call sites.
+
+**The `Instant` on `PreemptiveUpdateFinalized`:**
+`PreemptiveExecutionRequest::PreemptiveUpdateFinalized` and
+`...FinalizedAndGetAppstate` carry an `Instant` stamped in `exec_handle.rs` when the
+ordering protocol queues the commit — the confirmation-side mirror of the one
+`PreemptiveUpdate` already carried. Without it the confirmation path had no timestamp
+anywhere and none of 828–831 could be measured. The dual-state executor forwards it through
+`PreemptiveWorkMessage::PreemptiveUpdateConfirmed` / `ConfirmedUpdate` to the preemptive
+worker, which is where the replies are actually dispatched.
 
 **`speculated_at: Instant` propagation for latency metrics:**
 Both `PendingCachedUpdate` (CRUD cache, in `pending_state.rs`) and `PendingPermanentUpdate` (dual-state, in `preemptive_requests.rs`) carry a `speculated_at: Instant` field set when the update enters the pending queue. This field is consumed in `handle_update_confirmed` to record the speculation-to-confirmation latency.
@@ -147,8 +218,23 @@ Both `PendingCachedUpdate` (CRUD cache, in `pending_state.rs`) and `PendingPerma
 **`Instant` in `PreemptiveToConfirmedMsg`:**
 `state_management.rs::PreemptiveToConfirmedMsg::UpdateConfirmed` and `UpdateConfirmedEmitAppState` carry an `Instant` set at send time in `comm_handles.rs`. This is propagated through the TBO queue inside the `Update` enum in `confirmed_worker/mod.rs` and consumed in `execute_and_advance` to record metric 800.
 
+**Sequence tracking is "next expected", not "last applied":**
+All three executors track the sequence number they are *waiting for* (`next_preemptive` / `next_confirmed`), not the last one applied. This is load-bearing, not cosmetic. `SeqNo::ZERO` is both the initial value and the first sequence number consensus assigns (febft is 0-indexed), so a "last applied" field cannot distinguish "nothing has run yet" from "sequence 0 has run" — under the old scheme the first batch of every run was classified as a backtrack, dropped, and its clients never got replies. The constructor's `SeqNo` argument therefore means "the next sequence expected", and `install_confirmed_state(seq, ..)` stores `seq.next()`.
+
+Compare sequence numbers with `Ord` (`.cmp()`), not `<`/`<=`: `SeqNo`'s `PartialOrd` routes through the wrap-aware `index()`, which reports a sequence more than `PERIOD + PERIOD/2` ahead as *behind*. Using `<` there misclassifies a far-future batch as a backtrack.
+
+**Out-of-order delivery and the reorder buffer:**
+The ordering protocol decides several consensus instances concurrently and emits `DecisionRequests` at pre-prepare completion, so preemptive batches reach the executor **out of sequence** as a matter of course (measured: up to 15 positions of displacement on a 4-replica PBFT run). The decision log sends each batch exactly once over a blocking channel, so batches are never *lost* — gaps always close.
+
+Each executor therefore holds early arrivals in a `staged: BTreeMap<SeqNo, UpdateBatch<..>>` reorder buffer instead of dropping them, and drains it forward after every successful execution. Dropping them (the old behaviour) wedged the pipeline permanently on the first out-of-order arrival: the head could never reach the dropped sequence, every later batch was rejected, and once the pending queue drained every confirmation hit `EmptyQueue` and no client got a reply again.
+
+`MAX_STAGED_BATCHES` (4096, defined in `single_threaded_crud/pending_state.rs` and shared by all three executors) bounds the buffer. Because batches are never dropped in transit, hitting the bound means a batch was genuinely lost, which is why it logs at ERROR rather than being handled silently.
+
 **Backtrack mechanics in the worker:**
-`handle_preemptive_update` in `mod.rs` returns `PreemptiveError::Backtracking(seq, batch)` when the incoming seq is behind the current head. The worker immediately calls `self.state.backtrack(seq)` to discard the stale pending entries, then retries the same batch as a fresh preemptive update.
+`handle_preemptive_update` in `mod.rs` returns `PreemptiveError::Backtracking(seq, batch)` when the incoming seq is behind the current head. The worker immediately calls `self.state.backtrack(seq)` to discard the stale pending entries, then retries the same batch as a fresh preemptive update. Backtracking also evicts buffered batches at or above the backtrack point — those decisions are being re-decided, so the buffered copies are stale.
+
+**Confirmation degrades instead of failing:**
+If a confirmation arrives for a batch that was never speculated (it was still in the reorder buffer), `handle_update_confirmed` executes it directly against the confirmed state rather than erroring. Speculation already built on top of it is invalid, so those pending entries are returned to the reorder buffer — the batches survive, only the computed deltas and replies are thrown away — and speculation restarts behind the confirmed batch. The executor degrades to baseline execution rather than halting.
 
 **For unordered reads, clone the Arc before borrowing self:**
 ```rust
@@ -191,9 +277,45 @@ Use the dual-state design when `S` does not implement `CRUDState`. Use the CRUD 
 
 ## Known Incomplete Areas
 
-Several `todo!()` placeholders remain in the dual-state design (this crate is under active development on the `preemptive_execution` branch):
-- `UpdateFinalizedAndGetAppstate` path in orchestrator (`mod.rs` ~line 234)
-- `PollStateChannel` handling in preemptive worker (`preemptive_worker/mod.rs`)
-- `ConfirmedToPreemptiveMsg` state resync in preemptive worker
+No `todo!()` placeholders remain. The dual-state design has two known gaps, each pinned by an
+`#[ignore]`d test in `single_thread_double_state/tests/execution.rs` that says what the fix needs:
+- a `ConfirmedUpdate` for an already-speculated seq (deferred persistence) kills the preemptive worker;
+- an out-of-order finalize kills the preemptive worker with `SeqMismatch`.
+
+**State transfer and catch-up reach the confirmed worker first, and the orchestrator waits.**
+Both move the confirmed worker to a new baseline. It gets that baseline from the orchestrator,
+but the confirmations that follow it come from the preemptive worker, on another channel and from
+another thread. If the preemptive worker were told first, it could confirm the next batch before
+the confirmed worker had applied the baseline. A *fresh* confirmed worker would then adopt that
+batch as its baseline (`awaiting_first_confirmed`) and apply it to the old state, so the state
+diverges and a wrong checkpoint goes out.
+
+So the orchestrator (`await_confirmed_baseline`) waits for the confirmed worker's `baseline_ack`
+before passing the state or the catch-up batches to the preemptive worker.
+- The ack carries the confirmed worker's resulting sequence number, which is checked against
+  the installed seq or the last caught-up batch.
+- The cost: the two workers apply a catch-up one after the other, not in parallel.
+- `test_fresh_confirmed_worker_acks_{install_before_preemptive_gets_state,catch_up_before_preemptive_gets_batches}`
+  pin the worker side.
+- Under the old order the failure needed a thread descheduled inside one `sync_select!` round,
+  so no executor-level test reproduces it deterministically. The `test_executor_*_on_fresh_executor`
+  tests are smoke tests.
 
 The CRUD cache executor (`single_threaded_crud`) is fully implemented and tested.
+
+**`sync_select!` drains — end the round when a body switches run mode.**
+Since the selector rewrite (2026-08-31), one `sync_select!` round takes up to
+`DEFAULT_DRAIN_LIMIT` (128) messages from *every* arm and runs the body for each. Setting a
+flag in a body does not stop the round. Before the fix, an arm that switched to
+`RunMode::StateTransfer` let the messages queued behind it run in Normal mode, before the state
+they must follow had been installed. The dual-state state-transfer and catch-up tests failed
+most of the time (5s `recv` timeouts), which was long misread as flakiness on the old `todo!()`
+paths.
+
+The fix keeps `sync_select!`:
+- An arm body may return `Result<ControlFlow<()>, E>`, and `Ok(Break(()))` ends the round
+  successfully, leaving everything not yet taken queued (Atlas-Common `__select::RoundStep`).
+- All three dual-state loops return `self.run_mode.round_step()`, which is `Break` once the mode
+  has left Normal. The preemptive worker's state-transfer select breaks after its one install.
+- The confirmed worker's install uses `advance_to_seq` rather than `reset_with_seq`, so a
+  confirmation for a later batch that was queued before the install survives it.

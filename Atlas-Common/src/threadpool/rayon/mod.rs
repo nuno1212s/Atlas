@@ -15,7 +15,7 @@ impl ThreadPool {
     pub fn install<F, R>(&self, job: F) -> R
     where
         F: FnOnce() -> R + Send + 'static,
-        R: Send,
+        R: Send + 'static,
     {
         self.inner.install(job)
     }

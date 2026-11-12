@@ -9,12 +9,12 @@ use crate::single_thread_double_state::state_management::{
     ConfirmedToPreemptiveMsg, PreemptiveToConfirmedMsg, StateMessage,
 };
 use atlas_common::channel::sync::sync_select;
-use atlas_common::channel::{NoRetChannelErr, RecvError, TryRecvError};
+use atlas_common::channel::{NoRetChannelErr, TryRecvError};
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::tbo_queue::TTboQueue;
 use atlas_common::ordering::tbo_queue::vec_tbo_queue::VTboQueue;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{exhaust_and_consume, quiet_unwrap, unwrap_channel};
+use atlas_common::quiet_unwrap;
 use atlas_core::execution::requests::{UnorderedUpdateBatch, UpdateBatch};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Application, Request};
@@ -171,13 +171,16 @@ where
             return Ok(());
         }
 
+        // The update arm stops the round at a `StateTransferAvailable`. Being first, it
+        // also keeps the round from reaching the confirmations behind it, which would
+        // otherwise be applied against the state about to be replaced.
         sync_select! {
-            recv(unwrap_channel!(self.confirmed_channels.update_messages())) -> msg =>
-                self.drain_update_messages(msg.map_err(|err| RecvError::from_base_error_with_channel(err, self.confirmed_channels.update_messages().name().cloned()))?),
-            recv(unwrap_channel!(self.confirmed_channels.incoming_preemptive_msg())) -> msg =>
-            exhaust_and_consume!(msg.map_err(|err| RecvError::from_base_error_with_channel(err, self.confirmed_channels.incoming_preemptive_msg().name().cloned()))?,
-                self.confirmed_channels.incoming_preemptive_msg(),
-                self, handle_confirmed_update),
+            recv(self.confirmed_channels.update_messages()) -> msg => {
+                self.handle_work_message(msg)?;
+
+                Ok::<_, NoRetChannelErr>(self.run_mode.round_step())
+            }
+            recv_exhaust(self.confirmed_channels.incoming_preemptive_msg()) -> msg => self.handle_confirmed_update(msg),
         }
     }
 
@@ -247,7 +250,7 @@ where
     {
         match message {
             ConfirmedUpdateMessage::CatchUp(catch_up) => {
-                self.handle_catch_up(catch_up);
+                self.handle_catch_up(catch_up)?;
             }
             ConfirmedUpdateMessage::ExecuteUnordered(unordered_batch) => {
                 self.handle_unordered_batch(unordered_batch);
@@ -287,6 +290,8 @@ where
                 }
             }
             PreemptiveToConfirmedMsg::RequestStateCopy => {
+                // Earlier confirmations are queued, not executed; the copy must include them.
+                self.execute_updates();
                 let (seq_no, state) = self.confirmed_state.take_state_snapshot();
 
                 self.confirmed_channels
@@ -305,17 +310,32 @@ where
         let StateMessage::ConfirmedStateReceived(seq, s) = message;
 
         self.confirmed_state.install_state_message(seq, s.clone());
-        // Position queue at seq + 1 so the next batch lands at slot 0.
-        self.update_queue.reset_with_seq(seq.next());
+        // Position queue at seq + 1 so the next batch lands at slot 0. Advancing rather
+        // than resetting keeps confirmations for later batches that were queued before
+        // the install was seen: the preemptive worker installs first and may already
+        // have confirmed the batch after `seq`. Resetting would drop that confirmation,
+        // and with it the batch. A queue already past `seq` is reset as before.
+        if self.update_queue.advance_to_seq(seq.next()).is_err() {
+            self.update_queue.reset_with_seq(seq.next());
+        }
         // A state install establishes the baseline explicitly.
         self.awaiting_first_confirmed = false;
 
         self.set_run_mode(RunMode::Normal);
 
+        // Only now may the preemptive worker get the state: it starts confirming the batches
+        // after `seq` as soon as it has installed it, and those confirmations must not
+        // reach this worker before its own install has happened. See
+        // `await_confirmed_baseline` in the orchestrator.
+        self.confirmed_channels.baseline_ack().send(seq)?;
+
         Ok(())
     }
 
-    fn handle_catch_up(&mut self, confirmed_batches: MaybeVec<UpdateBatch<Request<A, S>>>)
+    fn handle_catch_up(
+        &mut self,
+        confirmed_batches: MaybeVec<UpdateBatch<Request<A, S>>>,
+    ) -> Result<(), NoRetChannelErr>
     where
         S: Clone,
     {
@@ -339,6 +359,14 @@ where
             .expect("Failed to advance to seq number.");
         // Catch-up establishes the baseline.
         self.awaiting_first_confirmed = false;
+
+        // As for a state install: the preemptive worker gets these batches only now, so
+        // its confirmations of the batches after them cannot arrive before they are applied.
+        self.confirmed_channels
+            .baseline_ack()
+            .send(self.confirmed_state.sequence_number())?;
+
+        Ok(())
     }
 
     fn handle_unordered_batch(&self, unordered_batch: UnorderedUpdateBatch<Request<A, S>>) {

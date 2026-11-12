@@ -1,4 +1,6 @@
-use crate::metric::DS_BACKTRACK_COUNT_ID;
+use crate::metric::{
+    CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, DS_BACKTRACK_COUNT_ID, record_confirmation,
+};
 use crate::single_thread_double_state::RunMode;
 use crate::single_thread_double_state::comm_handles::PreemptiveWorkerSharedChannels;
 use crate::single_thread_double_state::preemptive_worker::comm_handles::{
@@ -12,14 +14,15 @@ use crate::single_thread_double_state::preemptive_worker::preemptive_requests::{
 use crate::single_thread_double_state::state_management::StateMessage;
 use atlas_common::channel::{NoRetChannelErr, RecvError, sync};
 use atlas_common::ordering::SeqNo;
-use atlas_common::unwrap_channel;
 use atlas_core::execution::requests::UpdateBatch;
-use atlas_metrics::metrics::metric_increment;
+use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_core::SMRReply;
 use atlas_smr_core::execution::reply::ReplyNode;
 use atlas_smr_execution::repliers::ExecutorReplier;
+use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::time::Instant;
 use thiserror::Error;
 use tracing::error;
 
@@ -88,49 +91,80 @@ where
         T: ExecutorReplier,
     {
         sync::sync_select! {
-            recv(unwrap_channel!(self.preemptive_channels.work_rx())) -> msg => {
-                match msg.map_err(|e| NoRetChannelErr::from(RecvError::from(e)))? {
-                    PreemptiveWorkMessage::PreemptiveUpdate(update_batch) => {
-                        self.handle_preemptive_update::<T>(update_batch)?;
-                    }
-                    PreemptiveWorkMessage::PreemptiveUpdateConfirmed(seq_no) => {
-                        let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no)?;
+            recv(self.preemptive_channels.work_rx()) -> msg => {
+                self.handle_work_message::<T>(msg)?;
 
-                        self.preemptive_channels.send_update_confirmed(update_batch);
-                    },
-                    PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(seq_no) => {
-                        let update_batch = self.handle_preemptive_update_confirmed::<T>(seq_no)?;
-
-                        self.preemptive_channels.send_update_confirmed_get_appstate(update_batch);
-                    }
-                    PreemptiveWorkMessage::ConfirmedUpdate(update_batch) => {
-                        self.handle_confirmed_update::<T>(update_batch, false)?;
-                    }
-                    PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(update_batch) => {
-                        self.handle_confirmed_update::<T>(update_batch, true)?;
-                    }
-                    PreemptiveWorkMessage::CatchUp(confirmed_batches) => {
-                        self.state.handle_catch_up(&self.application, confirmed_batches);
-                    }
-                    PreemptiveWorkMessage::PollStateChannel => {
-                        self.set_run_mode(RunMode::StateTransfer);
-                    }
-                }
-
-                Ok(())
+                // Stop at a `PollStateChannel`: the messages behind it belong after the
+                // state install, not to the speculation it is about to replace.
+                Ok::<_, PreemptiveWorkerError>(self.run_mode.round_step())
             }
         }
     }
 
+    fn handle_work_message<T>(
+        &mut self,
+        msg: PreemptiveWorkMessage<Request<A, S>>,
+    ) -> Result<(), PreemptiveWorkerError>
+    where
+        NT: ReplyNode<SMRReply<A::AppData>> + 'static,
+        T: ExecutorReplier,
+    {
+        match msg {
+            PreemptiveWorkMessage::PreemptiveUpdate(update_batch) => {
+                self.handle_preemptive_update::<T>(update_batch)?;
+            }
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmed(seq_no, confirmed_at) => {
+                let update_batch =
+                    self.handle_preemptive_update_confirmed::<T>(seq_no, confirmed_at)?;
+
+                self.preemptive_channels.send_update_confirmed(update_batch);
+            }
+            PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
+                seq_no,
+                confirmed_at,
+            ) => {
+                let update_batch =
+                    self.handle_preemptive_update_confirmed::<T>(seq_no, confirmed_at)?;
+
+                self.preemptive_channels
+                    .send_update_confirmed_get_appstate(update_batch);
+            }
+            PreemptiveWorkMessage::ConfirmedUpdate(update_batch, confirmed_at) => {
+                self.handle_confirmed_update::<T>(update_batch, false, confirmed_at)?;
+            }
+            PreemptiveWorkMessage::ConfirmedUpdateAndGetAppstate(update_batch, confirmed_at) => {
+                self.handle_confirmed_update::<T>(update_batch, true, confirmed_at)?;
+            }
+            PreemptiveWorkMessage::CatchUp(confirmed_batches) => {
+                self.state
+                    .handle_catch_up(&self.application, confirmed_batches);
+            }
+            PreemptiveWorkMessage::PollStateChannel => {
+                self.set_run_mode(RunMode::StateTransfer);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Confirm a batch that was speculated: the replies were computed when the proposal
+    /// arrived and have been waiting on consensus ever since, so `record_confirmation` is
+    /// called with `speculated = true`. `handle_update_confirmed` only ever returns `Ok`
+    /// when the queue head matches, which is exactly that condition.
     fn handle_preemptive_update_confirmed<T>(
         &mut self,
         update_seq: SeqNo,
+        confirmed_at: Instant,
     ) -> Result<UpdateBatch<Request<A, S>>, PreemptiveWorkerError>
     where
         T: ExecutorReplier,
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
     {
+        metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, confirmed_at.elapsed());
+
         let (update_batch, replies) = self.state.handle_update_confirmed(update_seq)?.into_inner();
+
+        record_confirmation(confirmed_at, true);
 
         T::execution_finished::<A::AppData, NT>(self.node.clone(), Some(update_seq), replies);
 
@@ -153,10 +187,11 @@ where
                 ExecuteUpdateError::Backtracking(_, batch) => {
                     self.handle_backtracking_request::<T>(batch)?;
                 }
-                ExecuteUpdateError::FutureRequest(seq, current) => {
-                    error!(
-                        "Preemptive update at seq {seq:?} is ahead of current head {current:?}; dropping"
-                    );
+                err @ ExecuteUpdateError::ReorderBufferFull { .. } => {
+                    // The decision log sends every batch exactly once over a blocking
+                    // channel, so filling the buffer means a batch was genuinely lost
+                    // rather than merely late.
+                    error!("{err:?}");
                 }
                 ExecuteUpdateError::ChannelErr(e) => {
                     return Err(PreemptiveWorkerError::Channel(e));
@@ -167,36 +202,43 @@ where
         Ok(())
     }
 
+    /// Wait for the state to install, and nothing else.
+    ///
+    /// The only traffic on `confirmed_worker_rx` is the reply to a `RequestStateCopy`,
+    /// and `request_latest_confirmed_state` blocks until it has consumed that reply, so
+    /// no such message can be outstanding here. Selecting on it as well (the earlier
+    /// version did, with a `todo!()` body) could therefore only ever add a way to fail.
     fn preemptive_worker_state_transfer_mode(&mut self) -> Result<(), PreemptiveWorkerError> {
         sync::sync_select! {
-            recv(unwrap_channel!(self.preemptive_channels.state_rx())) -> msg => {
-                match msg.map_err(|e| NoRetChannelErr::from(RecvError::from(e)))? {
-                    StateMessage::ConfirmedStateReceived(seq_no, state) => {
-                        self.state.install_confirmed_state(seq_no, state);
-                    }
-                }
+            recv(self.preemptive_channels.state_rx()) -> msg => {
+                let StateMessage::ConfirmedStateReceived(seq_no, state) = msg;
 
+                self.state.install_confirmed_state(seq_no, state);
                 self.set_run_mode(RunMode::Normal);
 
-                Ok(())
-            },
-            recv(unwrap_channel!(self.preemptive_channels.confirmed_worker_rx())) -> msg => {
-                let _message = msg.map_err(|e| NoRetChannelErr::from(RecvError::from(e)))?;
-
-                todo!()
-            },
+                // One install per transfer: a further state message belongs to the next
+                // `PollStateChannel`, after the work queued in between.
+                Ok::<_, PreemptiveWorkerError>(ControlFlow::Break(()))
+            }
         }
     }
 
+    /// Apply a directly-finalized batch: it was never speculated, so the execution below
+    /// sits on the confirmation path and `record_confirmation` is called with
+    /// `speculated = false`. This is the dual-state analogue of the cache executors'
+    /// `SPECULATION_FALLBACK_COUNT` route.
     fn handle_confirmed_update<T>(
         &mut self,
         update_batch: UpdateBatch<Request<A, S>>,
         get_appstate: bool,
+        confirmed_at: Instant,
     ) -> Result<(), PreemptiveWorkerError>
     where
         NT: ReplyNode<SMRReply<A::AppData>> + 'static,
         T: ExecutorReplier,
     {
+        metric_duration(CONFIRM_ENQUEUE_TO_APPLY_LATENCY_ID, confirmed_at.elapsed());
+
         let seq = update_batch.seq_no();
         let batch_for_confirmed = update_batch.clone();
 
@@ -213,6 +255,8 @@ where
         let replies = self
             .state
             .handle_confirmed_update(&self.application, update_batch)?;
+
+        record_confirmation(confirmed_at, false);
 
         T::execution_finished::<A::AppData, NT>(self.node.clone(), Some(seq), replies);
 
@@ -301,4 +345,13 @@ enum PreemptiveWorkerError {
     Backtrack(#[from] BacktrackError),
     #[error("Failed to request latest confirmed state: {0}")]
     RequestLatestState(#[from] RequestLatestStateError),
+}
+
+/// `sync_select!` surfaces a dropped sender as a `RecvError`, and reaches this
+/// type through `From`. `NoRetChannelErr` already carries one, but `From` does
+/// not compose, so the hop is spelled out.
+impl From<RecvError> for PreemptiveWorkerError {
+    fn from(err: RecvError) -> Self {
+        Self::Channel(NoRetChannelErr::from(err))
+    }
 }

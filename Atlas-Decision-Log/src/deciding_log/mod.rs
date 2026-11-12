@@ -52,20 +52,10 @@ where
         }
     }
 
+    /// Drop every unfinished decision with sequence number >= `seq`.
     pub fn clear_seq_forward_of(&mut self, seq: SeqNo) {
-        let index = seq.index(self.curr_seq);
-
-        match index {
-            Either::Right(index) => {
-                let to_remove = self.currently_deciding.len() - index;
-
-                for _ in 0..to_remove {
-                    self.currently_deciding.pop_back();
-                }
-            }
-            Either::Left(_) => {
-                warn!("Progressed decision that has already been decided?")
-            }
+        for _ in 0..entries_to_clear(self.currently_deciding.len(), self.curr_seq, seq) {
+            self.currently_deciding.pop_back();
         }
     }
 
@@ -210,5 +200,44 @@ where
         }
 
         decisions
+    }
+}
+
+/// How many entries to drop from the back of a queue of `len` decisions starting at `curr_seq`
+/// to remove everything with sequence number >= `seq`. A `seq` before the queue clears all of it.
+fn entries_to_clear(len: usize, curr_seq: SeqNo, seq: SeqNo) -> usize {
+    match seq.index(curr_seq) {
+        Either::Left(_) => len,
+        Either::Right(index) => len.saturating_sub(index),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seq(n: u32) -> SeqNo {
+        SeqNo::from(n)
+    }
+
+    #[test]
+    fn a_sequence_before_the_queue_clears_all_of_it() {
+        // The caller passes the last executed sequence, one before the first unfinished one.
+        assert_eq!(entries_to_clear(3, seq(21354), seq(21353)), 3);
+    }
+
+    #[test]
+    fn the_first_unfinished_sequence_clears_all_of_it() {
+        assert_eq!(entries_to_clear(3, seq(21354), seq(21354)), 3);
+    }
+
+    #[test]
+    fn a_sequence_inside_the_queue_keeps_the_ones_before_it() {
+        assert_eq!(entries_to_clear(3, seq(21354), seq(21355)), 2);
+    }
+
+    #[test]
+    fn a_sequence_beyond_the_queue_clears_nothing() {
+        assert_eq!(entries_to_clear(3, seq(21354), seq(21400)), 0);
     }
 }

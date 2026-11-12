@@ -1,25 +1,31 @@
 use crate::metric::{
-    SCALABLE_COLLISION_COUNT_ID, SCALABLE_COLLISION_RATE_ID, SCALABLE_OPS_PER_BATCH_ID,
-    SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID,
+    CACHE_BACKTRACK_COUNT_ID, CACHE_REBUILD_TIME_ID, OPERATIONS_EXECUTED_PER_SECOND_ID,
+    REORDER_BUFFER_SIZE_ID, REORDER_STAGED_COUNT_ID, SCALABLE_COLLISION_COUNT_ID,
+    SCALABLE_COLLISION_RATE_ID, SCALABLE_CONFIRM_APPLICATION_TIME_ID, SCALABLE_OPS_PER_BATCH_ID,
+    SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID, SCALABLE_SPECULATION_TO_CONFIRM_LATENCY_ID,
+    SPECULATION_FALLBACK_COUNT_ID,
 };
 use crate::scalable_crud::execution_unit::{
     CollisionState, ParallelExecutionUnit, progress_collision_state,
 };
 use crate::single_threaded_crud::caching_state::{
-    AccumulatedCache, CachingState, apply_delta_to_state, merge_delta_into,
+    AccumulatedCache, CachingState, apply_delta_to_state, cache_entry_count, merge_delta_into,
     rebuild_accumulated_cache,
+};
+use crate::single_threaded_crud::pending_state::{
+    CACHE_COMPACTION_FACTOR, MAX_STAGED_BATCHES, PreemptiveOutcome,
 };
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::execution::requests::{
     IncrementableUpdateBatch, ReplyBatch, UpdateBatch, UpdateInfo,
 };
-use atlas_metrics::metrics::{metric_duration, metric_store_count};
+use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
 use atlas_smr_application::app::{Application, Reply, Request};
 use atlas_smr_execution::crud_states::{Access, CRUDApplication, CRUDState};
-use either::Either;
 use rayon::ThreadPool;
 use rayon::prelude::*;
-use std::collections::VecDeque;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt::{Debug, Formatter};
 use std::time::Instant;
 use thiserror::Error;
@@ -74,10 +80,18 @@ where
     S: CRUDState + Sync,
 {
     confirmed_state: S,
-    confirmed_seq_no: SeqNo,
-    preemptive_seq_no: SeqNo,
+    /// Sequence number the next confirmation is expected to carry.
+    next_confirmed: SeqNo,
+    /// Sequence number the next preemptive update is expected to carry.
+    next_preemptive: SeqNo,
+    /// Merge of all pending deltas, possibly plus entries of already-confirmed deltas (which
+    /// read the same as the confirmed state). Always empty while `pending` is empty.
     accumulated_cache: AccumulatedCache,
     pending: VecDeque<PendingCachedUpdate<A, S>>,
+    /// Total entries across the deltas in `pending`; the compaction threshold's yardstick.
+    pending_entries: usize,
+    /// Batches that arrived ahead of `next_preemptive`, held until the gap closes.
+    staged: BTreeMap<SeqNo, UpdateBatch<Request<A, S>>>,
     thread_pool: ThreadPool,
 }
 
@@ -90,24 +104,30 @@ where
     pub(super) fn new(initial_state: (SeqNo, S), thread_pool: ThreadPool) -> Self {
         Self {
             confirmed_state: initial_state.1,
-            confirmed_seq_no: initial_state.0,
-            preemptive_seq_no: initial_state.0,
+            next_confirmed: initial_state.0,
+            next_preemptive: initial_state.0,
             accumulated_cache: AccumulatedCache::default(),
             pending: VecDeque::new(),
+            pending_entries: 0,
+            staged: BTreeMap::new(),
             thread_pool,
         }
     }
 
-    pub(super) fn confirmed_seq_no(&self) -> SeqNo {
-        self.confirmed_seq_no
+    pub(super) fn next_confirmed_seq(&self) -> SeqNo {
+        self.next_confirmed
     }
 
-    pub(super) fn preemptive_seq_no(&self) -> SeqNo {
-        self.preemptive_seq_no
+    pub(super) fn next_preemptive_seq(&self) -> SeqNo {
+        self.next_preemptive
     }
 
     pub(super) fn pending_count(&self) -> usize {
         self.pending.len()
+    }
+
+    pub(super) fn staged_count(&self) -> usize {
+        self.staged.len()
     }
 
     pub(super) fn pending_front_seq(&self) -> Option<SeqNo> {
@@ -133,25 +153,56 @@ where
         &mut self,
         application: &A,
         update_batch: UpdateBatch<Request<A, S>>,
-    ) -> Result<(), PreemptiveError<A, S>> {
-        match update_batch.sequence_number().index(self.preemptive_seq_no) {
-            // Left: incoming seq is older than current head — must backtrack.
-            // Right(0): incoming seq == current head — re-execution of the same slot, also a backtrack.
-            Either::Left(_) | Either::Right(0) => {
-                return Err(PreemptiveError::Backtracking(
-                    update_batch.sequence_number(),
-                    update_batch,
-                ));
+    ) -> Result<PreemptiveOutcome, PreemptiveError<A, S>> {
+        let seq = update_batch.sequence_number();
+
+        // `SeqNo` compares by raw value under `Ord`; its `PartialOrd` goes through the
+        // wrap-aware `index`, which reports a sequence far enough ahead as *behind*.
+        // Comparing explicitly keeps a large gap classified as a future batch to buffer.
+        match seq.cmp(&self.next_preemptive) {
+            Ordering::Less => {
+                return Err(PreemptiveError::Backtracking(seq, update_batch));
             }
-            Either::Right(1) => {}
-            Either::Right(_) => {
-                return Err(PreemptiveError::FutureRequest(
-                    update_batch.sequence_number(),
-                    self.preemptive_seq_no,
-                ));
+            Ordering::Greater => {
+                if self.staged.len() >= MAX_STAGED_BATCHES {
+                    return Err(PreemptiveError::ReorderBufferFull {
+                        seq,
+                        awaiting: self.next_preemptive,
+                        buffered: self.staged.len(),
+                    });
+                }
+
+                self.staged.insert(seq, update_batch);
+                metric_increment(REORDER_STAGED_COUNT_ID, Some(1));
+                metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
+
+                return Ok(PreemptiveOutcome::Staged {
+                    awaiting: self.next_preemptive,
+                    buffered: self.staged.len(),
+                });
             }
+            Ordering::Equal => {}
         }
 
+        self.execute_speculatively(application, update_batch);
+
+        // This batch may have closed the gap in front of batches that arrived early.
+        let mut drained = 0;
+        while let Some(buffered) = self.staged.remove(&self.next_preemptive) {
+            self.execute_speculatively(application, buffered);
+            drained += 1;
+        }
+
+        if drained > 0 {
+            metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
+        }
+
+        Ok(PreemptiveOutcome::Executed { drained })
+    }
+
+    /// Speculatively execute one batch that is known to be the next in sequence, using the
+    /// parallel + collision-resolution pipeline described on `handle_preemptive_update`.
+    fn execute_speculatively(&mut self, application: &A, update_batch: UpdateBatch<Request<A, S>>) {
         let exec_start = Instant::now();
 
         let seq = update_batch.sequence_number();
@@ -250,7 +301,8 @@ where
 
         // Merge batch_delta into the upper accumulated cache.
         merge_delta_into(&mut self.accumulated_cache, &batch_delta);
-        self.preemptive_seq_no = seq;
+        self.pending_entries += cache_entry_count(&batch_delta);
+        self.next_preemptive = seq.next();
         self.pending.push_back(PendingCachedUpdate {
             batch: batch_copy,
             replies,
@@ -259,27 +311,64 @@ where
         });
 
         metric_duration(SCALABLE_PREEMPTIVE_EXECUTION_TIME_ID, exec_start.elapsed());
-
-        Ok(())
     }
 
     // -----------------------------------------------------------------------
     // All paths below are identical to CachingPreemptiveState
     // -----------------------------------------------------------------------
 
+    /// Confirm the head pending update. If the batch was never speculated because it was
+    /// still waiting in the reorder buffer, it is executed directly against the confirmed
+    /// state instead, so the decision still lands and clients still get replies.
     pub(super) fn handle_update_confirmed(
         &mut self,
+        application: &A,
         sequence_no: SeqNo,
     ) -> Result<ReplyBatch<Reply<A, S>>, ConfirmError> {
-        match self.pending.front() {
-            Some(p) if p.batch.sequence_number() == sequence_no => {}
-            Some(p) => {
+        if sequence_no != self.next_confirmed {
+            return Err(ConfirmError::OutOfOrderConfirmation {
+                expected: self.next_confirmed,
+                received: sequence_no,
+            });
+        }
+
+        // Resolved before mutating so the borrow of `pending` ends here.
+        let route = match self.pending.front() {
+            Some(p) if p.sequence_number() == sequence_no => ConfirmRoute::Pending,
+            _ if self.staged.contains_key(&sequence_no) => ConfirmRoute::Staged,
+            Some(p) => ConfirmRoute::Mismatch(p.sequence_number()),
+            None => ConfirmRoute::Empty,
+        };
+
+        match route {
+            ConfirmRoute::Pending => {}
+            ConfirmRoute::Staged => {
+                let batch = self
+                    .staged
+                    .remove(&sequence_no)
+                    .expect("presence checked when choosing the route");
+
+                metric_increment(SPECULATION_FALLBACK_COUNT_ID, Some(1));
+
+                // Counted here rather than inside execute_directly, which consumes the
+                // batch. This path still commits every operation in it, so it counts
+                // towards throughput exactly like the speculated path below.
+                metric_increment(OPERATIONS_EXECUTED_PER_SECOND_ID, Some(batch.len() as u64));
+
+                // Anything already speculated raced ahead of a batch that never ran, so its
+                // deltas are computed against a base state that is about to change. Return
+                // those batches to the reorder buffer and rebuild speculation behind this one.
+                self.discard_speculation();
+
+                return Ok(self.execute_directly(application, batch));
+            }
+            ConfirmRoute::Mismatch(expected) => {
                 return Err(ConfirmError::SeqMismatch {
-                    expected: p.batch.sequence_number(),
+                    expected,
                     received: sequence_no,
                 });
             }
-            None => {
+            ConfirmRoute::Empty => {
                 return Err(ConfirmError::EmptyQueue {
                     received: sequence_no,
                 });
@@ -288,11 +377,90 @@ where
 
         let update = self.pending.pop_front().unwrap();
 
+        // Counted at confirmation rather than at speculation — see the note on the same
+        // increment in `single_threaded_crud::pending_state`. It matters more here: the
+        // scalable executor also re-executes colliding operations *within* a batch, and
+        // counting each execution would inflate throughput by the collision rate.
+        metric_increment(
+            OPERATIONS_EXECUTED_PER_SECOND_ID,
+            Some(update.batch.len() as u64),
+        );
+
+        // The reply computed for this batch has been sitting ready since `speculated_at`,
+        // waiting only on consensus. That wait is the whole point of speculating, and this
+        // executor was the one variant that captured the timestamp without ever recording it.
+        metric_duration(
+            SCALABLE_SPECULATION_TO_CONFIRM_LATENCY_ID,
+            update.speculated_at.elapsed(),
+        );
+
+        self.pending_entries -= cache_entry_count(&update.delta);
+
+        let confirm_start = Instant::now();
         apply_delta_to_state(&mut self.confirmed_state, &update.delta);
-        self.accumulated_cache = rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
-        self.confirmed_seq_no = sequence_no;
+        metric_duration(
+            SCALABLE_CONFIRM_APPLICATION_TIME_ID,
+            confirm_start.elapsed(),
+        );
+
+        // No refold: entries left over from the applied delta read the same as the confirmed
+        // state, or are overridden by a newer pending delta. See the sequential executor.
+        self.compact_after_confirm();
+
+        self.next_confirmed = sequence_no.next();
 
         Ok(update.replies)
+    }
+
+    /// Clear the cache once the pending queue has drained, and refold it from the pending
+    /// deltas once it has grown past `CACHE_COMPACTION_FACTOR` times their size.
+    fn compact_after_confirm(&mut self) {
+        if self.pending.is_empty() {
+            self.accumulated_cache.clear();
+        } else if cache_entry_count(&self.accumulated_cache)
+            > CACHE_COMPACTION_FACTOR * self.pending_entries
+        {
+            self.accumulated_cache =
+                rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
+        }
+    }
+
+    /// Execute a batch straight against the confirmed state, bypassing speculation, and
+    /// resume speculating from whatever is already buffered behind it.
+    fn execute_directly(
+        &mut self,
+        application: &A,
+        update_batch: UpdateBatch<Request<A, S>>,
+    ) -> ReplyBatch<Reply<A, S>> {
+        // Only reached right after `discard_speculation`, which empties the cache. A leftover
+        // entry would shadow the write made here.
+        debug_assert!(self.accumulated_cache.is_empty());
+
+        let seq = update_batch.sequence_number();
+        let replies = application.update_batch(&mut self.confirmed_state, update_batch);
+
+        self.next_confirmed = seq.next();
+        self.next_preemptive = seq.next();
+
+        while let Some(buffered) = self.staged.remove(&self.next_preemptive) {
+            self.execute_speculatively(application, buffered);
+        }
+        metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
+
+        replies
+    }
+
+    /// Throw away all speculative work, returning the underlying batches to the reorder
+    /// buffer so no decision is lost — only the deltas and replies computed for them.
+    fn discard_speculation(&mut self) {
+        for update in self.pending.drain(..) {
+            self.staged
+                .insert(update.batch.sequence_number(), update.batch);
+        }
+        self.accumulated_cache = AccumulatedCache::default();
+        self.pending_entries = 0;
+        self.next_preemptive = self.next_confirmed;
+        metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
     }
 
     pub(super) fn handle_confirmed_update(
@@ -300,19 +468,23 @@ where
         application: &A,
         update_batch: UpdateBatch<Request<A, S>>,
     ) -> Result<ReplyBatch<Reply<A, S>>, ConfirmError> {
-        if self.preemptive_seq_no != self.confirmed_seq_no {
+        if self.next_preemptive != self.next_confirmed {
             return Err(ConfirmError::PendingPreemptiveUpdates {
                 confirmed_update_seq: update_batch.sequence_number(),
-                preemptive_seq: self.preemptive_seq_no,
-                confirmed_seq: self.confirmed_seq_no,
+                next_preemptive: self.next_preemptive,
+                next_confirmed: self.next_confirmed,
             });
         }
+
+        // Writes the confirmed state without a pending delta; a leftover cache entry would
+        // shadow the new value for later speculation.
+        self.accumulated_cache.clear();
 
         let seq = update_batch.sequence_number();
         let replies = application.update_batch(&mut self.confirmed_state, update_batch);
 
-        self.confirmed_seq_no = seq;
-        self.preemptive_seq_no = seq;
+        self.next_confirmed = seq.next();
+        self.next_preemptive = seq.next();
 
         Ok(replies)
     }
@@ -323,14 +495,16 @@ where
         batches: impl IntoIterator<Item = UpdateBatch<Request<A, S>>>,
     ) -> Vec<(SeqNo, ReplyBatch<Reply<A, S>>)> {
         self.pending.clear();
+        self.pending_entries = 0;
+        self.staged.clear();
         self.accumulated_cache = AccumulatedCache::default();
 
         let mut results = Vec::new();
         for batch in batches {
             let seq = batch.sequence_number();
             let replies = application.update_batch(&mut self.confirmed_state, batch);
-            self.confirmed_seq_no = seq;
-            self.preemptive_seq_no = seq;
+            self.next_confirmed = seq.next();
+            self.next_preemptive = seq.next();
             results.push((seq, replies));
         }
         results
@@ -338,37 +512,84 @@ where
 
     pub(super) fn install_confirmed_state(&mut self, seq: SeqNo, state: S) {
         self.confirmed_state = state;
-        self.confirmed_seq_no = seq;
-        self.preemptive_seq_no = seq;
+        self.next_confirmed = seq.next();
+        self.next_preemptive = seq.next();
         self.accumulated_cache = AccumulatedCache::default();
         self.pending.clear();
+        self.pending_entries = 0;
+        self.staged.clear();
     }
 
     pub(super) fn backtrack(&mut self, backtrack_seq: SeqNo) -> Result<(), BacktrackError> {
-        if backtrack_seq <= self.confirmed_seq_no {
-            return Err(BacktrackError::BacktrackToConfirmedOrBelow {
+        if backtrack_seq.cmp(&self.next_confirmed) == Ordering::Less {
+            return Err(BacktrackError::BacktrackBelowConfirmed {
                 backtrack_seq,
-                confirmed_seq: self.confirmed_seq_no,
+                next_confirmed: self.next_confirmed,
             });
         }
 
-        self.pending.retain(|p| p.sequence_number() < backtrack_seq);
+        metric_increment(CACHE_BACKTRACK_COUNT_ID, Some(1));
 
-        self.preemptive_seq_no = self
+        self.pending
+            .retain(|p| p.sequence_number().cmp(&backtrack_seq) == Ordering::Less);
+
+        // Buffered batches at or above the backtrack point describe decisions that are
+        // being re-decided, so the copies held here are stale.
+        self.staged
+            .retain(|seq, _| seq.cmp(&backtrack_seq) == Ordering::Less);
+
+        self.next_preemptive = self
             .pending
             .back()
-            .map(|p| p.sequence_number())
-            .unwrap_or(self.confirmed_seq_no);
+            .map(|p| p.sequence_number().next())
+            .unwrap_or(self.next_confirmed);
 
+        // Dropping entries is the one case that needs a refold.
+        let rebuild_start = Instant::now();
         self.accumulated_cache = rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta));
+        self.pending_entries = self
+            .pending
+            .iter()
+            .map(|p| cache_entry_count(&p.delta))
+            .sum();
+        metric_duration(CACHE_REBUILD_TIME_ID, rebuild_start.elapsed());
+        metric_store_count(REORDER_BUFFER_SIZE_ID, self.staged.len());
 
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn accumulated_cache(&self) -> &AccumulatedCache {
+        &self.accumulated_cache
+    }
+
+    /// The cache as a full refold of the pending deltas would build it.
+    #[cfg(test)]
+    pub(super) fn pending_fold(&self) -> AccumulatedCache {
+        rebuild_accumulated_cache(self.pending.iter().map(|p| &p.delta))
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_entries(&self) -> usize {
+        self.pending_entries
     }
 }
 
 // ---------------------------------------------------------------------------
 // Error types (mirrors single_threaded_crud)
 // ---------------------------------------------------------------------------
+
+/// Where the batch for an incoming confirmation lives.
+enum ConfirmRoute {
+    /// At the head of the pending queue, already speculated.
+    Pending,
+    /// Still in the reorder buffer, never speculated.
+    Staged,
+    /// The pending queue holds a different sequence number.
+    Mismatch(SeqNo),
+    /// Neither queue holds it.
+    Empty,
+}
 
 #[derive(Error)]
 pub(super) enum PreemptiveError<A, S>
@@ -377,8 +598,15 @@ where
 {
     #[error("Backtracking required at seq {0:?}")]
     Backtracking(SeqNo, UpdateBatch<Request<A, S>>),
-    #[error("Future request: received seq {0:?}, current preemptive seq {1:?}")]
-    FutureRequest(SeqNo, SeqNo),
+    #[error(
+        "Reorder buffer full ({buffered} batches) while waiting for {awaiting:?}; \
+         cannot buffer {seq:?}"
+    )]
+    ReorderBufferFull {
+        seq: SeqNo,
+        awaiting: SeqNo,
+        buffered: usize,
+    },
 }
 
 impl<A, S> Debug for PreemptiveError<A, S>
@@ -392,10 +620,15 @@ where
                 .field(seq)
                 .field(&format!("batch({} ops)", batch.len()))
                 .finish(),
-            PreemptiveError::FutureRequest(seq, current) => f
-                .debug_tuple("FutureRequest")
-                .field(seq)
-                .field(current)
+            PreemptiveError::ReorderBufferFull {
+                seq,
+                awaiting,
+                buffered,
+            } => f
+                .debug_struct("ReorderBufferFull")
+                .field("seq", seq)
+                .field("awaiting", awaiting)
+                .field("buffered", buffered)
                 .finish(),
         }
     }
@@ -407,24 +640,24 @@ pub(super) enum ConfirmError {
     SeqMismatch { expected: SeqNo, received: SeqNo },
     #[error("Pending queue is empty, received confirmation for seq {received:?}")]
     EmptyQueue { received: SeqNo },
+    #[error("Confirmation for {received:?} arrived out of order, expected {expected:?}")]
+    OutOfOrderConfirmation { expected: SeqNo, received: SeqNo },
     #[error(
         "Confirmed update ({confirmed_update_seq:?}) arrived while preemptive updates are pending \
-         (preemptive_seq={preemptive_seq:?}, confirmed_seq={confirmed_seq:?})"
+         (next_preemptive={next_preemptive:?}, next_confirmed={next_confirmed:?})"
     )]
     PendingPreemptiveUpdates {
         confirmed_update_seq: SeqNo,
-        preemptive_seq: SeqNo,
-        confirmed_seq: SeqNo,
+        next_preemptive: SeqNo,
+        next_confirmed: SeqNo,
     },
 }
 
 #[derive(Debug, Error)]
 pub(super) enum BacktrackError {
-    #[error(
-        "Cannot backtrack to {backtrack_seq:?}: must be strictly above confirmed seq {confirmed_seq:?}"
-    )]
-    BacktrackToConfirmedOrBelow {
+    #[error("Cannot backtrack to {backtrack_seq:?}: already confirmed through {next_confirmed:?}")]
+    BacktrackBelowConfirmed {
         backtrack_seq: SeqNo,
-        confirmed_seq: SeqNo,
+        next_confirmed: SeqNo,
     },
 }

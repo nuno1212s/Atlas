@@ -14,15 +14,18 @@ use tracing::error;
 /// Messages sent by the orchestrator to the preemptive state management thread to trigger updates to the preemptive state.
 pub enum PreemptiveWorkMessage<R> {
     PreemptiveUpdate(UpdateBatch<R>),
-    PreemptiveUpdateConfirmed(SeqNo),
-    PreemptiveUpdateConfirmedAndGetAppState(SeqNo),
+    /// The `Instant` is the moment the ordering protocol queued the commit at the executor;
+    /// it is carried through so the confirmation-path metrics (`CONFIRM_*`) measure the
+    /// whole post-commit path and not just this worker's share of it.
+    PreemptiveUpdateConfirmed(SeqNo, Instant),
+    PreemptiveUpdateConfirmedAndGetAppState(SeqNo, Instant),
     /// A directly-finalized update batch that was never preemptively executed.
     /// The preemptive worker executes it on its state, sends replies immediately,
     /// then forwards the batch to the confirmed worker for authoritative application.
-    ConfirmedUpdate(UpdateBatch<R>),
+    ConfirmedUpdate(UpdateBatch<R>, Instant),
     /// Like [`ConfirmedUpdate`] but also requests an app-state snapshot after
     /// the confirmed worker has applied the batch.
-    ConfirmedUpdateAndGetAppstate(UpdateBatch<R>),
+    ConfirmedUpdateAndGetAppstate(UpdateBatch<R>, Instant),
     CatchUp(MaybeVec<UpdateBatch<R>>),
     PollStateChannel,
 }

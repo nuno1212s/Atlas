@@ -72,9 +72,10 @@ pub fn metric_thread_loop(influx_args: InfluxDBArgs) {
 
     let extra = extra.unwrap_or(String::from("None"));
 
-    let mut sys = System::new_all();
+    let mut sys = System::new_all().expect("Failed to initialize sysinfo System");
 
-    let mut networks = Networks::new_with_refreshed_list();
+    let mut networks =
+        Networks::new_with_refreshed_list().expect("Failed to initialize sysinfo Networks");
 
     let pid = sysinfo::get_current_pid().expect("Failed to get PID");
 
@@ -118,7 +119,7 @@ fn read_cpu_usage(sys: &mut System, host_name: String, extra: String) -> Vec<Met
             host: host_name.clone(),
             extra: extra.clone(),
             cpu: cpu_core as i32,
-            value: cpu.cpu_usage() as f64 / 100.0,
+            value: cpu.usage() as f64 / 100.0,
         };
 
         readings.push(reading);

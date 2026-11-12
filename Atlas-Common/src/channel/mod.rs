@@ -8,17 +8,18 @@ use thiserror::Error;
 /// Rendered when an error is not associated with a named channel.
 const UNNAMED_CHANNEL: &str = "unidentified";
 
-#[cfg(feature = "channel_flume_mpmc")]
 mod flume_mpmc;
 
 #[cfg(feature = "channel_async_channel_mpmc")]
 mod async_channel_mpmc;
 
-#[cfg(feature = "channel_mult_custom_dump")]
 mod custom_dump;
 
-#[cfg(feature = "channel_sync_crossbeam")]
+#[cfg(not(feature = "channel_sync_flume"))]
 mod crossbeam;
+
+#[cfg(feature = "channel_sync_flume")]
+mod flume_sync;
 
 mod oneshot_spsc;
 

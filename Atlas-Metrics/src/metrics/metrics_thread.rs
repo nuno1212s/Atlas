@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use influxdb::{InfluxDbWriteable, WriteQuery};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::metrics::correlation_ids::CorrelationEventOccurrence;
 use crate::metrics::{MetricData, MetricKind, collect_all_measurements};
@@ -332,9 +332,23 @@ pub fn metric_thread_loop(influx_args: InfluxDBArgs, metric_level: MetricLevel) 
             result, time_taken, readings_to_write
         );
 
-        std::thread::sleep(Duration::from_millis(std::cmp::max(
-            0,
-            1000 - time_taken.as_millis() as u64,
-        )));
+        if let Err(e) = &result {
+            error!(
+                "Failed to write {} metrics to influxdb in {:?}: {:?}",
+                readings_to_write, time_taken, e
+            );
+        }
+
+        // Saturating: `1000 - elapsed` wraps in release builds (overflow-checks off).
+        let remaining = 1000u64.saturating_sub(time_taken.as_millis() as u64);
+
+        if remaining == 0 {
+            warn!(
+                "Metrics write cycle overran its 1s budget: {:?} for {} readings",
+                time_taken, readings_to_write
+            );
+        }
+
+        std::thread::sleep(Duration::from_millis(remaining));
     }
 }

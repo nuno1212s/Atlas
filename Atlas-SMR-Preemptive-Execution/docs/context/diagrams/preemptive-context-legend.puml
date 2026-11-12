@@ -1,0 +1,59 @@
+@startuml preemptive-context-legend
+title Visual vocabulary of the context diagrams
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+
+rectangle "Shapes" as shapes {
+  rectangle "Struct / enum\n(one Rust type)" as s_type
+  hexagon "«trait»\nTrait" as s_trait
+  database "State owned\nby one thread" as s_state
+  collections "N concurrent\ninstances / threads" as s_many
+  frame "OS thread «name»" as s_thread {
+    rectangle "runs on\nthis thread" as s_inner
+  }
+  node "Process" as s_proc
+  actor "Client" as s_client
+}
+
+rectangle "Lines" as lines {
+  rectangle "A" as a1
+  rectangle "B" as b1
+  rectangle "C" as c1
+  rectangle "D" as d1
+  rectangle "E" as e1
+  rectangle "F" as f1
+  rectangle "G" as g1
+  rectangle "H" as h1
+  rectangle "I" as i1
+  rectangle "J" as j1
+}
+
+s_type -[hidden]right- s_trait
+s_trait -[hidden]right- s_state
+s_type -[hidden]down- s_many
+s_many -[hidden]right- s_thread
+s_thread -[hidden]right- s_proc
+s_proc -[hidden]right- s_client
+
+a1 -right-> b1 : bounded channel\nname · cap N\nMessage<T>
+c1 .right.> d1 : direct call\n(same thread)
+e1 -[bold]right-> f1 : owns,\nmutates
+g1 .right.|> h1 : implements
+i1 -[dotted]right-> j1 : inferred / latent /\nunimplemented
+c1 -[hidden]down- a1
+a1 -[hidden]down- e1
+e1 -[hidden]down- g1
+g1 -[hidden]down- i1
+
+@enduml

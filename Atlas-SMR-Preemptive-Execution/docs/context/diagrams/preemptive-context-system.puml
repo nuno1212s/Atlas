@@ -1,0 +1,82 @@
+@startuml preemptive-context-system
+title D1 — System context: the executor as a replaceable module behind a trait
+
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam linetype polyline
+skinparam nodesep 30
+skinparam ranksep 40
+skinparam frame {
+  BorderThickness 2
+}
+skinparam hexagon {
+  BorderStyle dashed
+}
+
+actor "Clients\n«atlas-client»" as clients
+node "Other replicas" as peers
+rectangle "Benchmark harness\n«testing-grounds/crud_perf»" as harness
+
+node "Replica process «MonReplica»" as replica {
+  rectangle "Network stack\natlas-communication\nover atlas-comm-mio" as net
+  rectangle "Reconfiguration\nprotocol" as reconf
+  rectangle "RequestPreProcessor" as rpp
+  rectangle "Round-based BFT\nordering protocol «plugin»" as op
+  hexagon "«trait»\nOrderingProtocol" as op_t
+  rectangle "DecisionLogManager\n+ decision log\n+ persistent log" as dl
+  hexagon "«trait»\nTPreemptiveExecutor-\nDecisionHandle" as dec_t
+  rectangle "SMRExecWrapper<E>" as wrap
+  rectangle "Preemptive executor\n(1 of 3, compile-time)" as pexec
+  rectangle "Post-commit executor\n«atlas-smr-execution»" as bexec
+  hexagon "«trait»\nTExecutor +\nTMonolithicStateExecutor" as exec_t
+  rectangle "State transfer" as st
+  rectangle "ReplicaReplier" as replier
+  rectangle "Metric registry\n«atlas-metrics»" as metrics
+}
+database "InfluxDB" as influx
+
+clients -down-> net : requests
+peers -right- net
+reconf -left- net
+net -down-> rpp
+rpp -down-> op : proposals
+op .right.|> op_t
+op -down-> dl : (1) (2)
+dl .right.> dec_t : bound
+wrap .up.|> dec_t
+dl -down-> wrap : calls
+wrap -down-> pexec : E
+pexec .right.|> exec_t
+bexec .up.|> exec_t
+pexec -[dotted]left- bexec : xor
+st <-down-> pexec : (3)
+pexec -down-> replier : (4)
+replier -left-> net : replies
+pexec -down-> metrics : (5)
+metrics -down-> influx
+harness .down.> replica : selects type,\nbuilds binary
+
+note right of op
+  (1) DecisionRequests: proposal accepted
+  (2) DecisionDone: decision committed
+  Any round-based protocol that knows a
+  batch's order before committing it
+  exposes the gap between (1) and (2).
+end note
+
+note left of pexec
+  Must agree with
+  (1)(2) ordering protocol on the
+     gap and on SeqNo contiguous from 0
+  decision log on the specialization bound
+  (3) state transfer: InstallStateMessage in,
+     AppStateMessage (checkpoint) out
+  (4) replier: ReplyBatch only after commit
+  (5) metrics: shared 800+ ID space
+end note
+
+@enduml

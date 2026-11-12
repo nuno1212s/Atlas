@@ -29,21 +29,52 @@ cargo fmt --all -- --check
 
 ## Feature Flags Architecture
 
-The entire crate is structured around mutually exclusive feature groups. Each major subsystem has one active backend chosen at compile time:
+Each major subsystem has one backend chosen at compile time. **There is no backend
+in `default`** — the default is selected by the *absence* of an override flag:
 
-| Group | Default | Alternatives |
+| Group | Default (no flag) | Override with |
 |---|---|---|
-| `async_runtime_*` | `tokio` | `async_std` |
-| `threadpool_*` | `rayon` | `crossbeam` |
-| `socket_*` | `tokio_tcp` | `async_std_tcp`, `rio_tcp` |
-| `crypto_signature_*` | `ring_ed25519` | — |
-| `crypto_hash_*` | `blake3_blake3` | `ring_sha2` |
-| `channel_*` | `flume_mpmc` + `sync_crossbeam` + `mixed_flume` + `mult_custom_dump` | various |
-| `collections_randomstate_*` | `fxhash` | `twox_hash`, `std`, `gxhash` |
-| `persistent_db_*` | `sled` | `rocksdb`, disabled |
-| `serialize_*` | `serde` | `capnp` (broken) |
+| async runtime | tokio | `async_runtime_async_std` |
+| socket | tokio TCP | `socket_async_std_tcp`, `socket_rio_tcp` |
+| threadpool | rayon | `threadpool_crossbeam` |
+| hash | blake3 | `crypto_hash_ring_sha2` |
+| async channel | flume | `channel_async_channel_mpmc` |
+| sync channel | crossbeam | `channel_sync_flume` |
+| dump queue | mqueue | `channel_custom_dump_lfb` |
+| `RandomState` | fxhash | `collections_randomstate_{std,twox_hash,gxhash}` |
+| persistent db | sled | `persistent_db_rocksdb`, `persistent_db_disabled` |
 
-When adding a new backend, follow the pattern: create `src/<module>/<backend_name>/mod.rs`, gate everything with `#[cfg(feature = "...")]`, and re-export from `src/<module>/mod.rs`.
+Signature (`ring` Ed25519), the mixed channel and the multi-dump channel have a
+single implementation each and carry no flag.
+
+Why the inversion: Cargo features are additive and unioned graph-wide, so a
+positive default could only be turned off with `default-features = false` on
+every one of the ~20 edges that reach this crate — miss one and the union
+restores it. With the default expressed as `not(any(<overrides>))`, enabling one
+flag *anywhere* in the graph (including from the leaf binary) switches that group.
+
+The cost of the inversion: each group's default backend must be a **non-optional**
+dependency, because Cargo cannot enable an optional dependency from the absence of
+a feature — not from `[features]`, and not from a build script either.
+
+`serialize_serde` is the one exception and stays a positive default feature: it
+is a cross-cutting derive gate, not a backend choice, and ~12 sibling crates
+forward it.
+
+`build.rs` rejects two overrides from the same group with a readable message.
+It also catches the genuinely ambiguous case where two different crates in the
+graph each pick a different backend.
+
+When adding a new backend: create `src/<module>/<backend>/mod.rs` exposing the
+same surface as the existing one, gate it on a new override feature, and add that
+feature to the group's `not(any(...))` predicate *and* to `build.rs`'s `GROUPS`.
+
+### Backend caveats
+
+- `collections_randomstate_gxhash` needs `RUSTFLAGS="-C target-feature=+aes,+sse2"`
+  (or `-C target-cpu=native`); gxhash itself refuses to compile otherwise.
+- `persistent_db_rocksdb` needs libclang and the C standard headers for
+  `librocksdb-sys`' bindgen step.
 
 ## Key Data Structures
 

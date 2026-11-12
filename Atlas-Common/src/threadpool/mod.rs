@@ -2,7 +2,7 @@
 
 #[cfg(feature = "threadpool_crossbeam")]
 mod crossbeam;
-#[cfg(feature = "threadpool_rayon")]
+#[cfg(not(feature = "threadpool_crossbeam"))]
 mod rayon;
 
 use crate::error::*;
@@ -19,7 +19,7 @@ use thiserror::Error;
 pub struct ThreadPool {
     #[cfg(feature = "threadpool_crossbeam")]
     inner: crossbeam::ThreadPool,
-    #[cfg(feature = "threadpool_rayon")]
+    #[cfg(not(feature = "threadpool_crossbeam"))]
     inner: rayon::ThreadPool,
 }
 
@@ -27,7 +27,7 @@ pub struct ThreadPool {
 pub struct Builder {
     #[cfg(feature = "threadpool_crossbeam")]
     inner: crossbeam::Builder,
-    #[cfg(feature = "threadpool_rayon")]
+    #[cfg(not(feature = "threadpool_crossbeam"))]
     inner: rayon::Builder,
 }
 
@@ -46,7 +46,7 @@ impl Builder {
                 crossbeam::Builder::new()
             }
 
-            #[cfg(feature = "threadpool_rayon")]
+            #[cfg(not(feature = "threadpool_crossbeam"))]
             {
                 rayon::Builder::new()
             }
@@ -81,7 +81,7 @@ impl ThreadPool {
     pub fn install<F, R>(&self, job: F) -> R
     where
         F: FnOnce() -> R + Send + 'static,
-        R: Send,
+        R: Send + 'static,
     {
         self.inner.install(job)
     }
