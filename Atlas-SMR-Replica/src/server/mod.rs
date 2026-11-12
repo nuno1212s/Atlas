@@ -1139,13 +1139,6 @@ where
         }
     }
 
-    fn process_timeout_message(
-        &mut self,
-        (message, to_delete): (Vec<ModTimeout>, Vec<ModTimeout>),
-    ) -> Result<()> {
-        self.processed_timeout_recvd(message, to_delete)
-    }
-
     #[instrument(skip_all, fields(timeout_len = timeouts.len()))]
     fn timeout_received(&mut self, timeouts: Vec<Timeout>) -> Result<()> {
         info!("Processing {} timeouts", timeouts.len());

@@ -27,13 +27,6 @@ mod duplicate_state;
 mod preemptive_worker;
 mod state_management;
 
-#[cfg(test)]
-pub mod tests {
-    /// End-to-end tests driving the preemptive/confirmed worker pair.
-    mod execution;
-    pub mod test_fixtures;
-}
-
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
 
@@ -334,4 +327,11 @@ where
             }
         }
     }
+}
+
+#[cfg(test)]
+pub mod tests {
+    /// End-to-end tests driving the preemptive/confirmed worker pair.
+    mod execution;
+    pub mod test_fixtures;
 }

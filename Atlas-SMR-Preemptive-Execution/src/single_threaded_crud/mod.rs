@@ -31,13 +31,6 @@ use tracing::{debug, error};
 pub(crate) mod caching_state;
 pub(crate) mod pending_state;
 
-#[cfg(test)]
-pub mod tests {
-    mod integration_tests;
-    pub mod test_fixtures;
-    mod unit_tests;
-}
-
 const EXECUTING_BUFFER: usize = 16384;
 const STATE_BUFFER: usize = 128;
 const READ_THREAD_POOL_SIZE: usize = 4;
@@ -360,4 +353,11 @@ where
         let state = self.state.confirmed_state().clone();
         quiet_unwrap!(self.checkpoint_tx.send(AppStateMessage::new(seq, state)));
     }
+}
+
+#[cfg(test)]
+pub mod tests {
+    mod integration_tests;
+    pub mod test_fixtures;
+    mod unit_tests;
 }
