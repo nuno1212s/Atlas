@@ -364,11 +364,7 @@ where
                             .any(|msg_2| msg.header().digest() == msg_2.header().digest())
                     });
 
-                    if !is_partial_info_eq || !is_messages_eq {
-                        return false;
-                    }
-
-                    true
+                    is_partial_info_eq && is_messages_eq
                 }
             }
             (_, _) => false,
