@@ -17,4 +17,4 @@ tracing = "*"
 dashmap = "*"
 anyhow = "*"
 
-sysinfo = { version = "*", default-features = false, features = ["system", "network"] }
+sysinfo = { version = "0.40", default-features = false, features = ["system", "network"] }
