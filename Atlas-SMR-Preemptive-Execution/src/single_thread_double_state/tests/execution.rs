@@ -982,7 +982,10 @@ fn test_backtrack_while_confirmations_are_queued_at_the_confirmed_worker() {
     let send = |m| preemptive.preemptive_exec_handle().send(m).unwrap();
 
     for seq in 1..=6u32 {
-        send(PreemptiveWorkMessage::PreemptiveUpdate(make_batch(seq, &[1])));
+        send(PreemptiveWorkMessage::PreemptiveUpdate(make_batch(
+            seq,
+            &[1],
+        )));
     }
 
     // The confirmed worker is busy on batch 1 with 2-4 queued behind it.
@@ -994,7 +997,10 @@ fn test_backtrack_while_confirmations_are_queued_at_the_confirmed_worker() {
     }
 
     // Re-propose slot 5, behind the speculative head: triggers the backtrack.
-    send(PreemptiveWorkMessage::PreemptiveUpdate(make_batch(5, &[100])));
+    send(PreemptiveWorkMessage::PreemptiveUpdate(make_batch(
+        5,
+        &[100],
+    )));
     send(
         PreemptiveWorkMessage::PreemptiveUpdateConfirmedAndGetAppState(
             SeqNo::from(5u32),

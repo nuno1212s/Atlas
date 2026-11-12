@@ -690,9 +690,9 @@ impl GeneralNodeInfo {
             .min();
 
         // Also wake when the straggler grace expires.
-        let grace_left = self
-            .join_quorum_reached_at
-            .map(|reached| CLIENT_STRAGGLER_GRACE.saturating_sub(now.saturating_duration_since(reached)));
+        let grace_left = self.join_quorum_reached_at.map(|reached| {
+            CLIENT_STRAGGLER_GRACE.saturating_sub(now.saturating_duration_since(reached))
+        });
 
         match (next_retry, grace_left) {
             (Some(retry), Some(grace)) => Some(retry.min(grace)),
@@ -1251,7 +1251,10 @@ impl GeneralNodeInfo {
         let now = Instant::now();
 
         let wait = client_should_wait_for_stragglers(
-            matches!(self.network_view.own_node_info().node_type(), NodeType::Client),
+            matches!(
+                self.network_view.own_node_info().node_type(),
+                NodeType::Client
+            ),
             self.network_view.node_id(),
             self.network_view.bootstrap_nodes(),
             &self.confirmed_nodes,
@@ -1391,7 +1394,11 @@ mod tests {
 
     #[test]
     fn the_wait_is_bounded_so_a_dead_replica_cannot_block_clients() {
-        assert!(wait(true, &[1, 2, 3], Some(GRACE - Duration::from_millis(1))));
+        assert!(wait(
+            true,
+            &[1, 2, 3],
+            Some(GRACE - Duration::from_millis(1))
+        ));
         assert!(!wait(true, &[1, 2, 3], Some(GRACE)));
         assert!(!wait(true, &[1, 2, 3], Some(GRACE * 3)));
     }

@@ -1138,7 +1138,7 @@ where
             default(Duration::from_millis(1)) => Ok(()),
         }
     }
-    
+
     fn process_timeout_message(
         &mut self,
         (message, to_delete): (Vec<ModTimeout>, Vec<ModTimeout>),

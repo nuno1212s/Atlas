@@ -92,7 +92,8 @@ pub(super) fn initialize_worker_thread<WR>(
         .spawn(move || {
             let mut worker = TimeoutWorker {
                 our_node_id: our_id,
-                worker_id: u32::try_from(worker_id).expect("Failed to convert worker id to unsigned integer"),
+                worker_id: u32::try_from(worker_id)
+                    .expect("Failed to convert worker id to unsigned integer"),
                 default_timeout_duration: Duration::default(),
                 work_rx_channel: work_receiver,
                 watched_requests: HashMap::default(),

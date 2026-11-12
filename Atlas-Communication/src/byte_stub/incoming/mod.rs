@@ -147,7 +147,10 @@ where
         let held = self.gate.authenticate();
 
         if !held.is_empty() {
-            info!("Delivering {} messages held until authentication", held.len());
+            info!(
+                "Delivering {} messages held until authentication",
+                held.len()
+            );
         }
 
         for message in held {
